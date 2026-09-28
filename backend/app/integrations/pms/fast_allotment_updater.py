@@ -20,11 +20,17 @@ matching the PMS "Add Allotment Room" modal's own Close checkbox, rather than
 NoOfRoom=0 with the category left open. The Selenium updaters this module is
 validated against don't do this (no Close-checkbox interaction there) - only
 this API path closes zero-inventory dates.
+
+verify_pushed_jobs() re-queries api/AllotmentRoomInventory (the same call the
+PMS's own "Allotment Room List" grid makes) after a live push, to catch cases
+where save_allotment returned IsSuccess:true but the write didn't actually
+stick. This is a best-effort, log-only sanity check - see its docstring for
+why it doesn't raise on mismatch.
 """
 
 import concurrent.futures
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from ...inventory.allocation_repository import load_allocation_rows
 from ...inventory.cm_repository import load_cm_current_values
@@ -315,3 +321,66 @@ def push_jobs_concurrent(jobs, company_id=1001, dry_run=True, max_workers=4, use
         'elapsed_seconds': time.monotonic() - started,
         'results': results,
     }
+
+
+def _expand_dates(start_str, end_str):
+    """'YYYY/MM/DD'..'YYYY/MM/DD' (job date-range format) -> every 'YYYY-MM-DD' in between, inclusive."""
+    start = datetime.strptime(start_str, '%Y/%m/%d')
+    end = datetime.strptime(end_str, '%Y/%m/%d')
+    return [(start + timedelta(days=i)).strftime('%Y-%m-%d') for i in range((end - start).days + 1)]
+
+
+def verify_pushed_jobs(results, company_id=1001, username=None, password=None, chunk_days=60, settle_seconds=3):
+    """Re-query api/AllotmentRoomInventory and compare it against what was
+    just pushed, for jobs where the push succeeded (results with
+    success=True; dry-run results should be filtered out by the caller since
+    nothing was sent for them). Returns a list of mismatches, each
+    {job, date, expected, actual} - an empty list means everything matched.
+
+    This is a best-effort sanity check on top of the PMS's own
+    IsSuccess:true response, not a replacement for it: save_allotment already
+    told us the write succeeded, so a mismatch here is logged by the caller,
+    not raised - re-querying a live system for a value that could
+    legitimately keep moving (further sales, other allotment edits) is not a
+    trustworthy basis for failing an otherwise-successful pipeline run.
+
+    settle_seconds: paused before the first re-query, since the PMS's own
+    backend has shown it can lag under load (see push_jobs_concurrent's
+    retry logic) - avoids flagging false mismatches from checking too soon.
+    """
+    pushed_jobs = [r['job'] for r in results if r.get('success')]
+    if not pushed_jobs:
+        return []
+
+    time.sleep(settle_seconds)
+
+    client = PMSApiClient(username=username, password=password)
+    client.login()
+
+    all_dates = sorted({d for job in pushed_jobs for d in _expand_dates(job['start_date'], job['end_date'])})
+    min_dt = datetime.strptime(all_dates[0], '%Y-%m-%d')
+    max_dt = datetime.strptime(all_dates[-1], '%Y-%m-%d')
+    total_days = (max_dt - min_dt).days + 1
+
+    lookup = {}
+    cursor = min_dt
+    remaining = total_days
+    while remaining > 0:
+        span = min(chunk_days, remaining)
+        rows = client.get_allotment_room_inventory(company_id, cursor.strftime('%Y-%m-%d'), span)
+        for row in rows:
+            lookup[row['TrxDate'].split('T')[0]] = row
+        cursor += timedelta(days=span)
+        remaining -= span
+
+    mismatches = []
+    for job in pushed_jobs:
+        for date_str in _expand_dates(job['start_date'], job['end_date']):
+            row = lookup.get(date_str)
+            actual = row.get(job['checkbox_value']) if row else None
+            if actual != job['number_of_rooms']:
+                mismatches.append({
+                    'job': job, 'date': date_str,
+                    'expected': job['number_of_rooms'], 'actual': actual,
+                })
+    return mismatches

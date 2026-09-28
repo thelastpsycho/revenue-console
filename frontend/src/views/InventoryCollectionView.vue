@@ -255,6 +255,7 @@
 import { ref, watch, nextTick } from 'vue'
 import axios from '../plugins/axios'
 import PageHeader from '../components/PageHeader.vue'
+import { todayLocalDateString } from '../utils/date'
 import {
   BoltIcon,
   DocumentTextIcon,
@@ -307,7 +308,7 @@ watch(
 )
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
-const startDate = ref(new Date().toISOString().split('T')[0]) // Initialize with today's date
+const startDate = ref(todayLocalDateString()) // Initialize with today's local date
 const username = ref('')
 const password = ref('')
 

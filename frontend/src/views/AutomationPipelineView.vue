@@ -275,6 +275,7 @@ import { ref, computed, nextTick, watch } from 'vue'
 import axios from '../plugins/axios'
 import PageHeader from '../components/PageHeader.vue'
 import { usePipelineStream, type PipelineStepDef } from '../composables/usePipelineStream'
+import { todayLocalDateString } from '../utils/date'
 import {
   BoltIcon,
   CheckCircleIcon,
@@ -318,7 +319,7 @@ const pmsUsername = ref('')
 const pmsPassword = ref('')
 const dedgeUsername = ref('')
 const dedgePassword = ref('')
-const startDate = ref(new Date().toISOString().split('T')[0])
+const startDate = ref(todayLocalDateString())
 const headless = ref(false)
 const configError = ref('')
 const stopping = ref(false)

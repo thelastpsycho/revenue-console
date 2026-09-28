@@ -81,13 +81,19 @@ def combine_inventory_files():
         # Sort by Date
         combined_df = combined_df.sort_values('Date')
 
-        # sum two values in the same column
+        # Sum two values in the same column. Uses add(fill_value=0) rather
+        # than plain '+' - PMS and CM don't always cover the exact same date
+        # range (observed: one day offset at both ends of the window), so an
+        # outer-joined boundary date can have a real value on one side and
+        # NaN on the other. Plain addition would turn that real value into
+        # NaN too, silently discarding it instead of just missing the side
+        # that has no data for that date.
         for col in combined_df.columns:
             if col.endswith('_x'):
                 base_col = col[:-2]
                 y_col = base_col + '_y'
                 if y_col in combined_df.columns:
-                    combined_df[base_col] = combined_df[col] + combined_df[y_col]
+                    combined_df[base_col] = combined_df[col].add(combined_df[y_col], fill_value=0)
                     combined_df = combined_df.drop([col, y_col], axis=1)
 
         # Convert date back to string format for consistency

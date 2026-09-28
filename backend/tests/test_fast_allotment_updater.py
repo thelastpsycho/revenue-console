@@ -3,7 +3,7 @@ NoOfRoom=0 with the category left open - see fast_allotment_updater.py's
 module docstring."""
 import pytest
 
-from app.integrations.pms.fast_allotment_updater import push_allotment, push_jobs_concurrent
+from app.integrations.pms.fast_allotment_updater import push_allotment, push_jobs_concurrent, verify_pushed_jobs
 from app.integrations.pms.api_client import PMSApiClient
 
 
@@ -133,3 +133,73 @@ def test_on_result_not_called_for_intermediate_retry_attempts(monkeypatch):
     )
     assert len(seen) == 1
     assert seen[0]['success'] is True
+
+
+def _single_day_job(number_of_rooms=5, date='2026/10/01'):
+    return {'room_type': 'deluxe', 'label': 'Deluxe', 'checkbox_value': 'DLT',
+            'start_date': date, 'end_date': date, 'number_of_rooms': number_of_rooms}
+
+
+def _pushed_result(job=None):
+    return {'job': job or _single_day_job(), 'success': True, 'payload': {}, 'response': None, 'error': None, 'attempts': 1}
+
+
+def test_verify_pushed_jobs_confirms_a_matching_value(monkeypatch):
+    def fake_grid(self, company_id, start_date, days):
+        return [{'TrxDate': '2026-10-01T00:00:00', 'DLT': 5}]
+    monkeypatch.setattr(PMSApiClient, 'get_allotment_room_inventory', fake_grid)
+
+    mismatches = verify_pushed_jobs([_pushed_result()], username='u', password='p', settle_seconds=0)
+    assert mismatches == []
+
+
+def test_verify_pushed_jobs_flags_a_mismatch(monkeypatch):
+    def fake_grid(self, company_id, start_date, days):
+        return [{'TrxDate': '2026-10-01T00:00:00', 'DLT': 99}]
+    monkeypatch.setattr(PMSApiClient, 'get_allotment_room_inventory', fake_grid)
+
+    mismatches = verify_pushed_jobs([_pushed_result()], username='u', password='p', settle_seconds=0)
+    assert len(mismatches) == 1
+    assert mismatches[0]['expected'] == 5
+    assert mismatches[0]['actual'] == 99
+    assert mismatches[0]['date'] == '2026-10-01'
+
+
+def test_verify_pushed_jobs_ignores_failed_and_dry_run_results(monkeypatch):
+    calls = {'n': 0}
+
+    def fake_grid(self, company_id, start_date, days):
+        calls['n'] += 1
+        return []
+    monkeypatch.setattr(PMSApiClient, 'get_allotment_room_inventory', fake_grid)
+
+    failed_result = {'job': _single_day_job(), 'success': False, 'payload': {}, 'response': None, 'error': 'x', 'attempts': 1}
+    mismatches = verify_pushed_jobs([failed_result], username='u', password='p', settle_seconds=0)
+    assert mismatches == []
+    assert calls['n'] == 0
+
+
+def test_verify_pushed_jobs_treats_missing_date_as_a_mismatch(monkeypatch):
+    def fake_grid(self, company_id, start_date, days):
+        return []  # PMS grid has no row at all for the pushed date
+    monkeypatch.setattr(PMSApiClient, 'get_allotment_room_inventory', fake_grid)
+
+    mismatches = verify_pushed_jobs([_pushed_result()], username='u', password='p', settle_seconds=0)
+    assert len(mismatches) == 1
+    assert mismatches[0]['actual'] is None
+
+
+def test_verify_pushed_jobs_covers_every_date_in_a_multi_day_job(monkeypatch):
+    def fake_grid(self, company_id, start_date, days):
+        return [
+            {'TrxDate': '2026-10-01T00:00:00', 'DLT': 5},
+            {'TrxDate': '2026-10-02T00:00:00', 'DLT': 5},
+            {'TrxDate': '2026-10-03T00:00:00', 'DLT': 1},  # doesn't match the pushed 5
+        ]
+    monkeypatch.setattr(PMSApiClient, 'get_allotment_room_inventory', fake_grid)
+
+    job = {'room_type': 'deluxe', 'label': 'Deluxe', 'checkbox_value': 'DLT',
+           'start_date': '2026/10/01', 'end_date': '2026/10/03', 'number_of_rooms': 5}
+    mismatches = verify_pushed_jobs([_pushed_result(job)], username='u', password='p', settle_seconds=0)
+    assert len(mismatches) == 1
+    assert mismatches[0]['date'] == '2026-10-03'

@@ -180,7 +180,7 @@
               >
                 <span class="text-slate-500">{{ formatTime(log.timestamp) }}</span>
                 <span v-if="log.step" class="shrink-0 rounded bg-app-primary px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 shadow-neu-inset-sm">{{ stepLabel(log.step) }}</span>
-                <span class="flex-1">{{ log.message }}</span>
+                <span class="flex-1 whitespace-pre-wrap break-words">{{ log.message }}</span>
               </div>
             </div>
           </div>
@@ -388,6 +388,7 @@ import { ref, computed, nextTick, watch, onMounted } from 'vue'
 import axios from '../plugins/axios'
 import PageHeader from '../components/PageHeader.vue'
 import { usePipelineStream, type PipelineStepDef } from '../composables/usePipelineStream'
+import { todayLocalDateString } from '../utils/date'
 import {
   BoltIcon,
   CheckCircleIcon,
@@ -404,6 +405,7 @@ const PIPELINE_STEPS: PipelineStepDef[] = [
   { id: 'yield', label: 'Yield' },
   { id: 'verify', label: 'Verify' },
   { id: 'allotment', label: 'Allotment (API)' },
+  { id: 'verify_allotment', label: 'Verify push' },
   { id: 'bar', label: 'BAR' },
 ]
 const STEP_LABEL_BY_ID = Object.fromEntries(PIPELINE_STEPS.map(s => [s.id, s.label]))
@@ -461,7 +463,7 @@ const pmsUsername = ref('')
 const pmsPassword = ref('')
 const dedgeUsername = ref('')
 const dedgePassword = ref('')
-const startDate = ref(new Date().toISOString().split('T')[0])
+const startDate = ref(todayLocalDateString())
 const headless = ref(false)
 const configError = ref('')
 const stopping = ref(false)

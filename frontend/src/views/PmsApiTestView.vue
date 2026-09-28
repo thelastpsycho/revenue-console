@@ -265,8 +265,9 @@
 import { ref, onMounted } from 'vue'
 import axios from '../plugins/axios'
 import PageHeader from '../components/PageHeader.vue'
+import { todayLocalDateString } from '../utils/date'
 
-const todayIso = new Date().toISOString().split('T')[0]
+const todayIso = todayLocalDateString()
 
 // Inventory fetch state
 const invStartDate = ref(todayIso)

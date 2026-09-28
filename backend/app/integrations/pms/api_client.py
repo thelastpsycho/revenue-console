@@ -92,10 +92,39 @@ class PMSApiClient:
 
     def get_available_room_inventory(self, start_date, days):
         """Fetch room-availability rows for `days` days starting at `start_date`
-        (YYYY-MM-DD). Equivalent to the Room Availability page's search."""
+        (YYYY-MM-DD). Equivalent to the Room Availability page's search.
+
+        Note: this endpoint's per-room-type fields (DLT, PRKG, ...) are
+        remaining PHYSICAL availability, not the allotment/online-sale cap -
+        use get_allotment_room_inventory() to read back what save_allotment
+        actually wrote."""
         return self._api_post(
             "AvailableRoomInventoryType",
             {
+                "TrxDate": start_date,
+                "Days": days,
+                "HotelId": self.hotel_id,
+                "UserId": self.user_id,
+            },
+        )
+
+    def get_allotment_room_inventory(self, company_id, start_date, days):
+        """Fetch the current allotment grid ('Allotment Room List - Channel
+        Manager' page) for `days` days from `start_date` (YYYY-MM-DD).
+
+        Confirmed via a live probe (2026-09-27): each response row's
+        per-room-type fields are keyed by the same short codes used as
+        `type_id`/`checkbox_value` in save_allotment (e.g. "DLT", "PRKG"),
+        and their values match what save_allotment most recently wrote for
+        that room type/date - unlike get_available_room_inventory's fields,
+        which are a different number (remaining physical availability).
+        There are also `{code}_REQ` and `{code}_ATTR` fields in the response
+        whose exact semantics weren't confirmed (REQ sometimes differs from
+        the plain field; ATTR was 0 in every sampled row) - not used here."""
+        return self._api_post(
+            "AllotmentRoomInventory",
+            {
+                "CompanyId": company_id,
                 "TrxDate": start_date,
                 "Days": days,
                 "HotelId": self.hotel_id,
