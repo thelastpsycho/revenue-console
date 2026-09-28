@@ -32,107 +32,51 @@
       </div>
 
       <!-- Configuration Form (Collapsible) -->
-      <div v-if="showCustomConfig" class="flex-shrink-0 border-b border-slate-200 p-6">
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <!-- Left Column -->
-          <div class="space-y-6">
-            <!-- Demand Configuration -->
-            <div>
-              <h4 class="text-base font-semibold text-app-tertiary flex items-center">
-                <SignalIcon class="h-5 w-5 mr-2 text-app-accent" />
-                Demand Configuration
-              </h4>
-              <p class="text-xs text-slate-500 mt-1">Define how demand levels are calculated based on occupancy.</p>
-              <div class="mt-3 space-y-4 rounded-xl bg-app-primary p-4 shadow-neu-inset-sm">
-                <div>
-                  <label class="block text-sm font-semibold text-slate-600">Demand Bins</label>
-                  <input v-model="customConfig.demand_bins" type="text" class="neu-input mt-1" placeholder="[0, 70, 85, 100]">
-                </div>
-                <div>
-                  <label class="block text-sm font-semibold text-slate-600">Demand Labels</label>
-                  <input v-model="customConfig.demand_labels" type="text" class="neu-input mt-1" placeholder="['Low', 'Medium', 'High']">
-                </div>
-              </div>
-            </div>
-
-            <!-- Threshold Configuration -->
-            <div>
-              <h4 class="text-base font-semibold text-app-tertiary flex items-center">
-                <ScaleIcon class="h-5 w-5 mr-2 text-app-accent" />
-                Inventory Thresholds
-              </h4>
-              <p class="text-xs text-slate-500 mt-1">Set percentage thresholds for low inventory warnings.</p>
-              <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-xl bg-app-primary p-4 shadow-neu-inset-sm">
-                <div>
-                  <label class="block text-sm font-semibold text-slate-600">Very Low (%)</label>
-                  <input v-model.number="customConfig.very_low_threshold_pct" type="number" step="0.01" class="neu-input mt-1">
-                </div>
-                <div>
-                  <label class="block text-sm font-semibold text-slate-600">Low (%)</label>
-                  <input v-model.number="customConfig.low_threshold_pct" type="number" step="0.01" class="neu-input mt-1">
-                </div>
-              </div>
-            </div>
-
-            <!-- BAR Rate Shift -->
-            <div>
-              <h4 class="text-base font-semibold text-app-tertiary flex items-center">
-                <BanknotesIcon class="h-5 w-5 mr-2 text-app-accent" />
-                BAR Rate Shift
-              </h4>
-              <p class="text-xs text-slate-500 mt-1">Shift the base BAR matrix N levels for Deluxe and Premiere Rooms, applied before scarcity escalation. Positive = more expensive (e.g. 1 turns base BAR5 into BAR4). Negative = cheaper (e.g. -1 turns base BAR5 into BAR6).</p>
-              <div class="mt-3 rounded-xl bg-app-primary p-4 shadow-neu-inset-sm">
-                <div>
-                  <label class="block text-sm font-semibold text-slate-600">Shift Levels</label>
-                  <input v-model.number="customConfig.bar_level_shift" type="number" step="1" class="neu-input mt-1">
-                </div>
-              </div>
-            </div>
+      <div v-if="showCustomConfig" class="flex-shrink-0 border-b border-slate-200 p-3">
+        <div class="flex flex-wrap items-start gap-x-5 gap-y-2.5 rounded-xl bg-app-primary p-3 shadow-neu-inset-sm">
+          <div class="flex flex-col">
+            <label class="text-[10px] font-medium text-slate-500" title="Define how demand levels are calculated based on occupancy.">Demand bins</label>
+            <input v-model="customConfig.demand_bins" type="text" class="neu-input mt-1 w-40 px-2.5 py-1.5 text-sm" placeholder="[0, 70, 85, 100]">
           </div>
-
-          <!-- Right Column -->
-          <div class="space-y-6">
-            <!-- Room Capacity Configuration -->
-            <div>
-              <h4 class="text-base font-semibold text-app-tertiary flex items-center">
-                <BuildingOffice2Icon class="h-5 w-5 mr-2 text-app-accent" />
-                Room Capacity
-              </h4>
-              <p class="text-xs text-slate-500 mt-1">Specify the total number of rooms available for each type.</p>
-              <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-xl bg-app-primary p-4 shadow-neu-inset-sm">
-                <div>
-                  <label class="block text-sm font-semibold text-slate-600">Deluxe Rooms</label>
-                  <input v-model.number="customConfig.room_caps['Deluxe Room']" type="number" class="neu-input mt-1">
-                </div>
-                <div>
-                  <label class="block text-sm font-semibold text-slate-600">Premiere Rooms</label>
-                  <input v-model.number="customConfig.room_caps['Premiere Room']" type="number" class="neu-input mt-1">
-                </div>
-              </div>
-            </div>
-
-            <!-- Deluxe Override Configuration -->
-            <div>
-              <h4 class="text-base font-semibold text-app-tertiary flex items-center">
-                <WrenchScrewdriverIcon class="h-5 w-5 mr-2 text-app-accent" />
-                Deluxe Override Rule
-              </h4>
-              <p class="text-xs text-slate-500 mt-1">Define rules to automatically adjust Deluxe inventory.</p>
-              <div class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-4 rounded-xl bg-app-primary p-4 shadow-neu-inset-sm">
-                <div>
-                  <label class="block text-sm font-semibold text-slate-600">Occupancy (%)</label>
-                  <input v-model.number="customConfig.deluxe_override_occupancy" type="number" class="neu-input mt-1">
-                </div>
-                <div>
-                  <label class="block text-sm font-semibold text-slate-600">Premiere Min</label>
-                  <input v-model.number="customConfig.deluxe_override_premiere" type="number" class="neu-input mt-1">
-                </div>
-                <div>
-                  <label class="block text-sm font-semibold text-slate-600">Amount</label>
-                  <input v-model.number="customConfig.deluxe_override_amount" type="number" class="neu-input mt-1">
-                </div>
-              </div>
-            </div>
+          <div class="flex flex-col">
+            <label class="text-[10px] font-medium text-slate-500" title="Define how demand levels are calculated based on occupancy.">Demand labels</label>
+            <input v-model="customConfig.demand_labels" type="text" class="neu-input mt-1 w-44 px-2.5 py-1.5 text-sm" placeholder="['Low', 'Medium', 'High']">
+          </div>
+          <div class="my-1 h-8 w-px self-center bg-slate-200"></div>
+          <div class="flex flex-col">
+            <label class="text-[10px] font-medium text-slate-500" title="Percentage thresholds for low inventory warnings.">Very low %</label>
+            <input v-model.number="customConfig.very_low_threshold_pct" type="number" step="0.01" class="neu-input mt-1 w-20 px-2.5 py-1.5 text-sm">
+          </div>
+          <div class="flex flex-col">
+            <label class="text-[10px] font-medium text-slate-500" title="Percentage thresholds for low inventory warnings.">Low %</label>
+            <input v-model.number="customConfig.low_threshold_pct" type="number" step="0.01" class="neu-input mt-1 w-20 px-2.5 py-1.5 text-sm">
+          </div>
+          <div class="my-1 h-8 w-px self-center bg-slate-200"></div>
+          <div class="flex flex-col">
+            <label class="text-[10px] font-medium text-slate-500" title="Shift the base BAR matrix N levels for Deluxe and Premiere Rooms, applied before scarcity escalation. Positive = more expensive (e.g. 1 turns base BAR5 into BAR4). Negative = cheaper (e.g. -1 turns base BAR5 into BAR6).">BAR shift</label>
+            <input v-model.number="customConfig.bar_level_shift" type="number" step="1" class="neu-input mt-1 w-16 px-2.5 py-1.5 text-sm">
+          </div>
+          <div class="my-1 h-8 w-px self-center bg-slate-200"></div>
+          <div class="flex flex-col">
+            <label class="text-[10px] font-medium text-slate-500" title="Total rooms available for each type.">Deluxe cap</label>
+            <input v-model.number="customConfig.room_caps['Deluxe Room']" type="number" class="neu-input mt-1 w-20 px-2.5 py-1.5 text-sm">
+          </div>
+          <div class="flex flex-col">
+            <label class="text-[10px] font-medium text-slate-500" title="Total rooms available for each type.">Premiere cap</label>
+            <input v-model.number="customConfig.room_caps['Premiere Room']" type="number" class="neu-input mt-1 w-20 px-2.5 py-1.5 text-sm">
+          </div>
+          <div class="my-1 h-8 w-px self-center bg-slate-200"></div>
+          <div class="flex flex-col">
+            <label class="text-[10px] font-medium text-slate-500" title="Rule to automatically adjust Deluxe inventory.">Override occ %</label>
+            <input v-model.number="customConfig.deluxe_override_occupancy" type="number" class="neu-input mt-1 w-20 px-2.5 py-1.5 text-sm">
+          </div>
+          <div class="flex flex-col">
+            <label class="text-[10px] font-medium text-slate-500" title="Rule to automatically adjust Deluxe inventory.">Premiere min</label>
+            <input v-model.number="customConfig.deluxe_override_premiere" type="number" class="neu-input mt-1 w-20 px-2.5 py-1.5 text-sm">
+          </div>
+          <div class="flex flex-col">
+            <label class="text-[10px] font-medium text-slate-500" title="Rule to automatically adjust Deluxe inventory.">Amount</label>
+            <input v-model.number="customConfig.deluxe_override_amount" type="number" class="neu-input mt-1 w-16 px-2.5 py-1.5 text-sm">
           </div>
         </div>
       </div>
@@ -238,9 +182,6 @@ import {
   BuildingOfficeIcon,
   BuildingStorefrontIcon,
   BanknotesIcon,
-  WrenchScrewdriverIcon,
-  ScaleIcon,
-  BuildingOffice2Icon,
 } from '@heroicons/vue/24/outline'
 
 const isLoading = ref(false)
