@@ -7,6 +7,7 @@ import threading
 import json
 
 from ..pipeline import fast_runner
+from ..pipeline import fast_pipeline_log_store
 
 bp = Blueprint('fast_pipeline', __name__)
 
@@ -86,6 +87,29 @@ def stream_fast_pipeline_logs():
             'X-Accel-Buffering': 'no'
         }
     )
+
+
+@bp.route('/api/fast-pipeline/history', methods=['GET'])
+def fast_pipeline_history():
+    limit = request.args.get('limit', 50, type=int)
+    return jsonify({"status": "success", "runs": fast_pipeline_log_store.list_runs(limit=limit)})
+
+
+@bp.route('/api/fast-pipeline/history/<int:run_id>', methods=['GET'])
+def fast_pipeline_run_detail(run_id):
+    run = fast_pipeline_log_store.get_run(run_id)
+    if run is None:
+        return jsonify({"status": "error", "message": "Run not found"}), 404
+    return jsonify({"status": "success", "run": run, "logs": fast_pipeline_log_store.get_run_logs(run_id)})
+
+
+@bp.route('/api/fast-pipeline/search', methods=['GET'])
+def fast_pipeline_search():
+    query = (request.args.get('q') or '').strip()
+    if not query:
+        return jsonify({"status": "success", "matches": []})
+    limit = request.args.get('limit', 200, type=int)
+    return jsonify({"status": "success", "matches": fast_pipeline_log_store.search_log_entries(query, limit=limit)})
 
 
 @bp.route('/api/fast-pipeline/stop', methods=['POST'])

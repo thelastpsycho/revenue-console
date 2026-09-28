@@ -1,7 +1,9 @@
 """API-based counterpart to pipeline/runner.py.
 
-Runs the same seven-stage workflow, but the two PMS stages go through the
-Selenium-free JSON API client (integrations/pms/fast_inventory_scraper.py,
+Runs a superset of runner.py's seven-stage workflow (an added
+"verify_allotment" stage re-checks a live allotment push against the PMS's
+own allotment grid), but the two PMS stages go through the Selenium-free JSON
+API client (integrations/pms/fast_inventory_scraper.py,
 fast_allotment_updater.py) instead of driving Chrome through the PMS UI. The
 two D-EDGE stages (scrape_cm, bar) still use Selenium - no D-EDGE API was
 reverse-engineered, so those stages are unchanged from runner.py.
@@ -23,6 +25,7 @@ import sqlite3
 import sys
 import threading
 import time
+import traceback
 import queue
 from datetime import datetime
 from io import StringIO
@@ -31,7 +34,7 @@ import pandas as pd
 
 from ..shared import log_queue, allotment_run_control
 from ..integrations.pms.fast_inventory_scraper import fetch_room_inventory
-from ..integrations.pms.fast_allotment_updater import build_full_plan, push_jobs_concurrent, FULL_ROOM_TYPE_CONFIG
+from ..integrations.pms.fast_allotment_updater import build_full_plan, push_jobs_concurrent, verify_pushed_jobs, FULL_ROOM_TYPE_CONFIG
 from ..inventory.pms_processor import process_pms_inventory
 from ..integrations.dedge.inventory_scraper import scrape_cm_inventory
 from ..inventory.inventory_combiner import combine_inventory_files
@@ -40,6 +43,7 @@ from ..integrations.dedge.bar_updater import update_bar, setup_driver as dedge_s
 from ..routes.database_routes import get_db_path
 from ..infrastructure.paths import get_data_dir
 from . import runner as selenium_pipeline_runner
+from . import fast_pipeline_log_store
 
 STEPS = [
     {"id": "scrape_pms", "label": "Scrape PMS inventory (API)"},
@@ -48,6 +52,7 @@ STEPS = [
     {"id": "yield", "label": "Calculate yield"},
     {"id": "verify", "label": "Verify data"},
     {"id": "allotment", "label": "Push allotment (PMS API)"},
+    {"id": "verify_allotment", "label": "Verify allotment push"},
     {"id": "bar", "label": "Update BAR pricing (D-EDGE)"},
 ]
 STEP_IDS = [s["id"] for s in STEPS]
@@ -57,6 +62,7 @@ pipeline_queue = queue.Queue()
 pipeline_active = False
 pipeline_error = None
 pipeline_current_step = None
+_current_run_id = None
 _lock = threading.Lock()
 
 # Raw table column dtypes, matching integrations/pms/inventory_scraper.py's
@@ -104,6 +110,8 @@ def try_acquire():
 
 def _emit(step, type_, message):
     pipeline_queue.put({"step": step, "type": type_, "message": message})
+    if _current_run_id is not None:
+        fast_pipeline_log_store.log_entry(_current_run_id, step, type_, message)
 
 
 def _begin_step(step_id):
@@ -128,6 +136,8 @@ def _log_forwarder(step_ref, stop_flag):
         msg = dict(msg)
         msg["step"] = step_ref[0]
         pipeline_queue.put(msg)
+        if _current_run_id is not None:
+            fast_pipeline_log_store.log_entry(_current_run_id, msg.get("step"), msg.get("type", "info"), msg.get("message", ""))
 
 
 def _capture_prints(step_id, fn):
@@ -254,10 +264,11 @@ def run_pipeline(config):
     config["allotmentDryRun"]: default True - builds every allotment payload
     without sending it. Must be explicitly set False to push live.
     """
-    global pipeline_error, pipeline_current_step, pipeline_active
+    global pipeline_error, pipeline_current_step, pipeline_active, _current_run_id
     pipeline_error = None
     pipeline_start_time = time.time()
     allotment_run_control.reset()
+    _current_run_id = fast_pipeline_log_store.start_run(config)
 
     enabled = {s["id"]: (config.get("steps") or {}).get(s["id"], True) for s in STEPS}
     bar_rooms = tuple(config.get("barRooms") or ("deluxe", "premiere"))
@@ -333,6 +344,7 @@ def run_pipeline(config):
         else:
             skip("verify")
 
+        allotment_result = None
         if enabled["allotment"] and allotment_room_types:
             begin("allotment")
             plan = build_full_plan(room_types=allotment_room_types, skip_unchanged=config.get("skipUnchanged", True))
@@ -368,12 +380,43 @@ def run_pipeline(config):
                     on_result=_on_job_result,
                     on_retry=_on_retry,
                 )
+                allotment_result = result
                 mode = "dry run" if allotment_dry_run else "LIVE"
+
                 if not allotment_dry_run and result["failed_count"] > 0:
                     raise PipelineStepError("allotment", f"{result['failed_count']} of {result['total']} allotment push(es) failed - see the FAILED lines above for which ones and why")
                 _emit("allotment", "success", f"Allotment ({mode}): {result['success_count']}/{result['total']} succeeded in {result['elapsed_seconds']:.2f}s")
         else:
             skip("allotment", "No room types selected" if enabled["allotment"] else "Skipped by user")
+
+        if enabled["verify_allotment"]:
+            begin("verify_allotment")
+            if allotment_dry_run:
+                _emit("verify_allotment", "success", "Dry run - nothing was pushed live, skipping re-check")
+            elif allotment_result is None or allotment_result["success_count"] == 0:
+                _emit("verify_allotment", "success", "Nothing was pushed this run - skipping re-check")
+            else:
+                _emit("verify_allotment", "info", "Re-checking pushed values against the PMS's own allotment grid...")
+                try:
+                    mismatches = verify_pushed_jobs(
+                        allotment_result["results"],
+                        company_id=config.get("companyId", 1001),
+                        username=config["pmsUsername"], password=config["pmsPassword"],
+                    )
+                    for m in mismatches:
+                        job = m["job"]
+                        _emit("verify_allotment", "error",
+                              f"MISMATCH {job['label']} {m['date']}: expected {m['expected']}, PMS shows {m['actual']}")
+                    checked = allotment_result["success_count"]
+                    mismatched_jobs = len({id(m["job"]) for m in mismatches})
+                    if mismatches:
+                        _emit("verify_allotment", "error", f"Re-check: {checked - mismatched_jobs}/{checked} pushed job(s) confirmed matching")
+                    else:
+                        _emit("verify_allotment", "success", f"Re-check: {checked}/{checked} pushed job(s) confirmed matching")
+                except Exception as e:
+                    _emit("verify_allotment", "success", f"Re-check skipped (verification itself failed, pushes are unaffected): {e}")
+        else:
+            skip("verify_allotment")
 
         if enabled["bar"] and bar_rooms:
             begin("bar")
@@ -388,11 +431,20 @@ def run_pipeline(config):
 
         _emit(None, "success", "Pipeline completed successfully")
 
-    except Exception as e:
+    except PipelineStepError as e:
         pipeline_error = str(e)
-        step = getattr(e, "step", pipeline_current_step)
-        _emit(step, "error", str(e))
+        _emit(e.step, "error", str(e))
         _emit(None, "error", f"Pipeline stopped: {e}")
+
+    except Exception as e:
+        # Unlike PipelineStepError (raised deliberately, with a message that
+        # already says what's wrong), reaching here means something broke
+        # somewhere we didn't anticipate - the message alone (e.g. "'NoneType'
+        # object has no attribute 'x'") won't say which line. Emit the full
+        # traceback so it's visible in the log stream, not just the server console.
+        pipeline_error = str(e)
+        _emit(pipeline_current_step, "error", f"{e}\n{traceback.format_exc()}")
+        _emit(None, "error", f"Pipeline stopped (unexpected error): {e}")
 
     finally:
         # dedge_driver is deliberately NOT quit here - it uses the persistent
@@ -400,6 +452,8 @@ def run_pipeline(config):
         # session for next time, matching runner.py's convention.
         stop_flag.set()
         forwarder.join(timeout=5)
+        fast_pipeline_log_store.finish_run(_current_run_id, "error" if pipeline_error else "success", pipeline_error)
+        _current_run_id = None
         pipeline_current_step = None
         pipeline_active = False
         pipeline_queue.put(None)

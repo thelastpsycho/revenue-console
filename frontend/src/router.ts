@@ -8,6 +8,7 @@ import BarPricingView from './views/BarPricingView.vue'
 import AutomationPipelineView from './views/AutomationPipelineView.vue'
 import PmsApiTestView from './views/PmsApiTestView.vue'
 import FastApiPipelineView from './views/FastApiPipelineView.vue'
+import FastPipelineHistoryView from './views/FastPipelineHistoryView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -56,6 +57,11 @@ const router = createRouter({
       path: '/fast-api-pipeline',
       name: 'fast-api-pipeline',
       component: FastApiPipelineView
+    },
+    {
+      path: '/fast-pipeline-history',
+      name: 'fast-pipeline-history',
+      component: FastPipelineHistoryView
     }
   ]
 })
