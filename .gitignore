@@ -55,3 +55,13 @@ backend/app/scraper/.dedge_profile/
 # Graphify generated knowledge-graph output/cache
 graphify-out/
 
+# scripts/trigger_fast_pipeline.sh --schedule lockfile (runtime state, not source)
+scripts/.trigger_fast_pipeline.schedule.pid
+
+# Runtime data: generated databases, screenshots, debug HTML/xlsx exports.
+# scheduled_fast_pipeline_config.json is a deliberate exception - it's a
+# source-controlled default config, not pipeline output.
+backend/app/scraper/data/*
+!backend/app/scraper/data/.gitkeep
+!backend/app/scraper/data/scheduled_fast_pipeline_config.json
+

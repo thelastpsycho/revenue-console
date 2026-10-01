@@ -53,7 +53,7 @@ For backward compatibility, runtime data remains in:
 
 `backend/app/scraper/data/`
 
-The source-code refactor does **not** move existing SQLite databases, uploads, screenshots, or HTML debug artifacts. As of 2026-09-26 this directory is tracked in git (previously gitignored) so pipeline runs' output - including `allocation_policy.json` if one is added - is committed as part of normal history rather than staying local-only; each pipeline run will show as working-tree changes here until committed. The persistent D-EDGE Chrome profile remains gitignored at:
+The source-code refactor does **not** move existing SQLite databases, uploads, screenshots, or HTML debug artifacts. This directory was briefly tracked in git (2026-09-26 to 2026-10-01) so pipeline output would have history, but that produced working-tree churn on every run instead - as of 2026-10-01 it's gitignored again, with one deliberate exception: `scheduled_fast_pipeline_config.json` (the Fast API Pipeline CLI's default config, not generated output) stays tracked. The persistent D-EDGE Chrome profile remains gitignored at:
 
 `backend/app/scraper/.dedge_profile/`
 

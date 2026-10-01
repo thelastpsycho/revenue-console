@@ -14,6 +14,9 @@
 #   --schedule    Run immediately, then keep re-running every hour until
 #                 stopped (Ctrl-C). Combine with --live for unattended live
 #                 runs, or leave it off to repeat in safe/preview mode.
+#                 Refuses to start a second overlapping loop (see
+#                 scripts/.trigger_fast_pipeline.schedule.pid) - if one's
+#                 already running, kill its PID first.
 #   --skip-<step> Skip one pipeline step, e.g. --skip-bar. Repeatable.
 #                 Valid steps: scrape_pms scrape_cm combine yield verify
 #                 allotment verify_allotment bar (dashes in the flag are
@@ -23,6 +26,7 @@ set -euo pipefail
 SELF="${BASH_SOURCE[0]}"
 ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
 CONFIG_FILE="$ROOT/backend/app/scraper/data/scheduled_fast_pipeline_config.json"
+SCHEDULE_LOCK="$ROOT/scripts/.trigger_fast_pipeline.schedule.pid"
 
 VALID_STEPS=(scrape_pms scrape_cm combine yield verify allotment verify_allotment bar)
 
@@ -63,7 +67,27 @@ done
 # invocation's own `set -e` and exits with non-zero, which this loop treats
 # as "try again next hour" instead of a set -e footgun that could silently
 # skip cleanup or run partway through iteration N+1 with stale state.
+# A lockfile recording this loop's own PID - so a second `--schedule`
+# invocation (e.g. started again without noticing an earlier one never got
+# killed) refuses to start instead of silently stacking a second hourly
+# loop on top of the first. Each recursive single-run invocation below does
+# NOT re-enter this block (SCHEDULE is only set on the top-level process -
+# --schedule is deliberately excluded from PASSTHROUGH_ARGS), so the lock is
+# acquired/released exactly once per schedule loop's lifetime.
 if [[ "$SCHEDULE" == 1 ]]; then
+  if [[ -f "$SCHEDULE_LOCK" ]]; then
+    existing_pid="$(sed -n '1p' "$SCHEDULE_LOCK" 2>/dev/null)"
+    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+      echo "trigger_fast_pipeline.sh: a --schedule loop is already running (PID $existing_pid)." >&2
+      echo "  $(sed -n '2p' "$SCHEDULE_LOCK" 2>/dev/null)" >&2
+      echo "Stop it first with: kill $existing_pid" >&2
+      exit 1
+    fi
+    echo "trigger_fast_pipeline.sh: clearing a stale schedule lock (PID $existing_pid is no longer running)" >&2
+  fi
+  printf '%s\n%s\n' "$$" "started $(date '+%Y-%m-%d %H:%M:%S'), args: ${PASSTHROUGH_ARGS[*]:-none}" > "$SCHEDULE_LOCK"
+  trap '[[ "$(sed -n "1p" "$SCHEDULE_LOCK" 2>/dev/null)" == "$$" ]] && rm -f "$SCHEDULE_LOCK"' EXIT
+
   echo "Schedule mode: running now, then every hour until stopped (Ctrl-C)."
   while true; do
     if ! "$SELF" "${PASSTHROUGH_ARGS[@]}"; then
