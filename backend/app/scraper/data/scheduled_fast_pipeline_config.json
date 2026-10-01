@@ -1,0 +1,33 @@
+{
+  "steps": {
+    "scrape_pms": true,
+    "scrape_cm": true,
+    "combine": true,
+    "yield": true,
+    "verify": true,
+    "allotment": true,
+    "verify_allotment": true,
+    "bar": true
+  },
+  "barRooms": ["deluxe", "premiere"],
+  "allotmentRoomTypes": ["deluxe", "premiere"],
+  "allotmentConcurrency": 4,
+  "companyId": 1001,
+  "skipUnchanged": true,
+  "headless": false,
+  "yieldConfig": {
+    "demand_bins": [0, 70, 85, 100],
+    "demand_labels": ["Low", "Medium", "High"],
+    "very_low_threshold_pct": 5,
+    "low_threshold_pct": 20,
+    "room_caps": {
+      "Deluxe Room": 160,
+      "Premiere Room": 260
+    },
+    "deluxe_override_occupancy": 70,
+    "deluxe_override_premiere": 61,
+    "deluxe_override_amount": 2,
+    "bar_level_shift": 0,
+    "include_simple_rooms": true
+  }
+}
