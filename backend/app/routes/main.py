@@ -642,6 +642,7 @@ def trigger_update_bar():
         reset_checkpoint = data.get('resetCheckpoint', False)
         if not isinstance(reset_checkpoint, bool):
             return jsonify({'status': 'error', 'message': 'resetCheckpoint must be boolean'}), 400
+        skip_unchanged = data.get('barSkipUnchanged', True) is not False
 
         if isinstance(rooms, str):
             rooms = [rooms]
@@ -669,6 +670,7 @@ def trigger_update_bar():
                     max_levels_per_room=max_levels_per_room,
                     headless=headless,
                     reset_checkpoint=reset_checkpoint,
+                    skip_unchanged=skip_unchanged,
                 )
 
                 if result:

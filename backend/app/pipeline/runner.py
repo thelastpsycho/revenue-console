@@ -313,7 +313,8 @@ def run_pipeline(config):
             ensure_dedge_driver()
             if not update_bar(driver=dedge_driver, username=config["dedgeUsername"],
                                password=config["dedgePassword"], rooms=bar_rooms, headless=headless,
-                               reset_checkpoint=config.get("resetCheckpoint", False)):
+                               reset_checkpoint=config.get("resetCheckpoint", False),
+                               skip_unchanged=config.get("barSkipUnchanged", True)):
                 raise PipelineStepError("bar", "BAR price-level update failed (see log above)")
             _emit("bar", "success", f"BAR pricing updated successfully ({', '.join(bar_rooms)})")
         else:

@@ -58,6 +58,7 @@ def start_fast_pipeline():
         "allotmentRoomTypes": data.get("allotmentRoomTypes"),
         "resetCheckpoint": data.get("resetCheckpoint") is True,
         "skipUnchanged": data.get("skipUnchanged", True) is not False,
+        "barSkipUnchanged": data.get("barSkipUnchanged", True) is not False,
         "allotmentDryRun": data.get("allotmentDryRun", True) is not False,
         "allotmentConcurrency": data.get("allotmentConcurrency", 4),
         "companyId": data.get("companyId", 1001),

@@ -58,6 +58,7 @@ def start_pipeline():
         "barRooms": data.get("barRooms"),
         "resetCheckpoint": data.get("resetCheckpoint") is True,
         "skipUnchanged": data.get("skipUnchanged", True) is not False,
+        "barSkipUnchanged": data.get("barSkipUnchanged", True) is not False,
     }
     thread = threading.Thread(target=pipeline_runner.run_pipeline, args=(config,))
     thread.daemon = True

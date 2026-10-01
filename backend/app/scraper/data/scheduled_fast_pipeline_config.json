@@ -14,6 +14,7 @@
   "allotmentConcurrency": 4,
   "companyId": 1001,
   "skipUnchanged": true,
+  "barSkipUnchanged": true,
   "headless": false,
   "yieldConfig": {
     "demand_bins": [0, 70, 85, 100],

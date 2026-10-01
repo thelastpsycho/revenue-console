@@ -4,7 +4,7 @@ from datetime import datetime
 import pytest
 
 from app.integrations.dedge.bar_updater import (
-    _chunk_ranges, _planned_chunks, _select_price_level, bar_number,
+    _build_skip_map, _chunk_ranges, _planned_chunks, _select_price_level, bar_number,
     build_level_groups, MAX_RANGES_PER_APPLY,
 )
 
@@ -91,3 +91,31 @@ def test_select_price_level_raises_when_missing():
     select = _FakeSelect("BAR 3 2026", "BAR 4 2026")
     with pytest.raises(RuntimeError, match="No price level 'BAR 7'"):
         _select_price_level(None, select, 7)
+
+
+def test_build_level_groups_drops_unchanged_dates():
+    source = rows(("2026-11-01", "BAR3"), ("2026-11-02", "BAR3"), ("2026-11-03", "BAR4"))
+    groups = build_level_groups(source, "Deluxe BAR Rate", unchanged_dates={"2026-11-01"})
+    assert groups == {
+        "BAR3": [(datetime(2026, 11, 2), datetime(2026, 11, 2))],
+        "BAR4": [(datetime(2026, 11, 3), datetime(2026, 11, 3))],
+    }
+
+
+def test_build_skip_map_only_flags_dates_matching_last_applied():
+    source = [
+        {"Date": "2026-10-01", "Deluxe BAR Rate": "BAR3", "Premiere BAR Rate": "BAR5"},
+        {"Date": "2026-10-02", "Deluxe BAR Rate": "BAR3", "Premiere BAR Rate": "BAR5"},
+        {"Date": "2026-10-03", "Deluxe BAR Rate": "BAR4", "Premiere BAR Rate": "BAR5"},
+    ]
+    # No prior record at all -> nothing is considered unchanged (safe default).
+    assert _build_skip_map(source, ("deluxe", "premiere"), {}) == {
+        "deluxe": set(), "premiere": set(),
+    }
+    last_applied = {
+        "deluxe": {"2026-10-01": "BAR3", "2026-10-02": "BAR3"},
+        "premiere": {"2026-10-01": "BAR5", "2026-10-02": "BAR5", "2026-10-03": "BAR5"},
+    }
+    skip_map = _build_skip_map(source, ("deluxe", "premiere"), last_applied)
+    assert skip_map["deluxe"] == {"2026-10-01", "2026-10-02"}
+    assert skip_map["premiere"] == {"2026-10-01", "2026-10-02", "2026-10-03"}

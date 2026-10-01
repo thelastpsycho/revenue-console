@@ -263,6 +263,9 @@ def run_pipeline(config):
     as barRooms).
     config["allotmentDryRun"]: default True - builds every allotment payload
     without sending it. Must be explicitly set False to push live.
+    config["barSkipUnchanged"]: default True - skips BAR dates whose computed
+    price level already matches what was last successfully applied (tracked
+    in bar_last_applied.json). Set False to force a full push this run.
     """
     global pipeline_error, pipeline_current_step, pipeline_active, _current_run_id
     pipeline_error = None
@@ -423,7 +426,8 @@ def run_pipeline(config):
             ensure_dedge_driver()
             if not update_bar(driver=dedge_driver, username=config["dedgeUsername"],
                                password=config["dedgePassword"], rooms=bar_rooms, headless=headless,
-                               reset_checkpoint=config.get("resetCheckpoint", False)):
+                               reset_checkpoint=config.get("resetCheckpoint", False),
+                               skip_unchanged=config.get("barSkipUnchanged", True)):
                 raise PipelineStepError("bar", "BAR price-level update failed (see log above)")
             _emit("bar", "success", f"BAR pricing updated successfully ({', '.join(bar_rooms)})")
         else:

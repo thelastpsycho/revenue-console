@@ -31,8 +31,10 @@ date ranges, group those ranges by price level, and do ONE "apply" per level
 ~50 daily runs into ~10 applies.
 """
 
+import json
 import os
 import re
+import tempfile
 import time
 import platform
 import traceback
@@ -49,7 +51,7 @@ from .bar_checkpoint import BarCheckpoint
 
 from ...shared import log_queue
 from ...inventory.allocation_repository import load_allocation_rows
-from ...infrastructure.paths import get_dedge_profile_dir, get_data_dir
+from ...infrastructure.paths import get_dedge_profile_dir, get_data_dir, get_data_path
 
 # --- Site / account configuration -------------------------------------------
 
@@ -434,7 +436,7 @@ def _chunk_ranges(ranges, size=MAX_RANGES_PER_APPLY):
     return [ranges[i:i + size] for i in range(0, len(ranges), size)]
 
 
-def build_level_groups(rows, column):
+def build_level_groups(rows, column, unchanged_dates=None):
     """Collapse consecutive same-level days into ranges, grouped by price level.
 
     The BAR number is the price level's real identity - D-EDGE option labels
@@ -443,11 +445,15 @@ def build_level_groups(rows, column):
     year boundary. Returns a dict keyed by bar_rate -> list of (start_date,
     end_date) datetime pairs. Rows must be date-sorted; a gap in the calendar
     (or a change of bar value) starts a new range.
+
+    unchanged_dates: optional set of "YYYY-MM-DD" strings to leave out of the
+    plan entirely (dates whose level already matches what was last applied).
     """
+    unchanged_dates = unchanged_dates or set()
     dated = []
     for row in rows:
         bar = row.get(column)
-        if not bar:
+        if not bar or row["Date"] in unchanged_dates:
             continue
         dated.append((datetime.strptime(row["Date"], "%Y-%m-%d"), str(bar)))
     dated.sort(key=lambda x: x[0])
@@ -470,13 +476,14 @@ def build_level_groups(rows, column):
     return groups
 
 
-def _planned_chunks(rows, rooms, max_levels_per_room):
+def _planned_chunks(rows, rooms, max_levels_per_room, skip_map=None):
     """Canonical fingerprint input for safe resumption after partial failures."""
+    skip_map = skip_map or {}
     plan = []
     for room in rooms:
         if room not in ROOM_CONFIG:
             continue
-        groups = build_level_groups(rows, ROOM_CONFIG[room]["column"])
+        groups = build_level_groups(rows, ROOM_CONFIG[room]["column"], unchanged_dates=skip_map.get(room, set()))
         for idx, (bar_rate, ranges) in enumerate(sorted(groups.items())):
             if max_levels_per_room and idx >= max_levels_per_room:
                 break
@@ -489,12 +496,69 @@ def _chunk_identity(room, level_label, chunk):
     return [room, level_label, [[start.isoformat(), end.isoformat()] for start, end in chunk]]
 
 
+# --- Last-applied BAR level cache --------------------------------------------
+#
+# Unlike BarCheckpoint (a same-run crash/resume aid, deleted on success), this
+# file persists indefinitely across separate successful runs: its whole
+# purpose is remembering what we last pushed live so the next run only needs
+# to touch dates whose computed level actually changed.
+
+LAST_APPLIED_PATH = get_data_path("bar_last_applied.json")
+
+
+def _load_last_applied(path=None):
+    path = path or LAST_APPLIED_PATH
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            state = json.load(handle)
+        return state if isinstance(state, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _write_last_applied(state, path=None):
+    path = path or LAST_APPLIED_PATH
+    folder = os.path.dirname(os.path.abspath(path))
+    os.makedirs(folder, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".bar-last-applied-", dir=folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            os.chmod(temporary, 0o600)
+            json.dump(state, handle, sort_keys=True, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _build_skip_map(rows, rooms, last_applied):
+    """Dates (per room) whose computed BAR level already matches the last
+    successfully applied value - safe to leave untouched this run. A date
+    with no prior record is never considered unchanged (first run, or the
+    file is missing/reset -> push everything)."""
+    skip_map = {}
+    for room in rooms:
+        cfg = ROOM_CONFIG.get(room)
+        if not cfg:
+            continue
+        room_last = last_applied.get(room, {})
+        skip_map[room] = {
+            row["Date"] for row in rows
+            if row.get(cfg["column"]) and room_last.get(row["Date"]) == str(row[cfg["column"]])
+        }
+    return skip_map
+
+
 # --- Main entry point -------------------------------------------------------
 
 def update_bar(driver=None, username=None, password=None,
                rooms=("deluxe", "premiere"), user_data_dir=DEFAULT_PROFILE_DIR,
                dry_run=False, max_levels_per_room=None, headless=None,
-               reset_checkpoint=False):
+               reset_checkpoint=False, skip_unchanged=True):
     """Apply yield engine BAR levels to the extranet for the given rooms.
 
     dry_run: build and log every apply plan but stop before clicking the final
@@ -502,6 +566,13 @@ def update_bar(driver=None, username=None, password=None,
     max_levels_per_room: cap the number of price-level groups per room (testing).
     reset_checkpoint: explicitly discard a checkpoint if starting a new run
                       after a partial failure or after intentional external edits.
+    skip_unchanged: when True (default), dates whose computed BAR level already
+                    matches what was last successfully applied (tracked in
+                    bar_last_applied.json, independent of the crash-resume
+                    checkpoint) are left out of the plan entirely. Set False to
+                    force a full push this run, e.g. after a manual change made
+                    directly on D-EDGE desyncs the record from reality. Dry runs
+                    never update the record.
     headless: run Chrome headless (None -> honour the SELENIUM_HEADLESS env var).
               Only use headless once the profile's device is trusted.
     Credentials fall back to the DEDGE_USERNAME / DEDGE_PASSWORD env vars.
@@ -519,8 +590,14 @@ def update_bar(driver=None, username=None, password=None,
         rows = load_allocation_rows()
         log(driver, f"Loaded {len(rows)} allocation rows from inventory_allocation.db")
 
+        # Always load the existing record (even when forcing a full push) so a
+        # live run's writes merge into history instead of clobbering entries
+        # for rooms/dates this run doesn't touch.
+        last_applied = _load_last_applied()
+        skip_map = _build_skip_map(rows, rooms, last_applied) if skip_unchanged else {}
+
         checkpoint = BarCheckpoint(
-            _planned_chunks(rows, rooms, max_levels_per_room),
+            _planned_chunks(rows, rooms, max_levels_per_room, skip_map=skip_map),
             reset=reset_checkpoint, dry_run=dry_run,
         )
         if checkpoint.resumed:
@@ -532,8 +609,13 @@ def update_bar(driver=None, username=None, password=None,
                 log(driver, f"Skipping unknown room '{room_key}'", type="error")
                 continue
             cfg = ROOM_CONFIG[room_key]
-            groups = build_level_groups(rows, cfg["column"])
-            log(driver, f"\n=== {cfg['room_label']} : {len(groups)} price levels to apply ===")
+            room_skip_dates = skip_map.get(room_key, set())
+            groups = build_level_groups(rows, cfg["column"], unchanged_dates=room_skip_dates)
+            if skip_unchanged and room_skip_dates:
+                log(driver, f"\n=== {cfg['room_label']} : {len(groups)} price levels to apply "
+                            f"({len(room_skip_dates)} date(s) unchanged since last apply, skipped) ===")
+            else:
+                log(driver, f"\n=== {cfg['room_label']} : {len(groups)} price levels to apply ===")
 
             processed = 0
             for bar_rate, ranges in sorted(groups.items()):
@@ -568,6 +650,13 @@ def update_bar(driver=None, username=None, password=None,
                     else:
                         _apply_price_level(driver)
                         checkpoint.mark(chunk_id)
+                        room_record = last_applied.setdefault(room_key, {})
+                        for range_start, range_end in chunk:
+                            day = range_start
+                            while day <= range_end:
+                                room_record[day.strftime("%Y-%m-%d")] = bar_rate
+                                day += timedelta(days=1)
+                        _write_last_applied(last_applied)
                         log(driver, f"  Applied {level_label} to {cfg['room_label']} successfully")
                         total_applied += 1
                 processed += 1

@@ -119,6 +119,9 @@
                 <input type="checkbox" v-model="barRooms.premiere" :disabled="isRunning" class="h-3 w-3 accent-app-accent" /> Premiere
               </label>
             </div>
+            <label class="inline-flex cursor-pointer items-center gap-1" title="Compares against the BAR level we last successfully pushed and skips dates that already match, instead of always pushing every date.">
+              <input type="checkbox" v-model="barSkipUnchanged" :disabled="isRunning" class="h-3 w-3 accent-app-accent" /> Skip unchanged BAR dates
+            </label>
           </div>
 
           <p v-if="stepEnabled.allotment && !allotmentDryRun" class="mt-2 rounded-lg bg-app-primary px-3 py-2 text-[11px] font-semibold text-amber-700 shadow-neu-inset-sm">
@@ -427,6 +430,7 @@ const companyId = ref(1001)
 const barRooms = ref({ deluxe: true, premiere: true })
 const resetCheckpoint = ref(false)
 const skipUnchanged = ref(true)
+const barSkipUnchanged = ref(true)
 
 // Room types available for the allotment push, fetched from the same config
 // the PMS API test page uses so this list can't drift from the backend's
@@ -677,6 +681,7 @@ async function confirmAndStartPipeline() {
       barRooms: barRoomTypes,
       resetCheckpoint: resetCheckpoint.value,
       skipUnchanged: skipUnchanged.value,
+      barSkipUnchanged: barSkipUnchanged.value,
       allotmentDryRun: allotmentDryRun.value,
       allotmentRoomTypes: allotmentRoomTypes.value,
       allotmentConcurrency: allotmentConcurrency.value,
