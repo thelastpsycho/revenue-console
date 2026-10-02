@@ -197,8 +197,13 @@ def load_and_clean_data(db_path=None, demand_bins=None, demand_labels=None, requ
     data['Season'] = data['Date'].apply(assign_season)
     
     try:
+        # Overbooked dates (more rooms sold than capacity) can push Occupancy
+        # past 100% - pd.cut returns NaN past the last bin edge, which would
+        # otherwise crash the whole yield step on a single bad date. Clamp
+        # only for demand-level binning; the real (unclamped) Occupancy value
+        # is kept as-is for display and for the Deluxe override check below.
         data['DemandLevel'] = pd.cut(
-            data['Occupancy'],
+            data['Occupancy'].clip(upper=demand_bins[-1]),
             bins=demand_bins,
             labels=demand_labels,
             include_lowest=True
