@@ -16,7 +16,10 @@
 #                 runs, or leave it off to repeat in safe/preview mode.
 #                 Refuses to start a second overlapping loop (see
 #                 scripts/.trigger_fast_pipeline.schedule.pid) - if one's
-#                 already running, kill its PID first.
+#                 already running, kill its PID first. Holds a caffeinate
+#                 assertion for the loop's lifetime so macOS idle sleep
+#                 doesn't pause the hourly countdown; closing the lid still
+#                 sleeps the Mac (and the loop) regardless.
 #   --skip-<step> Skip one pipeline step, e.g. --skip-bar. Repeatable.
 #                 Valid steps: scrape_pms scrape_cm combine yield verify
 #                 allotment verify_allotment bar (dashes in the flag are
@@ -87,6 +90,15 @@ if [[ "$SCHEDULE" == 1 ]]; then
   fi
   printf '%s\n%s\n' "$$" "started $(date '+%Y-%m-%d %H:%M:%S'), args: ${PASSTHROUGH_ARGS[*]:-none}" > "$SCHEDULE_LOCK"
   trap '[[ "$(sed -n "1p" "$SCHEDULE_LOCK" 2>/dev/null)" == "$$" ]] && rm -f "$SCHEDULE_LOCK"' EXIT
+
+  # Without this, macOS idle sleep suspends the `sleep 3600` below along with
+  # everything else - the countdown doesn't advance while asleep, so a run
+  # due at HH:50 can fire arbitrarily late instead (confirmed: a loop idle
+  # overnight drifted its "hourly" run by over an hour). `-w $$` ties
+  # caffeinate's lifetime to this process, so it exits on its own whenever
+  # the loop does (Ctrl-C included) - no separate cleanup needed. This only
+  # blocks *idle* sleep; closing the lid still sleeps the Mac regardless.
+  caffeinate -i -w $$ &
 
   echo "Schedule mode: running now, then every hour until stopped (Ctrl-C)."
   while true; do

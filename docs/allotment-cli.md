@@ -46,5 +46,6 @@ bar
 
 - `Ctrl-C` stops the backend, frontend, and any pipeline trigger/schedule loop together.
 - Every run — manual or scheduled — shows up in the **Fast API Pipeline → History** page in the app.
-- `--schedule` only runs while the terminal session stays open; it does not survive closing the terminal, logging out, or the Mac sleeping.
+- `--schedule` only runs while the terminal session stays open; it does not survive closing the terminal or logging out. It holds a `caffeinate` assertion to block macOS *idle* sleep (otherwise the hourly countdown pauses while asleep and the next run fires late) - but closing the lid still sleeps the Mac, and the loop, regardless.
+- A second `--schedule` invocation refuses to start while one is already running (tracked via `scripts/.trigger_fast_pipeline.schedule.pid`); stop the existing one with the `kill <PID>` command it prints first.
 - Default pipeline config (yield settings, room types, concurrency) lives in `backend/app/scraper/data/scheduled_fast_pipeline_config.json`.
