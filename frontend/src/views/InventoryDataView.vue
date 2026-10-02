@@ -84,7 +84,7 @@
               </div>
 
               <div v-else class="flex-1 overflow-auto rounded-xl bg-app-primary p-1 shadow-neu-inset">
-                <table class="min-w-full divide-y divide-slate-200" :class="tab.id === 'allocation' ? 'text-xs' : 'text-sm'">
+                <table class="min-w-full divide-y divide-slate-200" :class="tab.id === 'allocation' || tab.id === 'combined' ? 'text-xs' : 'text-sm'">
                   <thead class="bg-app-primary sticky top-0 z-10">
                     <tr>
                       <th
@@ -249,8 +249,10 @@ const getStickyClass = (tabId: string, header: string, isHeader: boolean) => {
 }
 
 // Merges Date + occupancy into one cell, e.g. "08Aug / 98.37%" (day+month, no year, plus
-// occupancy). Used by both the Allocation and Combined tabs.
-const getDateWithOccupancyDisplay = (row: Record<string, any>) => {
+// occupancy). Used by both the Allocation and Combined tabs. On the Combined tab, also
+// appends the total remaining inventory (sum of every room type's own remaining count) so
+// that stays compacted into the same cell instead of needing its own column.
+const getDateWithOccupancyDisplay = (tabId: string, row: Record<string, any>) => {
   const d = new Date(row['Date'])
   let dateLabel = row['Date']
   if (!isNaN(d.getTime())) {
@@ -259,14 +261,19 @@ const getDateWithOccupancyDisplay = (row: Record<string, any>) => {
     dateLabel = `${day}${month}`
   }
   const occ = row['Occ%']
-  return occ === undefined || occ === null ? dateLabel : `${dateLabel} / ${occ}%`
+  let display = occ === undefined || occ === null ? dateLabel : `${dateLabel} / ${occ}%`
+  if (tabId === 'combined') {
+    const remaining = roomTypeOrder.reduce((sum, code) => sum + (Number(row[code]) || 0), 0)
+    display += ` / ${remaining}`
+  }
+  return display
 }
 
 // Renders a cell's display value, handling the Allocation tab's virtual merged columns
 // (Date+Occupancy, Season+Demand) before falling back to the generic formatValue
 const getDisplayValue = (tabId: string, row: Record<string, any>, header: string) => {
   if ((tabId === 'allocation' || tabId === 'combined') && header === 'Date') {
-    return getDateWithOccupancyDisplay(row)
+    return getDateWithOccupancyDisplay(tabId, row)
   }
   if (tabId === 'allocation' && header === 'Season/Demand') {
     return `${row['Season'] ?? '-'}/${row['Demand'] ?? '-'}`
