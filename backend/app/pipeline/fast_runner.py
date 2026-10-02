@@ -31,6 +31,7 @@ from datetime import datetime
 from io import StringIO
 
 import pandas as pd
+import requests
 
 from ..shared import log_queue, allotment_run_control
 from ..integrations.pms.fast_inventory_scraper import fetch_room_inventory
@@ -106,6 +107,28 @@ def try_acquire():
             return False, "The Selenium pipeline is already running - wait for it to finish first"
         pipeline_active = True
         return True, None
+
+
+def _notify_pipeline_result(run_id):
+    """POSTs the full run record plus every log line (the same data the Fast
+    API Pipeline History page reads) to an n8n webhook after every run.
+    Message formatting deliberately lives entirely on the n8n side (parse
+    `logs` there), not here - so changing what gets reported to Telegram
+    never requires a backend deploy. Opt-in via N8N_FAST_PIPELINE_WEBHOOK_URL
+    in backend/.env - a no-op when unset. A notification failure must never
+    affect the pipeline's own result, so anything going wrong here is logged
+    and swallowed, not raised."""
+    webhook_url = os.environ.get("N8N_FAST_PIPELINE_WEBHOOK_URL")
+    if not webhook_url:
+        return
+    run = fast_pipeline_log_store.get_run(run_id)
+    if run is None:
+        return
+    payload = {**run, "logs": fast_pipeline_log_store.get_run_logs(run_id)}
+    try:
+        requests.post(webhook_url, json=payload, timeout=10)
+    except Exception as e:
+        print(f"[fast_runner] n8n webhook notification failed: {e}")
 
 
 def _emit(step, type_, message):
@@ -456,7 +479,9 @@ def run_pipeline(config):
         # session for next time, matching runner.py's convention.
         stop_flag.set()
         forwarder.join(timeout=5)
-        fast_pipeline_log_store.finish_run(_current_run_id, "error" if pipeline_error else "success", pipeline_error)
+        status = "error" if pipeline_error else "success"
+        fast_pipeline_log_store.finish_run(_current_run_id, status, pipeline_error)
+        _notify_pipeline_result(_current_run_id)
         _current_run_id = None
         pipeline_current_step = None
         pipeline_active = False
