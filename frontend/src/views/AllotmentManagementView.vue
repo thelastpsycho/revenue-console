@@ -5,9 +5,9 @@
       subtitle="Push the calculated allotment changes back into the PMS."
     />
 
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+    <div class="grid grid-cols-1 gap-6 xl:grid-cols-3">
       <!-- Left: actions + log -->
-      <div class="space-y-6 lg:col-span-2">
+      <div class="space-y-6 xl:col-span-2">
         <!-- Status / Actions Card -->
         <div class="neu-card p-6">
           <div class="flex flex-wrap items-center justify-between gap-3">
@@ -15,7 +15,7 @@
               <h2 class="text-base font-semibold text-app-tertiary">Update status</h2>
               <p class="mt-1 text-sm text-slate-500">{{ statusMessage }}</p>
             </div>
-            <div class="flex items-center gap-3">
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
               <div v-if="progress" class="flex items-center gap-2">
                 <div class="h-2 w-28 overflow-hidden rounded-full bg-app-primary shadow-neu-inset-sm">
                   <div
@@ -42,7 +42,7 @@
                   Stop
                 </button>
               </div>
-              <label class="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-500" title="Compares against the current channel-manager value and skips dates that already match, instead of always pushing every date.">
+              <label class="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap text-xs font-semibold text-slate-500" title="Compares against the current channel-manager value and skips dates that already match, instead of always pushing every date.">
                 Skip unchanged dates
                 <button
                   type="button"
@@ -63,7 +63,7 @@
                   />
                 </button>
               </label>
-              <label class="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-500">
+              <label class="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap text-xs font-semibold text-slate-500">
                 Run headless
                 <button
                   type="button"
@@ -219,7 +219,7 @@
       </div>
 
       <!-- Right: Credentials Card -->
-      <div class="lg:col-span-1">
+      <div class="xl:col-span-1">
         <div class="neu-card p-6">
           <h2 class="text-base font-semibold text-app-tertiary">Credentials</h2>
           <p class="mt-1 text-sm text-slate-500">PMS login used to push allotment changes.</p>

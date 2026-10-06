@@ -5,9 +5,9 @@
       subtitle="Run the entire scrape-to-BAR-pricing pipeline end-to-end with one click."
     />
 
-    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+    <div class="grid grid-cols-1 gap-4 xl:grid-cols-3">
       <!-- Left: status + stepper + log -->
-      <div class="space-y-4 lg:col-span-2">
+      <div class="space-y-4 xl:col-span-2">
         <!-- Status / stepper card -->
         <div class="neu-card p-4">
           <div class="flex flex-wrap items-center justify-between gap-3">
@@ -161,7 +161,7 @@
       </div>
 
       <!-- Right: compact config -->
-      <div class="space-y-4 lg:col-span-1">
+      <div class="space-y-4 xl:col-span-1">
         <div class="neu-card p-4">
           <h2 class="text-sm font-semibold text-app-tertiary">Credentials &amp; run settings</h2>
           <div class="mt-3 space-y-3">

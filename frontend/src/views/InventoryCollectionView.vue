@@ -5,10 +5,10 @@
       subtitle="Log into the PMS and capture room availability, then process and combine inventory."
     />
 
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+    <div class="grid grid-cols-1 gap-6 xl:grid-cols-3">
 
       <!-- Left Column: Actions -->
-      <section class="space-y-6 lg:col-span-2">
+      <section class="space-y-6 xl:col-span-2">
         <!-- Main Scraping Card -->
         <div class="neu-card p-6">
           <h2 class="text-base font-semibold text-app-tertiary">Start a new scraping task</h2>
@@ -98,7 +98,7 @@
       </section>
 
       <!-- Right Column: Status & Instructions -->
-      <aside class="space-y-6 lg:col-span-1">
+      <aside class="space-y-6 xl:col-span-1">
         <!-- Status Card -->
         <div class="neu-card p-5">
           <h3 class="flex items-center gap-2 text-sm font-semibold text-app-tertiary">

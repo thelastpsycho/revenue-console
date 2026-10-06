@@ -32,7 +32,8 @@
               <h1 class="font-semibold text-lg text-app-tertiary">Data overview</h1>
               <p class="text-sm text-slate-500">Explore your scraped and processed inventory data.</p>
             </div>
-            <div class="flex space-x-1.5 rounded-xl bg-app-primary p-1.5 shadow-neu-inset-sm">
+            <!-- Scrolls sideways on narrow screens instead of clipping the last tabs -->
+            <div class="flex max-w-full gap-1.5 overflow-x-auto rounded-xl bg-app-primary p-1.5 shadow-neu-inset-sm">
               <button
                 v-for="tab in tabs"
                 :key="tab.id"

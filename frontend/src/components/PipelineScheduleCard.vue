@@ -7,7 +7,7 @@
       </h2>
       <span
         :class="[
-          'inline-flex items-center gap-1.5 rounded-full bg-app-primary px-2.5 py-1 text-[11px] font-semibold shadow-neu-inset-sm',
+          'inline-flex shrink-0 items-center whitespace-nowrap gap-1.5 rounded-full bg-app-primary px-2.5 py-1 text-[11px] font-semibold shadow-neu-inset-sm',
           schedulerOnline ? 'text-emerald-700' : 'text-rose-700',
         ]"
         :title="schedulerLastSeenText"

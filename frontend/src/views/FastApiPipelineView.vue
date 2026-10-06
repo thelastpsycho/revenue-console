@@ -5,9 +5,9 @@
       subtitle="Same scrape-to-BAR-pricing pipeline, but PMS steps call its JSON API directly instead of driving a browser. D-EDGE steps still use Chrome (no D-EDGE API)."
     />
 
-    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+    <div class="grid grid-cols-1 gap-4 xl:grid-cols-3">
       <!-- Left: status + stepper + log -->
-      <div class="space-y-4 lg:col-span-2">
+      <div class="space-y-4 xl:col-span-2">
         <!-- Status / stepper card -->
         <div class="neu-card p-4">
           <div class="flex flex-wrap items-center justify-between gap-3">
@@ -191,7 +191,7 @@
       </div>
 
       <!-- Right: compact config -->
-      <div class="space-y-4 lg:col-span-1">
+      <div class="space-y-4 xl:col-span-1">
         <PipelineScheduleCard :page-config="buildScheduleConfig" :step-label="stepLabel" />
 
         <div class="neu-card p-4">
