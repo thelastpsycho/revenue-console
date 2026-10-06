@@ -1,0 +1,17 @@
+# Used only by scripts/Dockerfile, whose build context is the repo root
+# (it needs to COPY scripts/trigger_fast_pipeline.py without duplicating it
+# into a scripts/-scoped context). Keeps that build from sending the whole
+# repo - node_modules, .git, venvs, runtime data - to the Docker daemon.
+.git/
+node_modules/
+frontend/node_modules/
+frontend/dist/
+backend/.venv/
+backend/__pycache__/
+**/__pycache__/
+*.pyc
+backend/app/scraper/data/
+backend/app/scraper/.dedge_profile/
+backend/.env
+frontend/.env*
+cloudflared/

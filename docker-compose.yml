@@ -1,0 +1,64 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    env_file: ./backend/.env
+    environment:
+      # Must bind all interfaces - nginx and the scheduler reach this over
+      # the Docker network, not loopback.
+      APP_HOST: "0.0.0.0"
+      SELENIUM_HEADLESS: "1"
+    volumes:
+      - ./backend/app/scraper/data:/app/app/scraper/data
+      - ./backend/app/scraper/.dedge_profile:/app/app/scraper/.dedge_profile
+      - selenium_cache:/home/appuser/.cache/selenium
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5666/api/health',timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    # SCHEDULER_ARGS defaults to safe/preview mode (no --live) so the stack
+    # ships safe on first boot. Flip it in a root .env once a manual dry run
+    # has been verified: SCHEDULER_ARGS=--live --schedule-60
+    command: "${SCHEDULER_ARGS:---schedule-60} --base-url http://backend:5666"
+    env_file: ./backend/.env
+    volumes:
+      # Read-only: the scheduler only needs scheduled_fast_pipeline_config.json,
+      # mirroring the same relative path trigger_fast_pipeline.py resolves on
+      # a local/non-Docker run.
+      - ./backend/app/scraper/data:/app/backend/app/scraper/data:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --config /etc/cloudflared/config.yml run
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      - ./cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
+    depends_on:
+      - frontend
+    restart: unless-stopped
+
+volumes:
+  selenium_cache:

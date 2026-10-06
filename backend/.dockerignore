@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+*.db
+
+.env
+.env.example
+
+# Runtime data and the D-EDGE Chrome profile are bind-mounted at runtime,
+# never baked into the image. The scheduled pipeline config is the one
+# exception that's actually tracked in git and expected to ship with the
+# image as a fallback/default.
+app/scraper/data/*
+!app/scraper/data/scheduled_fast_pipeline_config.json
+app/scraper/.dedge_profile/

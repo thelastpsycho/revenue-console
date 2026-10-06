@@ -10,3 +10,4 @@ lxml
 python-dotenv
 Flask-Cors
 tabulate
+gunicorn
