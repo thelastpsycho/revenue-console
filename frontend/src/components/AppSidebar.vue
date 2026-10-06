@@ -55,6 +55,18 @@
           ]"
         />
         <span>{{ item.name }}</span>
+        <span
+          v-if="item.href === SCHEDULE_PAGE && scheduleBadge"
+          class="relative ml-auto flex h-2.5 w-2.5"
+          :title="scheduleBadge.title"
+          :aria-label="scheduleBadge.title"
+        >
+          <span
+            v-if="scheduleBadge.blink"
+            :class="['absolute inline-flex h-full w-full animate-ping rounded-full opacity-75', scheduleBadge.color]"
+          />
+          <span :class="['relative inline-flex h-2.5 w-2.5 rounded-full', scheduleBadge.color]" />
+        </span>
       </router-link>
     </nav>
 
@@ -74,7 +86,9 @@
 </template>
 
 <script setup lang="ts">
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
+import axios from '../plugins/axios'
 import {
   HomeIcon,
   DocumentTextIcon,
@@ -106,4 +120,56 @@ const navigation = [
   { name: 'Pipeline History', href: '/fast-pipeline-history', icon: ClockIcon },
   { name: 'PMS API Test', href: '/pms-api-test', icon: BeakerIcon },
 ]
+
+// Schedule indicator on the Fast API Pipeline item: blinks while the
+// UI-managed schedule is on and the scheduler container is checking in
+// (red = live, green = preview); steady amber when it's on but the
+// scheduler is offline, i.e. switched on but nothing will actually run.
+const SCHEDULE_PAGE = '/fast-api-pipeline'
+const SCHEDULE_POLL_MS = 15000
+
+const schedule = ref<{
+  enabled: boolean
+  live: boolean
+  intervalMinutes: number
+  nextRunAt: string | null
+  schedulerOnline: boolean
+} | null>(null)
+const runInProgress = ref(false)
+
+async function loadSchedule() {
+  try {
+    const res = await axios.get('/api/fast-pipeline/schedule')
+    schedule.value = res.data.schedule
+    runInProgress.value = res.data.pipelineActive
+  } catch {
+    // Badge just keeps its last state; the page itself reports errors.
+  }
+}
+
+let scheduleTimer: ReturnType<typeof setInterval> | undefined
+onMounted(() => {
+  loadSchedule()
+  scheduleTimer = setInterval(loadSchedule, SCHEDULE_POLL_MS)
+})
+onBeforeUnmount(() => clearInterval(scheduleTimer))
+
+const scheduleBadge = computed(() => {
+  const s = schedule.value
+  if (!s?.enabled) return null
+  if (!s.schedulerOnline) {
+    return { blink: false, color: 'bg-amber-500', title: 'Schedule is on, but the scheduler is offline - no runs will happen' }
+  }
+  const mode = s.live ? 'LIVE' : 'Preview'
+  const every = s.intervalMinutes % 60 === 0 ? `${s.intervalMinutes / 60} h` : `${s.intervalMinutes} min`
+  const next = s.nextRunAt
+    ? new Date(s.nextRunAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    : 'soon'
+  const status = runInProgress.value ? 'run in progress' : `next run ${next}`
+  return {
+    blink: true,
+    color: s.live ? 'bg-rose-500' : 'bg-emerald-500',
+    title: `Schedule on - ${mode}, every ${every} - ${status}`,
+  }
+})
 </script>

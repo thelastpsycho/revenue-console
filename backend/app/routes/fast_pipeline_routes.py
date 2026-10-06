@@ -8,8 +8,22 @@ import json
 
 from ..pipeline import fast_runner
 from ..pipeline import fast_pipeline_log_store
+from ..pipeline import fast_pipeline_schedule
 
 bp = Blueprint('fast_pipeline', __name__)
+
+
+def _launch(config):
+    """Start run_pipeline in a background thread. Caller must already hold the
+    lock from fast_runner.try_acquire()."""
+    while not fast_runner.pipeline_queue.empty():
+        try:
+            fast_runner.pipeline_queue.get_nowait()
+        except Exception:
+            break
+    thread = threading.Thread(target=fast_runner.run_pipeline, args=(config,))
+    thread.daemon = True
+    thread.start()
 
 
 @bp.route('/api/fast-pipeline/steps', methods=['GET'])
@@ -39,12 +53,6 @@ def start_fast_pipeline():
     if not acquired:
         return jsonify({"status": "error", "message": reason}), 409
 
-    while not fast_runner.pipeline_queue.empty():
-        try:
-            fast_runner.pipeline_queue.get_nowait()
-        except Exception:
-            break
-
     config = {
         "pmsUsername": data.get("pmsUsername"),
         "pmsPassword": data.get("pmsPassword"),
@@ -63,11 +71,50 @@ def start_fast_pipeline():
         "allotmentConcurrency": data.get("allotmentConcurrency", 4),
         "companyId": data.get("companyId", 1001),
     }
-    thread = threading.Thread(target=fast_runner.run_pipeline, args=(config,))
-    thread.daemon = True
-    thread.start()
+    _launch(config)
 
     return jsonify({"status": "success", "message": "Fast pipeline started"})
+
+
+@bp.route('/api/fast-pipeline/schedule', methods=['GET'])
+def get_fast_pipeline_schedule():
+    return jsonify({
+        "status": "success",
+        "schedule": fast_pipeline_schedule.get_state(),
+        "lastScheduledRun": fast_pipeline_log_store.latest_run_by_trigger("schedule"),
+        "pipelineActive": fast_runner.pipeline_active,
+    })
+
+
+@bp.route('/api/fast-pipeline/schedule', methods=['PUT'])
+def update_fast_pipeline_schedule():
+    data = request.get_json(silent=True) or {}
+    try:
+        state = fast_pipeline_schedule.update_settings(data)
+    except fast_pipeline_schedule.ScheduleValidationError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    except (OSError, ValueError) as exc:
+        return jsonify({"status": "error", "message": f"Could not save schedule: {exc}"}), 500
+    return jsonify({"status": "success", "schedule": state})
+
+
+@bp.route('/api/fast-pipeline/schedule/tick', methods=['POST'])
+def fast_pipeline_schedule_tick():
+    """Polled by the scheduler container (trigger_fast_pipeline.py --managed).
+    Starts a run when one is due; otherwise just records the heartbeat."""
+    try:
+        config, reason = fast_pipeline_schedule.claim_due_run(fast_runner.try_acquire)
+    except (OSError, ValueError) as exc:
+        return jsonify({"status": "error", "started": False, "message": f"Could not build scheduled run: {exc}"}), 500
+    if config is None:
+        return jsonify({"status": "success", "started": False, "message": reason})
+    _launch(config)
+    return jsonify({
+        "status": "success",
+        "started": True,
+        "mode": config["scheduleMode"],
+        "message": f"Scheduled {config['scheduleMode']} run started",
+    })
 
 
 @bp.route('/api/fast-pipeline/stream')

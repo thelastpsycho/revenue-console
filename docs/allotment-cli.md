@@ -75,11 +75,46 @@ runs inside an always-up container rather than a terminal-attached loop, so
 the only thing that matters is keeping the Windows host itself from
 sleeping (a one-time host setting, not something this script manages).
 
-Its flags are set via `SCHEDULER_ARGS` in a root `.env` (see
-`.env.docker.example`), e.g. `SCHEDULER_ARGS=--live --schedule-60` — default
-is safe/preview mode (`--schedule-60`, no `--live`) until that's switched on
-deliberately. No rebuild needed to change it, just `docker compose up -d`
-again.
+### Schedule panel (default)
+
+By default the scheduler runs with `--managed`: the schedule is controlled
+from the **Schedule** panel on the Fast API Pipeline page, not from flags.
+
+- **Run automatically** on/off, **Every** (5 min – 24 h), and **Mode**:
+  - *Preview* — allotment dry run, BAR step forced off. Nothing is sent to
+    the PMS or D-EDGE, whatever the saved run settings say.
+  - *Live* — real allotment push and BAR update. Saving a live schedule asks
+    for confirmation first.
+- **Run settings** — by default `scheduled_fast_pipeline_config.json`.
+  *Use this page's settings* snapshots the page's steps, room types,
+  skip-unchanged options, concurrency, company ID and yield configuration
+  for scheduled runs; *Revert to default* goes back to the JSON file.
+  Credentials and the start date are never stored: scheduled runs use the
+  backend's `backend/.env` credentials and today's date (hotel-local — both
+  containers set `TZ=Asia/Makassar`).
+- Turning it on runs immediately, then every interval. A run that comes due
+  while another run is in progress waits for it and starts on the next 30s
+  tick. Changing the interval re-times the next run from the last one.
+- **Scheduler online/offline** shows whether the container is checking in
+  (every 30s). Offline means no scheduled runs, regardless of the settings.
+
+The settings are stored by the backend in
+`backend/app/scraper/data/fast_pipeline_schedule.json` (gitignored) and take
+effect on the next tick - no container restart. It ships **off**. Scheduled
+runs are tagged `"trigger": "schedule"` in History. The scheduler doesn't
+stream run logs to `docker compose logs` (the log stream has a single
+consumer, so it would take them from a watching browser) - follow runs in
+the page or the History view instead.
+
+Only one machine should run a live schedule: both the Mac and this
+deployment push to the same PMS and D-EDGE accounts.
+
+### Fixed-flag loop (override)
+
+Setting `SCHEDULER_ARGS` in a root `.env` (see `.env.docker.example`)
+replaces `--managed` with the old fixed loop, e.g.
+`SCHEDULER_ARGS=--live --schedule-60`, and the panel's settings are then
+ignored. Apply with `docker compose up -d`; no rebuild needed.
 
 Manual one-off triggers against an already-running stack:
 

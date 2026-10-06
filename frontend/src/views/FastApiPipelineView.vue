@@ -192,6 +192,8 @@
 
       <!-- Right: compact config -->
       <div class="space-y-4 lg:col-span-1">
+        <PipelineScheduleCard :page-config="buildScheduleConfig" :step-label="stepLabel" />
+
         <div class="neu-card p-4">
           <h2 class="text-sm font-semibold text-app-tertiary">Credentials &amp; run settings</h2>
           <div class="mt-3 space-y-3">
@@ -390,6 +392,7 @@
 import { ref, computed, nextTick, watch, onMounted } from 'vue'
 import axios from '../plugins/axios'
 import PageHeader from '../components/PageHeader.vue'
+import PipelineScheduleCard, { type ScheduleRunConfig } from '../components/PipelineScheduleCard.vue'
 import { usePipelineStream, type PipelineStepDef } from '../composables/usePipelineStream'
 import { todayLocalDateString } from '../utils/date'
 import {
@@ -564,6 +567,22 @@ function buildYieldConfig() {
   }
 
   return parsed
+}
+
+// Snapshot for the Schedule panel's "Use this page's settings". Credentials,
+// start date, headless and the BAR checkpoint reset are per-run decisions the
+// backend makes for scheduled runs, so they're deliberately left out.
+function buildScheduleConfig(): ScheduleRunConfig {
+  return {
+    steps: { ...stepEnabled.value },
+    barRooms: Object.entries(barRooms.value).filter(([, v]) => v).map(([k]) => k),
+    allotmentRoomTypes: [...allotmentRoomTypes.value],
+    yieldConfig: buildYieldConfig(),
+    skipUnchanged: skipUnchanged.value,
+    barSkipUnchanged: barSkipUnchanged.value,
+    allotmentConcurrency: allotmentConcurrency.value,
+    companyId: companyId.value,
+  }
 }
 
 // PMS API step fetches a fixed 100-day window from startDate

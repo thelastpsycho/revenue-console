@@ -8,6 +8,9 @@ services:
       # the Docker network, not loopback.
       APP_HOST: "0.0.0.0"
       SELENIUM_HEADLESS: "1"
+      # Hotel-local time, so "today" (the pipeline's start date) and log
+      # timestamps match Bali rather than UTC - matches the Mac's local runs.
+      TZ: Asia/Makassar
     volumes:
       - ./backend/app/scraper/data:/app/app/scraper/data
       - ./backend/app/scraper/.dedge_profile:/app/app/scraper/.dedge_profile
@@ -35,11 +38,16 @@ services:
     build:
       context: .
       dockerfile: scripts/Dockerfile
-    # SCHEDULER_ARGS defaults to safe/preview mode (no --live) so the stack
-    # ships safe on first boot. Flip it in a root .env once a manual dry run
-    # has been verified: SCHEDULER_ARGS=--live --schedule-60
-    command: "${SCHEDULER_ARGS:---schedule-60} --base-url http://backend:5666"
+    # Default --managed: the schedule (on/off, interval, live/preview, run
+    # config) is controlled from the Schedule panel on the Fast API Pipeline
+    # page and stored by the backend; this container only ticks every 30s.
+    # It ships disabled - nothing runs until it's switched on in the UI.
+    # SCHEDULER_ARGS in a root .env can still force the old fixed-flag loop,
+    # e.g. SCHEDULER_ARGS=--schedule-60, which ignores the panel entirely.
+    command: "${SCHEDULER_ARGS:---managed} --base-url http://backend:5666"
     env_file: ./backend/.env
+    environment:
+      TZ: Asia/Makassar
     volumes:
       # Read-only: the scheduler only needs scheduled_fast_pipeline_config.json,
       # mirroring the same relative path trigger_fast_pipeline.py resolves on

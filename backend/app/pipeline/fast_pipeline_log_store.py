@@ -108,6 +108,24 @@ def list_runs(limit=50):
         conn.close()
 
 
+def latest_run_by_trigger(trigger):
+    """Most recent run whose config carries "trigger": <trigger> (set by
+    fast_pipeline_schedule.build_run_config for scheduled runs)."""
+    conn = _connect()
+    try:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT id, started_at, finished_at, status, error FROM pipeline_runs "
+            "WHERE json_extract(config_json, '$.trigger') = ? ORDER BY id DESC LIMIT 1",
+            (trigger,),
+        ).fetchone()
+        return dict(row) if row else None
+    except sqlite3.OperationalError:
+        return None  # table not created yet - no runs at all
+    finally:
+        conn.close()
+
+
 def get_run(run_id):
     conn = _connect()
     try:

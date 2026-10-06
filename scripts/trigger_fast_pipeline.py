@@ -13,6 +13,7 @@ concern now belongs to whatever host/container keeps this process running.
 
 Usage: trigger_fast_pipeline.py [--live] [--schedule|--schedule-<minutes>]
                                  [--skip-<step> ...] [--base-url URL]
+       trigger_fast_pipeline.py --managed [--base-url URL]
   (no args)     Safe/preview run: allotment push is a dry run and the BAR
                 step is skipped entirely (fast_runner.py has no dry-run
                 gate for BAR - only skipping it avoids a live price push).
@@ -30,6 +31,13 @@ Usage: trigger_fast_pipeline.py [--live] [--schedule|--schedule-<minutes>]
                 Valid steps: scrape_pms scrape_cm combine yield verify
                 allotment verify_allotment bar (dashes in the flag are
                 treated the same as underscores, e.g. --skip-verify-allotment).
+  --managed     Let the backend own the schedule (Schedule panel on the Fast
+                API Pipeline page): poll POST /api/fast-pipeline/schedule/tick
+                every 30s and the backend starts a run whenever one is due,
+                using the interval, live/preview mode and run config saved
+                in the UI. Ignores --live/--schedule/--skip-*. Doesn't stream
+                run logs (that would steal them from a watching browser - the
+                SSE queue has a single consumer); see the History page.
   --base-url    Base URL of the running backend, e.g. http://backend:5666.
                 Not present in the bash version - needed because inside a
                 container "127.0.0.1" means "this container," not the
@@ -67,6 +75,7 @@ MARKERS = {"success": f"{GREEN}✓{RESET}", "error": f"{RED}✗{RESET}", "skippe
 COLORS = {"success": GREEN, "error": RED, "skipped": DIM}
 
 SCHEDULE_MINUTES_RE = re.compile(r"^--schedule-(\d+)$")
+MANAGED_TICK_SECONDS = 30
 
 # Env var names this script actually needs - checked in os.environ first (how
 # the scheduler container gets them, via compose's `env_file:`) and only
@@ -90,6 +99,7 @@ class Args:
         self.schedule_minutes = 60
         self.skip_steps = []
         self.base_url = None
+        self.managed = False
 
     def describe(self):
         parts = []
@@ -114,6 +124,8 @@ def parse_args(argv):
             args.schedule_minutes = minutes
         elif arg == "--live":
             args.live = True
+        elif arg == "--managed":
+            args.managed = True
         elif arg.startswith("--skip-"):
             step = arg[len("--skip-"):].replace("-", "_")
             if step not in VALID_STEPS:
@@ -317,8 +329,53 @@ def schedule_loop(args):
         time.sleep(args.schedule_minutes * 60)
 
 
+def managed_loop(args):
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+    env = load_env()
+    base_url = resolve_base_url(args.base_url, env)
+    print(f"Managed mode: asking {base_url} every {MANAGED_TICK_SECONDS}s whether a scheduled run is due "
+          "(settings live in the Schedule panel of the Fast API Pipeline page).")
+    sys.stdout.flush()
+
+    session, csrf_token, last_message = None, None, None
+    while True:
+        try:
+            if csrf_token is None:
+                session = requests.Session()
+                wait_for_backend(session, base_url)
+                csrf_token = login(session, base_url, env.get("APP_ACCESS_PIN"))
+            resp = session.post(
+                f"{base_url}/api/fast-pipeline/schedule/tick",
+                headers={"X-CSRF-Token": csrf_token},
+                timeout=15,
+            )
+            if resp.status_code in (401, 403):
+                # Session expired or backend restarted with a new secret - log in again.
+                csrf_token = None
+                continue
+            data = resp.json()
+            message = data.get("message", "")
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            if data.get("started"):
+                print(f"[{stamp}] {GREEN}{message}{RESET} - follow it in the Fast API Pipeline page / History")
+            elif not resp.ok:
+                print(f"[{stamp}] {RED}{message or resp.text}{RESET}", file=sys.stderr)
+            elif message != last_message:
+                print(f"[{stamp}] {DIM}{message}{RESET}")
+            last_message = message
+            sys.stdout.flush()
+        except (requests.RequestException, PipelineRunError, ValueError) as exc:
+            print(f"trigger_fast_pipeline.py: {exc} - retrying in {MANAGED_TICK_SECONDS}s", file=sys.stderr)
+            csrf_token = None
+        time.sleep(MANAGED_TICK_SECONDS)
+
+
 def main(argv=None):
     args = parse_args(argv if argv is not None else sys.argv[1:])
+    if args.managed:
+        managed_loop(args)
+        return 0
     if args.schedule:
         schedule_loop(args)
         return 0
