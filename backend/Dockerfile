@@ -26,7 +26,14 @@ COPY . .
 # Chrome's --no-sandbox flag (already set in every setup_driver() in this
 # codebase) is what makes running as non-root work without the setuid
 # sandbox helper.
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+#
+# The selenium_cache named volume mounts at ~/.cache/selenium. Docker seeds a
+# new named volume's ownership from the image path, so it must already exist
+# here owned by appuser - otherwise Docker creates it as root and Selenium
+# Manager fails with "Permission denied (os error 13)".
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app \
+    && mkdir -p /home/appuser/.cache/selenium \
+    && chown -R appuser:appuser /home/appuser/.cache
 USER appuser
 
 EXPOSE 5666

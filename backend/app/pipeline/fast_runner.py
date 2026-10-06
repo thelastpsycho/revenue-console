@@ -40,7 +40,7 @@ from ..inventory.pms_processor import process_pms_inventory
 from ..integrations.dedge.inventory_scraper import scrape_cm_inventory
 from ..inventory.inventory_combiner import combine_inventory_files
 from ..revenue.yield_engine import apply_custom_yield
-from ..integrations.dedge.bar_updater import update_bar, setup_driver as dedge_setup_driver, DEFAULT_PROFILE_DIR
+from ..integrations.dedge.bar_updater import update_bar, setup_driver as dedge_setup_driver, resolve_headless, DEFAULT_PROFILE_DIR
 from ..routes.database_routes import get_db_path
 from ..infrastructure.paths import get_data_dir
 from . import runner as selenium_pipeline_runner
@@ -297,7 +297,11 @@ def run_pipeline(config):
     _current_run_id = fast_pipeline_log_store.start_run(config)
 
     enabled = {s["id"]: (config.get("steps") or {}).get(s["id"], True) for s in STEPS}
-    bar_rooms = tuple(config.get("barRooms") or ("deluxe", "premiere"))
+    # None (omitted) means both rooms; an explicit empty list means skip BAR.
+    # Must not use `or` here - [] is falsy and would fall back to both rooms,
+    # turning the trigger script's safe mode into a live price push.
+    bar_rooms = config.get("barRooms")
+    bar_rooms = ("deluxe", "premiere") if bar_rooms is None else tuple(bar_rooms)
     allotment_room_types = config.get("allotmentRoomTypes")
     if allotment_room_types is None:
         allotment_room_types = ["deluxe", "premiere"]
@@ -332,7 +336,7 @@ def run_pipeline(config):
         def ensure_dedge_driver():
             nonlocal dedge_driver
             if dedge_driver is None:
-                _emit(step_ref[0], "info", f"Launching Chrome for D-EDGE (headless={bool(headless)})...")
+                _emit(step_ref[0], "info", f"Launching Chrome for D-EDGE (headless={resolve_headless(headless)})...")
                 dedge_driver = dedge_setup_driver(DEFAULT_PROFILE_DIR, headless=headless)
             return dedge_driver
 
@@ -474,9 +478,16 @@ def run_pipeline(config):
         _emit(None, "error", f"Pipeline stopped (unexpected error): {e}")
 
     finally:
-        # dedge_driver is deliberately NOT quit here - it uses the persistent
-        # D-EDGE profile so leaving it open preserves the trusted-device
-        # session for next time, matching runner.py's convention.
+        # Quit the D-EDGE driver: device trust lives in the persistent profile
+        # on disk (a clean quit is what flushes cookies there), not in the
+        # running browser. Leaving Chrome open keeps the profile locked, so the
+        # next run's Chrome on the same --user-data-dir dies with "session not
+        # created: Chrome instance exited".
+        if dedge_driver is not None:
+            try:
+                dedge_driver.quit()
+            except Exception:
+                pass
         stop_flag.set()
         forwarder.join(timeout=5)
         status = "error" if pipeline_error else "success"

@@ -33,6 +33,7 @@ from .bar_updater import (
     _wait_for_device_authorization,
     ensure_logged_in,
     log,
+    resolve_headless,
     setup_driver,
     wait_for_page_load,
 )
@@ -136,7 +137,11 @@ def scrape_cm_inventory(driver=None, start_date=None, days=100, username=None, p
         return result
 
     finally:
-        if owns_driver and driver:
+        if owns_driver and driver and resolve_headless(headless):
+            # Nobody can inspect a headless browser, and leaving it running keeps
+            # the persistent profile locked for the next run.
+            driver.quit()
+        elif owns_driver and driver:
             # Leave the browser open for inspection, matching update_bar's habit.
             pass
 

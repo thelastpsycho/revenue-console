@@ -216,7 +216,11 @@ def run_pipeline(config):
 
     enabled = {s["id"]: (config.get("steps") or {}).get(s["id"], True) for s in STEPS}
     allotment_room_types = tuple(config.get("allotmentRoomTypes") or ("deluxe", "premiere"))
-    bar_rooms = tuple(config.get("barRooms") or ("deluxe", "premiere"))
+    # None (omitted) means both rooms; an explicit empty list means skip BAR.
+    # Must not use `or` here - [] is falsy and would fall back to both rooms,
+    # turning the trigger script's safe mode into a live price push.
+    bar_rooms = config.get("barRooms")
+    bar_rooms = ("deluxe", "premiere") if bar_rooms is None else tuple(bar_rooms)
 
     step_ref = [None]
     stop_flag = threading.Event()
@@ -334,10 +338,16 @@ def run_pipeline(config):
                 pms_driver.quit()
             except Exception:
                 pass
-        # dedge_driver is deliberately NOT quit here - it uses the persistent
-        # D-EDGE profile so leaving it open preserves the trusted-device
-        # session for next time, matching the existing convention in
-        # dedge/inventory_scraper.py / dedge/bar_updater.py.
+        # Quit the D-EDGE driver: device trust lives in the persistent profile
+        # on disk (a clean quit is what flushes cookies there), not in the
+        # running browser. Leaving Chrome open keeps the profile locked, so the
+        # next run's Chrome on the same --user-data-dir dies with "session not
+        # created: Chrome instance exited".
+        if dedge_driver is not None:
+            try:
+                dedge_driver.quit()
+            except Exception:
+                pass
         stop_flag.set()
         forwarder.join(timeout=5)
         pipeline_current_step = None

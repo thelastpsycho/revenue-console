@@ -204,6 +204,8 @@ if not live:
     config["barRooms"] = []
 
 steps = config.setdefault("steps", {})
+if not live:
+    steps["bar"] = False
 for step in skip_steps:
     steps[step] = False
 

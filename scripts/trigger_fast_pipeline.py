@@ -166,6 +166,8 @@ def build_payload(env, start_date, live, skip_steps):
         # entirely in safe mode rather than risk a live price push.
         config["barRooms"] = []
     steps = config.setdefault("steps", {})
+    if not live:
+        steps["bar"] = False
     for step in skip_steps:
         steps[step] = False
     return config

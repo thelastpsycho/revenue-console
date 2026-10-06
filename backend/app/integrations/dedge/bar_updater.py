@@ -93,13 +93,20 @@ def log(driver, message, type="info"):
 
 # --- Driver setup -----------------------------------------------------------
 
+def resolve_headless(headless=None):
+    """SELENIUM_HEADLESS=1 forces headless (set in Docker, where there is no
+    display for a visible window) - it overrides even an explicit headless=False
+    from a pipeline config. Otherwise the caller's choice wins, defaulting to
+    visible. Note: the *first* run needs to be visible so the D-EDGE device code
+    can be entered by hand - only go headless once the profile is trusted."""
+    if os.environ.get("SELENIUM_HEADLESS", "").lower() in ("1", "true", "yes"):
+        return True
+    return bool(headless)
+
+
 def setup_driver(user_data_dir=DEFAULT_PROFILE_DIR, headless=None):
     chrome_options = Options()
-    # Headless when the caller asks for it, else fall back to the SELENIUM_HEADLESS
-    # env var. Note: the *first* run needs to be visible so the D-EDGE device code
-    # can be entered by hand - only go headless once the profile is trusted.
-    if headless is None:
-        headless = os.environ.get("SELENIUM_HEADLESS", "").lower() in ("1", "true", "yes")
+    headless = resolve_headless(headless)
     if headless:
         chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
@@ -676,7 +683,11 @@ def update_bar(driver=None, username=None, password=None,
             log(driver, f"  {line}", type="error")
         return False
     finally:
-        if owns_driver and driver:
+        if owns_driver and driver and resolve_headless(headless):
+            # Nobody can inspect a headless browser, and leaving it running keeps
+            # the persistent profile locked for the next run.
+            driver.quit()
+        elif owns_driver and driver:
             # Leave the browser open for inspection, matching the PMS flow's habit.
             pass
 
