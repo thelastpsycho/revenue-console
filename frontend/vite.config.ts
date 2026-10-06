@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [vue()],
   server: {
     host: '0.0.0.0', // Listen on all addresses (exposes the dev server to the LAN)
+    allowedHosts: ['console.krisnatha.com'],
     // No hmr.host override: let the HMR websocket use whatever host the page was
     // loaded from, so live-reload works for remote devices, not just localhost.
     proxy: {

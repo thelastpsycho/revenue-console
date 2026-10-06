@@ -189,6 +189,20 @@ def test_verify_pushed_jobs_treats_missing_date_as_a_mismatch(monkeypatch):
     assert mismatches[0]['actual'] is None
 
 
+def test_verify_pushed_jobs_treats_missing_date_as_a_match_when_closed(monkeypatch):
+    """Confirmed via a live probe (2026-10-05): the grid omits a date entirely
+    when every room type is closed/sold out for it, rather than returning a
+    zeroed row - a missing row for a job we pushed as closed (number_of_rooms
+    <= 0) is NOT a mismatch."""
+    def fake_grid(self, company_id, start_date, days):
+        return []  # PMS grid has no row at all for the pushed date
+    monkeypatch.setattr(PMSApiClient, 'get_allotment_room_inventory', fake_grid)
+
+    closed_job = _single_day_job(number_of_rooms=0)
+    mismatches = verify_pushed_jobs([_pushed_result(closed_job)], username='u', password='p', settle_seconds=0)
+    assert mismatches == []
+
+
 def test_verify_pushed_jobs_covers_every_date_in_a_multi_day_job(monkeypatch):
     def fake_grid(self, company_id, start_date, days):
         return [

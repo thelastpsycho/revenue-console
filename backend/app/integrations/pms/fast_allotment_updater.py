@@ -377,7 +377,20 @@ def verify_pushed_jobs(results, company_id=1001, username=None, password=None, c
     for job in pushed_jobs:
         for date_str in _expand_dates(job['start_date'], job['end_date']):
             row = lookup.get(date_str)
-            actual = row.get(job['checkbox_value']) if row else None
+            if row is None:
+                # Confirmed via a live probe (2026-10-05): the grid omits a date
+                # entirely rather than returning a zeroed row when every room
+                # type is closed/sold out for it. A missing row is therefore
+                # consistent with "closed" (number_of_rooms<=0) - only flag it
+                # as a mismatch if we'd expected an open allotment to exist.
+                if job['number_of_rooms'] <= 0:
+                    continue
+                mismatches.append({
+                    'job': job, 'date': date_str,
+                    'expected': job['number_of_rooms'], 'actual': None,
+                })
+                continue
+            actual = row.get(job['checkbox_value'])
             if actual != job['number_of_rooms']:
                 mismatches.append({
                     'job': job, 'date': date_str,

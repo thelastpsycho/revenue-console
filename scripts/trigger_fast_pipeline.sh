@@ -5,20 +5,22 @@
 # API (e.g. the UI) and shows up in the Fast API Pipeline History page like
 # any other run.
 #
-# Usage: trigger_fast_pipeline.sh [--live] [--schedule] [--skip-<step> ...]
+# Usage: trigger_fast_pipeline.sh [--live] [--schedule|--schedule-<minutes>] [--skip-<step> ...]
 #   (no args)     Safe/preview run: allotment push is a dry run and the BAR
 #                 step is skipped entirely (fast_runner.py has no dry-run
 #                 gate for BAR - only skipping it avoids a live price push).
 #   --live        Real run: live allotment push and live BAR update, using
 #                 scheduled_fast_pipeline_config.json as configured.
-#   --schedule    Run immediately, then keep re-running every hour until
-#                 stopped (Ctrl-C). Combine with --live for unattended live
-#                 runs, or leave it off to repeat in safe/preview mode.
-#                 Refuses to start a second overlapping loop (see
-#                 scripts/.trigger_fast_pipeline.schedule.pid) - if one's
-#                 already running, kill its PID first. Holds a caffeinate
-#                 assertion for the loop's lifetime so macOS idle sleep
-#                 doesn't pause the hourly countdown; closing the lid still
+#   --schedule    Run immediately, then keep re-running every 60 minutes
+#                 until stopped (Ctrl-C). Combine with --live for unattended
+#                 live runs, or leave it off to repeat in safe/preview mode.
+#   --schedule-N  Same as --schedule but every N minutes instead of 60, e.g.
+#                 --schedule-15 for every 15 minutes.
+#                 Either form refuses to start a second overlapping loop
+#                 (see scripts/.trigger_fast_pipeline.schedule.pid) - if
+#                 one's already running, kill its PID first. Holds a
+#                 caffeinate assertion for the loop's lifetime so macOS idle
+#                 sleep doesn't pause the countdown; closing the lid still
 #                 sleeps the Mac (and the loop) regardless.
 #   --skip-<step> Skip one pipeline step, e.g. --skip-bar. Repeatable.
 #                 Valid steps: scrape_pms scrape_cm combine yield verify
@@ -34,6 +36,7 @@ SCHEDULE_LOCK="$ROOT/scripts/.trigger_fast_pipeline.schedule.pid"
 VALID_STEPS=(scrape_pms scrape_cm combine yield verify allotment verify_allotment bar)
 
 SCHEDULE=0
+SCHEDULE_MINUTES=60
 LIVE=0
 SKIP_STEPS=()
 PASSTHROUGH_ARGS=()
@@ -41,6 +44,14 @@ for arg in "$@"; do
   case "$arg" in
     --schedule)
       SCHEDULE=1
+      ;;
+    --schedule-[0-9]*)
+      SCHEDULE=1
+      SCHEDULE_MINUTES="${arg#--schedule-}"
+      if ! [[ "$SCHEDULE_MINUTES" =~ ^[0-9]+$ ]] || [[ "$SCHEDULE_MINUTES" -lt 1 ]]; then
+        echo "trigger_fast_pipeline.sh: invalid minutes in '$arg'" >&2
+        exit 1
+      fi
       ;;
     --live)
       LIVE=1
@@ -64,12 +75,12 @@ for arg in "$@"; do
   esac
 done
 
-# --schedule re-invokes this same script (minus --schedule itself) as a
-# fresh process every hour, rather than looping inline - a single-run
-# failure (curl error, PMS timeout, etc.) then just fails that one
-# invocation's own `set -e` and exits with non-zero, which this loop treats
-# as "try again next hour" instead of a set -e footgun that could silently
-# skip cleanup or run partway through iteration N+1 with stale state.
+# --schedule/--schedule-N re-invokes this same script (minus the schedule
+# flag itself) as a fresh process every interval, rather than looping inline -
+# a single-run failure (curl error, PMS timeout, etc.) then just fails that
+# one invocation's own `set -e` and exits with non-zero, which this loop
+# treats as "try again next interval" instead of a set -e footgun that could
+# silently skip cleanup or run partway through iteration N+1 with stale state.
 # A lockfile recording this loop's own PID - so a second `--schedule`
 # invocation (e.g. started again without noticing an earlier one never got
 # killed) refuses to start instead of silently stacking a second hourly
@@ -91,7 +102,7 @@ if [[ "$SCHEDULE" == 1 ]]; then
   printf '%s\n%s\n' "$$" "started $(date '+%Y-%m-%d %H:%M:%S'), args: ${PASSTHROUGH_ARGS[*]:-none}" > "$SCHEDULE_LOCK"
   trap '[[ "$(sed -n "1p" "$SCHEDULE_LOCK" 2>/dev/null)" == "$$" ]] && rm -f "$SCHEDULE_LOCK"' EXIT
 
-  # Without this, macOS idle sleep suspends the `sleep 3600` below along with
+  # Without this, macOS idle sleep suspends the `sleep` below along with
   # everything else - the countdown doesn't advance while asleep, so a run
   # due at HH:50 can fire arbitrarily late instead (confirmed: a loop idle
   # overnight drifted its "hourly" run by over an hour). `-w $$` ties
@@ -100,13 +111,13 @@ if [[ "$SCHEDULE" == 1 ]]; then
   # blocks *idle* sleep; closing the lid still sleeps the Mac regardless.
   caffeinate -i -w $$ &
 
-  echo "Schedule mode: running now, then every hour until stopped (Ctrl-C)."
+  echo "Schedule mode: running now, then every $SCHEDULE_MINUTES minute(s) until stopped (Ctrl-C)."
   while true; do
     if ! "$SELF" "${PASSTHROUGH_ARGS[@]}"; then
       echo "trigger_fast_pipeline.sh: this run failed - will retry at the next scheduled time" >&2
     fi
-    echo "Next scheduled run at $(date -v+1H '+%H:%M') (Ctrl-C to stop)..."
-    sleep 3600
+    echo "Next scheduled run at $(date -v+${SCHEDULE_MINUTES}M '+%H:%M') (Ctrl-C to stop)..."
+    sleep "$((SCHEDULE_MINUTES * 60))"
   done
 fi
 
