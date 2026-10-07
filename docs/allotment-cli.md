@@ -78,7 +78,7 @@ sleeping (a one-time host setting, not something this script manages).
 ### Schedule panel (default)
 
 By default the scheduler runs with `--managed`: the schedule is controlled
-from the **Schedule** panel on the Fast API Pipeline page, not from flags.
+from the **Schedule** panel (Fast API Pipeline page, *Automation* tab), not from flags.
 
 - **Run automatically** on/off, **Every** (5 min – 24 h), and **Mode**:
   - *Preview* — allotment dry run, BAR step forced off. Nothing is sent to
@@ -98,6 +98,25 @@ from the **Schedule** panel on the Fast API Pipeline page, not from flags.
 - **Scheduler online/offline** shows whether the container is checking in
   (every 30s). Offline means no scheduled runs, regardless of the settings.
 
+### BAR hold dates
+
+The **BAR hold dates** card (Fast API Pipeline page, *Automation* tab) lists dates that
+BAR updates must not touch on D-EDGE, e.g. while a rate is set by hand for
+an event. Each hold is a date range (one day is fine) for Deluxe, Premiere
+or both, with an optional note. Stored in `bar_hold_dates.json` in the data
+dir.
+
+- Applied inside `update_bar()`, so scheduled and manual runs, the Selenium
+  pipeline and the standalone BAR action all respect it. The run log says how
+  many dates were held per room. Allotment is not affected.
+- Held dates are not recorded as applied. After a hold is removed, the next
+  live run pushes those dates if their level differs from what was last
+  pushed there.
+- Holds drop off once their end date has passed (hotel-local date).
+- If a BAR run failed partway, changing holds changes its plan, so the next
+  run stops until "Start a fresh BAR batch" is ticked. The card warns when
+  that applies.
+
 ### D-EDGE device code
 
 D-EDGE trusts this machine through a cookie in the persistent Chrome
@@ -111,7 +130,7 @@ pauses at the D-EDGE login:
   run keeps waiting; *Resend email* asks D-EDGE for a new one.
 - The run waits up to 15 minutes (`DEDGE_DEVICE_CODE_TIMEOUT`, in seconds),
   then fails. The next run asks again.
-- The **D-EDGE session** card on the Fast API Pipeline page shows when the
+- The **D-EDGE session** card (Fast API Pipeline page, *Automation* tab) shows when the
   session was last verified, and *Check session now* runs the same login a
   run does (no export, no changes), so you can re-authorize between runs.
   It can't start while a pipeline run is in progress.

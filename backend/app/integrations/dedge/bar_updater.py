@@ -48,7 +48,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, StaleElementReferenceException, NoSuchElementException
 
 from .bar_checkpoint import BarCheckpoint
-from . import device_auth
+from . import bar_holds, device_auth
 
 from ...shared import log_queue
 from ...inventory.allocation_repository import load_allocation_rows
@@ -694,9 +694,13 @@ def update_bar(driver=None, username=None, password=None,
         # for rooms/dates this run doesn't touch.
         last_applied = _load_last_applied()
         skip_map = _build_skip_map(rows, rooms, last_applied) if skip_unchanged else {}
+        # Hold dates are left out of the plan the same way, but are never
+        # recorded as applied (see bar_holds.py).
+        hold_map = bar_holds.held_dates_by_room(rooms)
+        exclude_map = {room: skip_map.get(room, set()) | hold_map.get(room, set()) for room in rooms}
 
         checkpoint = BarCheckpoint(
-            _planned_chunks(rows, rooms, max_levels_per_room, skip_map=skip_map),
+            _planned_chunks(rows, rooms, max_levels_per_room, skip_map=exclude_map),
             reset=reset_checkpoint, dry_run=dry_run,
         )
         if checkpoint.resumed:
@@ -709,12 +713,16 @@ def update_bar(driver=None, username=None, password=None,
                 continue
             cfg = ROOM_CONFIG[room_key]
             room_skip_dates = skip_map.get(room_key, set())
-            groups = build_level_groups(rows, cfg["column"], unchanged_dates=room_skip_dates)
+            row_dates = {row["Date"] for row in rows if row.get(cfg["column"])}
+            room_held_dates = hold_map.get(room_key, set()) & row_dates
+            groups = build_level_groups(rows, cfg["column"], unchanged_dates=exclude_map[room_key])
+            notes = []
             if skip_unchanged and room_skip_dates:
-                log(driver, f"\n=== {cfg['room_label']} : {len(groups)} price levels to apply "
-                            f"({len(room_skip_dates)} date(s) unchanged since last apply, skipped) ===")
-            else:
-                log(driver, f"\n=== {cfg['room_label']} : {len(groups)} price levels to apply ===")
+                notes.append(f"{len(room_skip_dates)} date(s) unchanged since last apply, skipped")
+            if room_held_dates:
+                notes.append(f"{len(room_held_dates)} date(s) on hold, skipped")
+            log(driver, f"\n=== {cfg['room_label']} : {len(groups)} price levels to apply"
+                        f"{' (' + '; '.join(notes) + ')' if notes else ''} ===")
 
             processed = 0
             for bar_rate, ranges in sorted(groups.items()):

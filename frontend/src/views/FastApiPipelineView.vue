@@ -5,139 +5,164 @@
       subtitle="Same scrape-to-BAR-pricing pipeline, but PMS steps call its JSON API directly instead of driving a browser. D-EDGE steps still use Chrome (no D-EDGE API)."
     />
 
-    <div class="grid grid-cols-1 gap-4 xl:grid-cols-3">
-      <!-- Left: status + stepper + log -->
-      <div class="space-y-4 xl:col-span-2">
-        <!-- Status / stepper card -->
-        <div class="neu-card p-4">
-          <div class="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 class="text-sm font-semibold text-app-tertiary">Pipeline status</h2>
-              <p class="mt-0.5 text-xs text-slate-500">{{ progressLabel }}</p>
-            </div>
-            <div class="flex items-center gap-2">
-              <div class="flex items-center gap-2">
-                <div class="h-1.5 w-24 overflow-hidden rounded-full bg-app-primary shadow-neu-inset-sm">
-                  <div class="h-full rounded-full transition-all" :class="progressBarColor" :style="{ width: progressPercent + '%' }" />
-                </div>
-                <span class="text-[11px] font-semibold text-slate-500">{{ progressPercent }}%</span>
-              </div>
+    <!-- Tabs. Panels use v-show so switching never loses unsaved input
+         (schedule edits, a half-picked hold range) or the live log. -->
+    <div class="flex max-w-full gap-1.5 overflow-x-auto rounded-xl bg-app-primary p-1.5 shadow-neu-inset-sm sm:w-fit" role="tablist">
+      <button
+        v-for="tab in TABS"
+        :key="tab.id"
+        type="button"
+        role="tab"
+        :aria-selected="activeTab === tab.id"
+        @click="selectTab(tab.id)"
+        :class="[
+          activeTab === tab.id ? 'bg-app-primary text-app-accent shadow-neu-sm' : 'text-slate-500 hover:text-app-tertiary',
+          'flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-200',
+        ]"
+      >
+        <component :is="tab.icon" class="h-4 w-4" />
+        {{ tab.name }}
+        <span v-if="tab.id === 'run' && isRunning" class="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" title="Run in progress" />
+        <span v-if="tab.id === 'automation' && dedgeAuth?.pending" class="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" title="D-EDGE needs a device code" />
+      </button>
+    </div>
+
+    <!-- ===== Run ===== -->
+    <div v-show="activeTab === 'run'" class="grid grid-cols-1 gap-4 xl:grid-cols-12">
+      <!-- Setup -->
+      <div class="neu-card divide-y divide-slate-100 xl:col-span-5">
+        <section class="p-4">
+          <h2 class="text-sm font-semibold text-app-tertiary">Steps</h2>
+          <p class="mt-0.5 text-[11px] text-slate-500">Untick a step to skip it this run.</p>
+          <div class="mt-3 grid grid-cols-2 gap-1.5">
+            <label
+              v-for="step in stepStates"
+              :key="step.id"
+              :class="['flex cursor-pointer items-center gap-2 rounded-lg bg-app-primary px-2.5 py-1.5 text-xs shadow-neu-inset-sm', !stepEnabled[step.id] && 'opacity-50']"
+            >
+              <input
+                type="checkbox"
+                class="h-3 w-3 cursor-pointer accent-app-accent disabled:cursor-not-allowed"
+                :checked="stepEnabled[step.id]"
+                :disabled="isRunning"
+                @change="toggleStep(step.id)"
+              />
+              <span class="font-semibold text-slate-600">{{ step.label }}</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="grid grid-cols-2 items-end gap-3 p-4">
+          <div>
+            <label for="fp-start-date" class="mb-1 block text-xs font-semibold text-slate-600">Start date</label>
+            <input id="fp-start-date" v-model="startDate" type="date" class="neu-input disabled:opacity-60" :disabled="isRunning" />
+          </div>
+          <label class="inline-flex cursor-pointer items-center gap-2 pb-2 text-xs font-semibold text-slate-500" title="Only affects the D-EDGE Chrome steps - PMS steps never open a browser. Always headless in Docker.">
+            <button
+              type="button"
+              role="switch"
+              :aria-checked="headless"
+              :disabled="isRunning"
+              @click="headless = !headless"
+              :class="[
+                'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full shadow-neu-inset-sm transition-colors disabled:opacity-50',
+                headless ? 'bg-app-accent' : 'bg-app-primary',
+              ]"
+            >
+              <span :class="['inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-neu-sm transition-transform', headless ? 'translate-x-[20px]' : 'translate-x-0.5']" />
+            </button>
+            Headless (D-EDGE)
+          </label>
+        </section>
+
+        <!-- Allotment push -->
+        <section v-if="stepEnabled.allotment" class="space-y-3 p-4 text-xs text-slate-600">
+          <h2 class="text-sm font-semibold text-app-tertiary">Allotment push</h2>
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <div class="inline-flex rounded-lg bg-app-primary p-0.5 shadow-neu-inset-sm">
               <button
-                v-if="isRunning"
                 type="button"
-                @click="requestStop"
-                :disabled="stopping"
-                class="rounded-lg bg-app-primary px-2.5 py-1 text-xs font-semibold text-rose-600 shadow-neu-sm transition-all hover:text-rose-700 active:shadow-neu-inset-sm disabled:opacity-50 cursor-pointer"
+                title="Builds every payload and logs in, but never calls the PMS save endpoint."
+                :disabled="isRunning"
+                @click="allotmentDryRun = true"
+                :class="['rounded-md px-3 py-1 font-semibold transition-all disabled:opacity-50', allotmentDryRun ? 'bg-app-primary text-app-accent shadow-neu-sm' : 'text-slate-500']"
               >
-                Stop
+                Dry run
               </button>
-              <span
-                :class="[
-                  'inline-flex items-center gap-1.5 rounded-full bg-app-primary px-2.5 py-1 text-[11px] font-semibold shadow-neu-inset-sm',
-                  isRunning ? 'text-amber-700' : overallError ? 'text-rose-700' : overallSuccess ? 'text-emerald-700' : 'text-slate-500',
-                ]"
+              <button
+                type="button"
+                title="Actually writes allotment changes to the live PMS."
+                :disabled="isRunning"
+                @click="allotmentDryRun = false"
+                :class="['rounded-md px-3 py-1 font-semibold transition-all disabled:opacity-50', !allotmentDryRun ? 'bg-rose-600 text-white shadow-neu-sm' : 'text-slate-500']"
               >
-                <span :class="['h-1.5 w-1.5 rounded-full', isRunning ? 'bg-amber-500 animate-pulse' : overallError ? 'bg-rose-500' : overallSuccess ? 'bg-emerald-500' : 'bg-slate-400']" />
-                {{ isRunning ? 'Running' : overallError ? 'Failed' : overallSuccess ? 'Success' : 'Ready' }}
+                Live
+              </button>
+            </div>
+            <label class="inline-flex cursor-pointer items-center gap-1.5" title="Compares against the current channel-manager value and skips dates that already match, instead of always pushing every date.">
+              <input type="checkbox" v-model="skipUnchanged" :disabled="isRunning" class="h-3 w-3 accent-app-accent" /> Skip unchanged dates
+            </label>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <label class="block">
+              <span class="mb-1 block font-semibold">Concurrency</span>
+              <input v-model.number="allotmentConcurrency" type="number" min="1" max="20" :disabled="isRunning" class="neu-input py-1 disabled:opacity-60" />
+            </label>
+            <label class="block">
+              <span class="mb-1 block font-semibold">Company ID</span>
+              <input v-model.number="companyId" type="number" :disabled="isRunning" class="neu-input py-1 disabled:opacity-60" />
+            </label>
+          </div>
+          <div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-semibold">Room types <span class="font-normal text-slate-500">({{ allotmentRoomTypes.length }}/{{ roomTypeConfig.length }})</span></span>
+              <span class="flex gap-1">
+                <button type="button" @click="setAllRoomTypes(true)" :disabled="isRunning" class="rounded px-1.5 py-0.5 font-semibold text-app-accent hover:bg-slate-100 disabled:opacity-50">All</button>
+                <button type="button" @click="setAllRoomTypes(false)" :disabled="isRunning" class="rounded px-1.5 py-0.5 font-semibold text-slate-500 hover:bg-slate-100 disabled:opacity-50">None</button>
               </span>
             </div>
-          </div>
-
-          <!-- Compact horizontal stepper, with a per-step checkbox to include/skip it -->
-          <div class="mt-4 flex flex-wrap items-center gap-1.5">
-            <template v-for="(step, index) in stepStates" :key="step.id">
-              <label
-                class="flex cursor-pointer items-center gap-1.5 rounded-full bg-app-primary py-1 pl-1.5 pr-2.5 shadow-neu-inset-sm"
-                :class="{
-                  'ring-1 ring-app-accent/40': step.status === 'running',
-                  'opacity-50': !stepEnabled[step.id],
-                }"
-                :title="step.label"
-              >
-                <input
-                  type="checkbox"
-                  class="h-3 w-3 cursor-pointer accent-app-accent disabled:cursor-not-allowed"
-                  :checked="stepEnabled[step.id]"
-                  :disabled="isRunning"
-                  @change="toggleStep(step.id)"
-                />
-                <span v-if="step.status === 'pending'" class="h-2.5 w-2.5 shrink-0 rounded-full bg-slate-300" />
-                <span v-else-if="step.status === 'running'" class="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-slate-200 border-t-app-accent" />
-                <CheckCircleIcon v-else-if="step.status === 'success'" class="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                <MinusCircleIcon v-else-if="step.status === 'skipped'" class="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                <XCircleIcon v-else-if="step.status === 'error'" class="h-3.5 w-3.5 shrink-0 text-rose-600" />
-                <span v-else class="h-2.5 w-2.5 shrink-0 rounded-full bg-slate-300" />
-                <span class="text-[11px] font-semibold text-slate-600">{{ step.label }}</span>
-              </label>
-              <span v-if="index < stepStates.length - 1" class="h-px w-2 shrink-0 bg-slate-300" />
-            </template>
-          </div>
-
-          <!-- PMS API push settings + BAR room narrowing -->
-          <div v-if="stepEnabled.allotment" class="mt-2 space-y-2 text-[11px] text-slate-500">
-            <div class="flex flex-wrap items-center gap-2">
-              <span class="font-semibold text-slate-600">Allotment push:</span>
-              <label class="inline-flex cursor-pointer items-center gap-1" title="Builds every payload and logs in, but never calls the PMS save endpoint.">
-                <input type="radio" :value="true" v-model="allotmentDryRun" :disabled="isRunning" class="h-3 w-3 accent-app-accent" /> Dry run
-              </label>
-              <label class="inline-flex cursor-pointer items-center gap-1" title="Actually writes allotment changes to the live PMS.">
-                <input type="radio" :value="false" v-model="allotmentDryRun" :disabled="isRunning" class="h-3 w-3 accent-app-accent" /> Live
-              </label>
-              <label class="inline-flex cursor-pointer items-center gap-1" title="Compares against the current channel-manager value and skips dates that already match, instead of always pushing every date.">
-                <input type="checkbox" v-model="skipUnchanged" :disabled="isRunning" class="h-3 w-3 accent-app-accent" /> Skip unchanged dates
-              </label>
-              <label class="inline-flex items-center gap-1">
-                Concurrency
-                <input v-model.number="allotmentConcurrency" type="number" min="1" max="20" :disabled="isRunning" class="neu-input w-14 py-0.5 text-center disabled:opacity-60" />
-              </label>
-            </div>
-            <div class="flex flex-wrap items-center gap-1.5">
-              <span class="font-semibold text-slate-600">Room types:</span>
-              <button type="button" @click="setAllRoomTypes(true)" :disabled="isRunning" class="rounded bg-app-primary px-1.5 py-0.5 font-semibold text-app-accent shadow-neu-inset-sm disabled:opacity-50">All</button>
-              <button type="button" @click="setAllRoomTypes(false)" :disabled="isRunning" class="rounded bg-app-primary px-1.5 py-0.5 font-semibold text-slate-500 shadow-neu-inset-sm disabled:opacity-50">None</button>
-              <label
-                v-for="rt in roomTypeConfig"
-                :key="rt.key"
-                class="inline-flex cursor-pointer items-center gap-1 rounded-full bg-app-primary py-0.5 pl-1.5 pr-2 shadow-neu-inset-sm"
-              >
+            <div class="mt-1.5 grid grid-cols-1 gap-x-3 gap-y-1 rounded-lg bg-app-primary p-2.5 shadow-neu-inset-sm sm:grid-cols-2">
+              <label v-for="rt in roomTypeConfig" :key="rt.key" class="inline-flex cursor-pointer items-center gap-1.5 text-[11px]">
                 <input type="checkbox" :value="rt.key" v-model="allotmentRoomTypes" :disabled="isRunning" class="h-3 w-3 accent-app-accent" />
                 {{ rt.label }}
               </label>
             </div>
-            <p v-if="allotmentNeedsAllRoomYield && stepEnabled.yield && !includeAllRoomTypes" class="rounded-lg bg-app-primary px-3 py-2 font-semibold text-amber-700 shadow-neu-inset-sm">
-              You've selected a room type beyond Deluxe/Premiere, but "Calculate allocations for all room categories" is off in Yield configuration - those types will have no Online Inventory to push.
-            </p>
           </div>
+          <p v-if="allotmentNeedsAllRoomYield && stepEnabled.yield && !includeAllRoomTypes" class="rounded-lg bg-app-primary px-3 py-2 font-semibold text-amber-700 shadow-neu-inset-sm">
+            You've selected a room type beyond Deluxe/Premiere, but "Calculate allocations for all room categories" is off in Settings → Yield configuration - those types will have no Online Inventory to push.
+          </p>
+          <p v-if="!allotmentDryRun" class="rounded-lg bg-app-primary px-3 py-2 font-semibold text-rose-700 shadow-neu-inset-sm">
+            Live mode pushes real allotment changes to the PMS for every {{ allotmentRoomLabels.join(', ') || '(no room types selected)' }} date range that differs from the channel manager.
+          </p>
+        </section>
 
-          <div v-if="stepEnabled.bar" class="mt-2 flex flex-wrap items-center gap-4 text-[11px] text-slate-500">
-            <div class="flex items-center gap-2">
-              <span class="font-semibold text-slate-600">BAR rooms:</span>
-              <label class="inline-flex cursor-pointer items-center gap-1">
-                <input type="checkbox" v-model="barRooms.deluxe" :disabled="isRunning" class="h-3 w-3 accent-app-accent" /> Deluxe
-              </label>
-              <label class="inline-flex cursor-pointer items-center gap-1">
-                <input type="checkbox" v-model="barRooms.premiere" :disabled="isRunning" class="h-3 w-3 accent-app-accent" /> Premiere
-              </label>
-            </div>
-            <label class="inline-flex cursor-pointer items-center gap-1" title="Compares against the BAR level we last successfully pushed and skips dates that already match, instead of always pushing every date.">
-              <input type="checkbox" v-model="barSkipUnchanged" :disabled="isRunning" class="h-3 w-3 accent-app-accent" /> Skip unchanged BAR dates
+        <!-- BAR pricing -->
+        <section v-if="stepEnabled.bar" class="space-y-2 p-4 text-xs text-slate-600">
+          <h2 class="text-sm font-semibold text-app-tertiary">BAR pricing (D-EDGE)</h2>
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <span class="font-semibold">Rooms</span>
+            <label class="inline-flex cursor-pointer items-center gap-1.5">
+              <input type="checkbox" v-model="barRooms.deluxe" :disabled="isRunning" class="h-3 w-3 accent-app-accent" /> Deluxe
+            </label>
+            <label class="inline-flex cursor-pointer items-center gap-1.5">
+              <input type="checkbox" v-model="barRooms.premiere" :disabled="isRunning" class="h-3 w-3 accent-app-accent" /> Premiere
+            </label>
+            <label class="inline-flex cursor-pointer items-center gap-1.5" title="Compares against the BAR level we last successfully pushed and skips dates that already match, instead of always pushing every date.">
+              <input type="checkbox" v-model="barSkipUnchanged" :disabled="isRunning" class="h-3 w-3 accent-app-accent" /> Skip unchanged dates
             </label>
           </div>
-
-          <p v-if="stepEnabled.allotment && !allotmentDryRun" class="mt-2 rounded-lg bg-app-primary px-3 py-2 text-[11px] font-semibold text-amber-700 shadow-neu-inset-sm">
-            Live mode will push real allotment changes to the PMS for every {{ allotmentRoomLabels.join(', ') || '(no room types selected)' }} date range that differs from the channel manager.
+          <p class="text-[11px] text-slate-500">
+            BAR always pushes live - there is no dry run. Dates on hold are skipped;
+            <button type="button" class="font-semibold text-app-accent underline-offset-2 hover:underline" @click="selectTab('automation')">manage hold dates</button>.
           </p>
-
-          <label v-if="stepEnabled.bar" class="mt-2 inline-flex items-start gap-2 text-xs text-amber-800">
+          <label class="inline-flex items-start gap-2 text-amber-800">
             <input v-model="resetCheckpoint" type="checkbox" :disabled="isRunning" class="mt-0.5 accent-app-accent" />
             <span>Start a fresh BAR batch (discard partial-run checkpoint). Check existing D-EDGE changes before selecting.</span>
           </label>
+        </section>
 
-          <button
-            @click="openStartConfirm"
-            :disabled="isRunning"
-            class="btn-primary mt-4 w-full px-5 py-2.5"
-          >
+        <section class="p-4">
+          <button @click="openStartConfirm" :disabled="isRunning" class="btn-primary w-full px-5 py-2.5">
             <svg v-if="isRunning" class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -145,115 +170,148 @@
             <BoltIcon v-else class="h-4 w-4" />
             {{ isRunning ? 'Pipeline running…' : (stepEnabled.allotment && !allotmentDryRun ? 'Start pipeline (LIVE allotment push)' : 'Start pipeline') }}
           </button>
-          <p v-if="isRunning" class="mt-2 text-center text-[11px] text-slate-400">
-            Stop is best-effort — it only interrupts between steps (not mid-scrape or mid-push).
-          </p>
           <div v-if="configError" class="mt-3 rounded-lg bg-app-primary px-3 py-2 text-xs font-semibold text-rose-700 shadow-neu-inset-sm">
             {{ configError }}
           </div>
+        </section>
+      </div>
+
+      <!-- Progress + log -->
+      <div class="neu-card flex flex-col p-4 xl:col-span-7">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-sm font-semibold text-app-tertiary">Progress</h2>
+            <p class="mt-0.5 text-xs text-slate-500">{{ progressLabel }}</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2">
+              <div class="h-1.5 w-24 overflow-hidden rounded-full bg-app-primary shadow-neu-inset-sm">
+                <div class="h-full rounded-full transition-all" :class="progressBarColor" :style="{ width: progressPercent + '%' }" />
+              </div>
+              <span class="text-[11px] font-semibold text-slate-500">{{ progressPercent }}%</span>
+            </div>
+            <button
+              v-if="isRunning"
+              type="button"
+              @click="requestStop"
+              :disabled="stopping"
+              title="Best-effort - it only interrupts between steps (not mid-scrape or mid-push)."
+              class="rounded-lg bg-app-primary px-2.5 py-1 text-xs font-semibold text-rose-600 shadow-neu-sm transition-all hover:text-rose-700 active:shadow-neu-inset-sm disabled:opacity-50 cursor-pointer"
+            >
+              Stop
+            </button>
+            <span
+              :class="[
+                'inline-flex items-center gap-1.5 rounded-full bg-app-primary px-2.5 py-1 text-[11px] font-semibold shadow-neu-inset-sm',
+                isRunning ? 'text-amber-700' : overallError ? 'text-rose-700' : overallSuccess ? 'text-emerald-700' : 'text-slate-500',
+              ]"
+            >
+              <span :class="['h-1.5 w-1.5 rounded-full', isRunning ? 'bg-amber-500 animate-pulse' : overallError ? 'bg-rose-500' : overallSuccess ? 'bg-emerald-500' : 'bg-slate-400']" />
+              {{ isRunning ? 'Running' : overallError ? 'Failed' : overallSuccess ? 'Success' : 'Ready' }}
+            </span>
+          </div>
         </div>
 
-        <!-- Unified process log, same pattern as AutomationPipelineView.vue -->
-        <div class="neu-card p-4">
-          <div class="mb-3 flex items-center justify-between">
-            <h2 class="text-sm font-semibold text-app-tertiary">Process log</h2>
-            <button
-              @click="clearLogs"
-              :disabled="isRunning"
-              class="rounded-lg bg-app-primary px-2.5 py-1 text-xs font-semibold text-slate-500 shadow-neu-sm transition-all hover:text-app-accent active:shadow-neu-inset-sm disabled:opacity-50 cursor-pointer"
+        <!-- Read-only stepper: status of each step this run -->
+        <div class="mt-3 flex flex-wrap items-center gap-1.5">
+          <template v-for="(step, index) in stepStates" :key="step.id">
+            <span
+              class="flex items-center gap-1.5 rounded-full bg-app-primary py-1 pl-1.5 pr-2.5 shadow-neu-inset-sm"
+              :class="{ 'ring-1 ring-app-accent/40': step.status === 'running', 'opacity-40': !stepEnabled[step.id] }"
+              :title="stepEnabled[step.id] ? step.label : `${step.label} (skipped)`"
             >
-              Clear logs
-            </button>
+              <span v-if="step.status === 'running'" class="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-slate-200 border-t-app-accent" />
+              <CheckCircleIcon v-else-if="step.status === 'success'" class="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+              <MinusCircleIcon v-else-if="step.status === 'skipped'" class="h-3.5 w-3.5 shrink-0 text-slate-400" />
+              <XCircleIcon v-else-if="step.status === 'error'" class="h-3.5 w-3.5 shrink-0 text-rose-600" />
+              <span v-else class="h-2.5 w-2.5 shrink-0 rounded-full bg-slate-300" />
+              <span class="text-[11px] font-semibold text-slate-600">{{ step.label }}</span>
+            </span>
+            <span v-if="index < stepStates.length - 1" class="h-px w-2 shrink-0 bg-slate-300" />
+          </template>
+        </div>
+
+        <div class="mb-2 mt-4 flex items-center justify-between">
+          <h3 class="text-xs font-semibold text-slate-600">Process log</h3>
+          <button
+            @click="clearLogs"
+            :disabled="isRunning"
+            class="rounded-lg bg-app-primary px-2.5 py-1 text-xs font-semibold text-slate-500 shadow-neu-sm transition-all hover:text-app-accent active:shadow-neu-inset-sm disabled:opacity-50 cursor-pointer"
+          >
+            Clear logs
+          </button>
+        </div>
+        <div ref="logContainer" class="h-96 overflow-y-auto rounded-xl bg-app-primary p-4 shadow-neu-inset xl:h-auto xl:min-h-[28rem] xl:flex-1">
+          <div v-if="logs.length === 0" class="py-8 text-center text-sm text-slate-500">
+            No logs yet. Start the pipeline to see live progress. Scheduled runs log to
+            <router-link to="/fast-pipeline-history" class="font-semibold text-app-accent hover:underline">Pipeline History</router-link>.
           </div>
-          <div ref="logContainer" class="h-96 overflow-y-auto rounded-xl bg-app-primary p-4 shadow-neu-inset">
-            <div v-if="logs.length === 0" class="py-8 text-center text-sm text-slate-500">
-              No logs yet. Start the pipeline to see live progress.
+          <div v-else class="space-y-1.5">
+            <div
+              v-for="(log, index) in logs"
+              :key="index"
+              class="flex items-start gap-2 font-mono text-xs"
+              :class="{
+                'text-app-accent': log.type === 'info',
+                'text-emerald-700': log.type === 'success',
+                'text-rose-600': log.type === 'error',
+                'text-slate-400': log.type === 'skipped',
+              }"
+            >
+              <span class="text-slate-500">{{ formatTime(log.timestamp) }}</span>
+              <span v-if="log.step" class="shrink-0 rounded bg-app-primary px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 shadow-neu-inset-sm">{{ stepLabel(log.step) }}</span>
+              <span class="flex-1 whitespace-pre-wrap break-words">{{ log.message }}</span>
             </div>
-            <div v-else class="space-y-1.5">
-              <div
-                v-for="(log, index) in logs"
-                :key="index"
-                class="flex items-start gap-2 font-mono text-xs"
-                :class="{
-                  'text-app-accent': log.type === 'info',
-                  'text-emerald-700': log.type === 'success',
-                  'text-rose-600': log.type === 'error',
-                  'text-slate-400': log.type === 'skipped',
-                }"
-              >
-                <span class="text-slate-500">{{ formatTime(log.timestamp) }}</span>
-                <span v-if="log.step" class="shrink-0 rounded bg-app-primary px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 shadow-neu-inset-sm">{{ stepLabel(log.step) }}</span>
-                <span class="flex-1 whitespace-pre-wrap break-words">{{ log.message }}</span>
-              </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Automation ===== -->
+    <div v-show="activeTab === 'automation'" class="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+      <PipelineScheduleCard :page-config="buildScheduleConfig" :step-label="stepLabel" />
+      <div class="space-y-4">
+        <DedgeSessionCard />
+        <BarHoldDatesCard />
+      </div>
+    </div>
+
+    <!-- ===== Settings ===== -->
+    <div v-show="activeTab === 'settings'" class="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+      <div class="neu-card p-4">
+        <h2 class="text-sm font-semibold text-app-tertiary">Credentials</h2>
+        <p class="mt-0.5 text-[11px] text-slate-500">For manual runs. Leave blank to use the credentials saved on the server (scheduled runs always use those).</p>
+        <div class="mt-3 space-y-3">
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="mb-1 block text-xs font-semibold text-slate-600">PMS username</label>
+              <input v-model="pmsUsername" type="text" autocomplete="username" class="neu-input disabled:opacity-60" :disabled="isRunning" />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-semibold text-slate-600">PMS password</label>
+              <input v-model="pmsPassword" type="password" autocomplete="current-password" class="neu-input disabled:opacity-60" :disabled="isRunning" />
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="mb-1 block text-xs font-semibold text-slate-600">D-EDGE username</label>
+              <input v-model="dedgeUsername" type="text" autocomplete="off" class="neu-input disabled:opacity-60" :disabled="isRunning" />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-semibold text-slate-600">D-EDGE password</label>
+              <input v-model="dedgePassword" type="password" autocomplete="off" class="neu-input disabled:opacity-60" :disabled="isRunning" />
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Right: compact config -->
-      <div class="space-y-4 xl:col-span-1">
-        <DedgeSessionCard />
-        <PipelineScheduleCard :page-config="buildScheduleConfig" :step-label="stepLabel" />
-
-        <div class="neu-card p-4">
-          <h2 class="text-sm font-semibold text-app-tertiary">Credentials &amp; run settings</h2>
-          <div class="mt-3 space-y-3">
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <label class="mb-1 block text-xs font-semibold text-slate-600">PMS username</label>
-                <input v-model="pmsUsername" type="text" autocomplete="username" class="neu-input disabled:opacity-60" :disabled="isRunning" />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-semibold text-slate-600">PMS password</label>
-                <input v-model="pmsPassword" type="password" autocomplete="current-password" class="neu-input disabled:opacity-60" :disabled="isRunning" />
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <label class="mb-1 block text-xs font-semibold text-slate-600">D-EDGE username</label>
-                <input v-model="dedgeUsername" type="text" autocomplete="off" class="neu-input disabled:opacity-60" :disabled="isRunning" />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-semibold text-slate-600">D-EDGE password</label>
-                <input v-model="dedgePassword" type="password" autocomplete="off" class="neu-input disabled:opacity-60" :disabled="isRunning" />
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-2 items-end">
-              <div>
-                <label class="mb-1 block text-xs font-semibold text-slate-600">Start date</label>
-                <input v-model="startDate" type="date" class="neu-input disabled:opacity-60" :disabled="isRunning" />
-              </div>
-              <label class="inline-flex cursor-pointer items-center gap-2 pb-2 text-xs font-semibold text-slate-500" title="Only affects the D-EDGE Chrome steps - PMS steps never open a browser.">
-                <button
-                  type="button"
-                  role="switch"
-                  :aria-checked="headless"
-                  :disabled="isRunning"
-                  @click="headless = !headless"
-                  :class="[
-                    'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full shadow-neu-inset-sm transition-colors disabled:opacity-50',
-                    headless ? 'bg-app-accent' : 'bg-app-primary',
-                  ]"
-                >
-                  <span :class="['inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-neu-sm transition-transform', headless ? 'translate-x-[20px]' : 'translate-x-0.5']" />
-                </button>
-                Headless (D-EDGE)
-              </label>
-            </div>
-            <div>
-              <label class="mb-1 block text-xs font-semibold text-slate-600">Company ID (PMS allotment)</label>
-              <input v-model.number="companyId" type="number" class="neu-input disabled:opacity-60" :disabled="isRunning" />
-            </div>
-          </div>
-        </div>
-
-        <!-- Yield config, collapsed by default to save space -->
-        <details class="neu-card overflow-hidden p-4">
-          <summary class="cursor-pointer text-sm font-semibold text-app-tertiary">
-            Yield configuration
-            <span class="ml-1 text-xs font-normal text-slate-500">(same as Yield Management page)</span>
-          </summary>
-          <div class="mt-3 space-y-3">
+      <div class="neu-card p-4">
+        <h2 class="text-sm font-semibold text-app-tertiary">
+          Yield configuration
+          <span class="ml-1 text-xs font-normal text-slate-500">(same as Yield Management page)</span>
+        </h2>
+        <div class="mt-3 space-y-3">
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <div>
               <label class="block text-xs font-semibold text-slate-600">Demand bins</label>
               <input v-model="yieldForm.demand_bins" type="text" class="neu-input mt-1 disabled:opacity-60" :disabled="isRunning" placeholder="[0, 70, 85, 100]" />
@@ -262,53 +320,58 @@
               <label class="block text-xs font-semibold text-slate-600">Demand labels</label>
               <input v-model="yieldForm.demand_labels" type="text" class="neu-input mt-1 disabled:opacity-60" :disabled="isRunning" placeholder="['Low', 'Medium', 'High']" />
             </div>
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <label class="block text-xs font-semibold text-slate-600">Very low (%)</label>
-                <input v-model.number="yieldForm.very_low_threshold_pct" type="number" step="0.01" class="neu-input mt-1 disabled:opacity-60" :disabled="isRunning" />
-              </div>
-              <div>
-                <label class="block text-xs font-semibold text-slate-600">Low (%)</label>
-                <input v-model.number="yieldForm.low_threshold_pct" type="number" step="0.01" class="neu-input mt-1 disabled:opacity-60" :disabled="isRunning" />
-              </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600">Very low (%)</label>
+              <input v-model.number="yieldForm.very_low_threshold_pct" type="number" step="0.01" class="neu-input mt-1 disabled:opacity-60" :disabled="isRunning" />
             </div>
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <label class="block text-xs font-semibold text-slate-600">Deluxe rooms</label>
-                <input v-model.number="yieldForm.room_caps['Deluxe Room']" type="number" class="neu-input mt-1 disabled:opacity-60" :disabled="isRunning" />
-              </div>
-              <div>
-                <label class="block text-xs font-semibold text-slate-600">Premiere rooms</label>
-                <input v-model.number="yieldForm.room_caps['Premiere Room']" type="number" class="neu-input mt-1 disabled:opacity-60" :disabled="isRunning" />
-              </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600">Low (%)</label>
+              <input v-model.number="yieldForm.low_threshold_pct" type="number" step="0.01" class="neu-input mt-1 disabled:opacity-60" :disabled="isRunning" />
             </div>
-            <div class="grid grid-cols-3 gap-2">
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-xs font-semibold text-slate-600">Deluxe rooms</label>
+              <input v-model.number="yieldForm.room_caps['Deluxe Room']" type="number" class="neu-input mt-1 disabled:opacity-60" :disabled="isRunning" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-600">Premiere rooms</label>
+              <input v-model.number="yieldForm.room_caps['Premiere Room']" type="number" class="neu-input mt-1 disabled:opacity-60" :disabled="isRunning" />
+            </div>
+          </div>
+          <div>
+            <p class="text-xs font-semibold text-slate-600">Deluxe override</p>
+            <div class="mt-1 grid grid-cols-3 gap-2">
               <div>
-                <label class="block text-xs font-semibold text-slate-600">Occupancy (%)</label>
+                <label class="block text-[11px] text-slate-500">Occupancy (%)</label>
                 <input v-model.number="yieldForm.deluxe_override_occupancy" type="number" class="neu-input mt-1 disabled:opacity-60" :disabled="isRunning" />
               </div>
               <div>
-                <label class="block text-xs font-semibold text-slate-600">Premiere min</label>
+                <label class="block text-[11px] text-slate-500">Premiere min</label>
                 <input v-model.number="yieldForm.deluxe_override_premiere" type="number" class="neu-input mt-1 disabled:opacity-60" :disabled="isRunning" />
               </div>
               <div>
-                <label class="block text-xs font-semibold text-slate-600">Amount</label>
+                <label class="block text-[11px] text-slate-500">Amount</label>
                 <input v-model.number="yieldForm.deluxe_override_amount" type="number" class="neu-input mt-1 disabled:opacity-60" :disabled="isRunning" />
               </div>
             </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
             <div>
               <label class="block text-xs font-semibold text-slate-600">BAR shift levels</label>
               <input v-model.number="yieldForm.bar_level_shift" type="number" step="1" class="neu-input mt-1 disabled:opacity-60" :disabled="isRunning" />
             </div>
-            <label class="flex items-start gap-2 text-xs text-slate-600">
-              <input v-model="includeAllRoomTypes" type="checkbox" :disabled="isRunning" class="mt-0.5 accent-app-accent" />
-              <span>
-                Calculate allocations for all room categories
-                <span class="block text-[11px] font-normal text-slate-500">Required for the allotment step to push anything beyond Deluxe/Premiere - without this, the other room types' Online Inventory won't be written and their allotment jobs will be empty.</span>
-              </span>
-            </label>
           </div>
-        </details>
+          <label class="flex items-start gap-2 text-xs text-slate-600">
+            <input v-model="includeAllRoomTypes" type="checkbox" :disabled="isRunning" class="mt-0.5 accent-app-accent" />
+            <span>
+              Calculate allocations for all room categories
+              <span class="block text-[11px] font-normal text-slate-500">Required for the allotment step to push anything beyond Deluxe/Premiere - without this, the other room types' Online Inventory won't be written and their allotment jobs will be empty.</span>
+            </span>
+          </label>
+        </div>
       </div>
     </div>
 
@@ -390,11 +453,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, watch, onMounted } from 'vue'
+import { ref, computed, nextTick, watch, onMounted, type Component } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import axios from '../plugins/axios'
 import PageHeader from '../components/PageHeader.vue'
 import PipelineScheduleCard, { type ScheduleRunConfig } from '../components/PipelineScheduleCard.vue'
 import DedgeSessionCard from '../components/DedgeSessionCard.vue'
+import BarHoldDatesCard from '../components/BarHoldDatesCard.vue'
+import { useDedgeAuth } from '../composables/useDedgeAuth'
 import { usePipelineStream, type PipelineStepDef } from '../composables/usePipelineStream'
 import { todayLocalDateString } from '../utils/date'
 import {
@@ -404,7 +470,28 @@ import {
   MinusCircleIcon,
   XMarkIcon,
   ExclamationTriangleIcon,
+  PlayIcon,
+  ClockIcon,
+  Cog6ToothIcon,
 } from '@heroicons/vue/24/outline'
+
+// Run = set up and start a manual run; Automation = what happens without
+// anyone here (schedule, BAR holds, D-EDGE session); Settings = rarely
+// changed inputs. The tab is kept in ?tab= so it survives a reload.
+type TabId = 'run' | 'automation' | 'settings'
+const TABS: { id: TabId; name: string; icon: Component }[] = [
+  { id: 'run', name: 'Run', icon: PlayIcon },
+  { id: 'automation', name: 'Automation', icon: ClockIcon },
+  { id: 'settings', name: 'Settings', icon: Cog6ToothIcon },
+]
+const route = useRoute()
+const router = useRouter()
+const activeTab = ref<TabId>(TABS.some(t => t.id === route.query.tab) ? route.query.tab as TabId : 'run')
+function selectTab(id: TabId) {
+  activeTab.value = id
+  router.replace({ query: { ...route.query, tab: id === 'run' ? undefined : id } })
+}
+const { status: dedgeAuth } = useDedgeAuth()
 
 const PIPELINE_STEPS: PipelineStepDef[] = [
   { id: 'scrape_pms', label: 'Scrape PMS (API)' },
