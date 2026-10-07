@@ -101,6 +101,7 @@ import {
   BeakerIcon,
   BoltIcon,
   ClockIcon,
+  EnvelopeIcon,
 } from '@heroicons/vue/24/outline'
 
 defineProps<{ open: boolean }>()
@@ -118,6 +119,7 @@ const navigation = [
   { name: 'Pipeline', href: '/pipeline', icon: RocketLaunchIcon },
   { name: 'Fast API Pipeline', href: '/fast-api-pipeline', icon: BoltIcon },
   { name: 'Pipeline History', href: '/fast-pipeline-history', icon: ClockIcon },
+  { name: 'Stop Sale', href: '/stop-sale', icon: EnvelopeIcon },
   { name: 'PMS API Test', href: '/pms-api-test', icon: BeakerIcon },
 ]
 

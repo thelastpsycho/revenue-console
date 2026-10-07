@@ -9,6 +9,7 @@ import AutomationPipelineView from './views/AutomationPipelineView.vue'
 import PmsApiTestView from './views/PmsApiTestView.vue'
 import FastApiPipelineView from './views/FastApiPipelineView.vue'
 import FastPipelineHistoryView from './views/FastPipelineHistoryView.vue'
+import StopSaleView from './views/StopSaleView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -62,6 +63,11 @@ const router = createRouter({
       path: '/fast-pipeline-history',
       name: 'fast-pipeline-history',
       component: FastPipelineHistoryView
+    },
+    {
+      path: '/stop-sale',
+      name: 'stop-sale',
+      component: StopSaleView
     }
   ]
 })

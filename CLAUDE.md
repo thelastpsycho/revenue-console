@@ -74,6 +74,10 @@ Use `infrastructure/paths.py` instead of constructing these paths manually.
 
 PMS scrape → D-EDGE scrape → combine → yield → verify → PMS allotment → D-EDGE BAR.
 
+### Stop sale emails
+
+`stop_sale/` + `routes/stop_sale_routes.py` + `StopSaleView.vue` (`/stop-sale`). Reads `combined_inventory.db`: a date stops sale for every room type when occupancy >= the occupancy threshold, or for a single room type when its remaining rooms <= that room type's threshold. The operator ticks dates and presses Send - nothing is automatic. One email per recipient (no CC) over SMTP configured by `SMTP_*` env vars in `backend/.env`; recipients, rule/email settings and send history live in `stop_sale.db`. Sends recompute closures server-side; the browser only supplies the ticked dates.
+
 ### Progress streaming
 
 Long-running operations run in background threads and use SSE for live logs.
