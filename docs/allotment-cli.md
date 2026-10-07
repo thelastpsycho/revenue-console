@@ -98,6 +98,24 @@ from the **Schedule** panel on the Fast API Pipeline page, not from flags.
 - **Scheduler online/offline** shows whether the container is checking in
   (every 30s). Offline means no scheduled runs, regardless of the settings.
 
+### D-EDGE device code
+
+D-EDGE trusts this machine through a cookie in the persistent Chrome
+profile (`backend/app/scraper/.dedge_profile/`). If it stops trusting it,
+it emails a code to the hotel mailbox, and any run (scheduled or manual)
+pauses at the D-EDGE login:
+
+- A yellow **D-EDGE needs a device code** banner appears at the top of every
+  page. Type the code from the email and press *Submit*; the paused run
+  enters it in D-EDGE and continues. A rejected code shows an error and the
+  run keeps waiting; *Resend email* asks D-EDGE for a new one.
+- The run waits up to 15 minutes (`DEDGE_DEVICE_CODE_TIMEOUT`, in seconds),
+  then fails. The next run asks again.
+- The **D-EDGE session** card on the Fast API Pipeline page shows when the
+  session was last verified, and *Check session now* runs the same login a
+  run does (no export, no changes), so you can re-authorize between runs.
+  It can't start while a pipeline run is in progress.
+
 The settings are stored by the backend in
 `backend/app/scraper/data/fast_pipeline_schedule.json` (gitignored) and take
 effect on the next tick - no container restart. It ships **off**. Scheduled

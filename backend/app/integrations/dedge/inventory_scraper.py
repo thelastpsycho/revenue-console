@@ -84,6 +84,33 @@ def _fetch_export(driver, start_str, end_str, timeout=60):
     return base64.b64decode(b64_payload)
 
 
+def _open_planning(driver):
+    """Load Planning/Monthly. It enforces the device-trust check more strictly
+    than ensure_logged_in's probe page, so re-check for it here."""
+    driver.get(PLANNING_URL)
+    wait_for_page_load(driver)
+    if "/Device" in driver.current_url:
+        _wait_for_device_authorization(driver)
+        driver.get(PLANNING_URL)
+        wait_for_page_load(driver)
+        if "/Device" in driver.current_url:
+            raise RuntimeError(f"Still on the device-verification page after waiting (at {driver.current_url})")
+
+
+def verify_session(username=None, password=None, user_data_dir=DEFAULT_PROFILE_DIR):
+    """Log in (if needed) and open the planning page, the same checks a
+    pipeline run makes, without exporting or changing anything. If D-EDGE asks
+    for a device code, this waits for it like a run would. Raises on failure."""
+    username = username or os.environ.get("DEDGE_USERNAME", "")
+    password = password or os.environ.get("DEDGE_PASSWORD", "")
+    driver = setup_driver(user_data_dir)
+    try:
+        ensure_logged_in(driver, username, password)
+        _open_planning(driver)
+    finally:
+        driver.quit()
+
+
 def scrape_cm_inventory(driver=None, start_date=None, days=100, username=None, password=None,
                          user_data_dir=DEFAULT_PROFILE_DIR, headless=None):
     """Log into D-EDGE, export the Rooms planning grid as Excel, and process it.
@@ -109,17 +136,8 @@ def scrape_cm_inventory(driver=None, start_date=None, days=100, username=None, p
 
         # The export endpoint relies on server-side session state (current hotel /
         # planning context) that only gets set by actually loading the Planning
-        # page, not just by having a valid extranet cookie. This route also
-        # enforces the device-trust check more strictly than ensure_logged_in's
-        # own probe page, so re-check here too.
-        driver.get(PLANNING_URL)
-        wait_for_page_load(driver)
-        if "/Device" in driver.current_url:
-            _wait_for_device_authorization(driver)
-            driver.get(PLANNING_URL)
-            wait_for_page_load(driver)
-            if "/Device" in driver.current_url:
-                raise RuntimeError(f"Still on the device-verification page after waiting (at {driver.current_url})")
+        # page, not just by having a valid extranet cookie.
+        _open_planning(driver)
 
         start = datetime.strptime(start_date, "%Y-%m-%d") if start_date else datetime.now()
         end = start + timedelta(days=days)

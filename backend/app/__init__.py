@@ -25,11 +25,13 @@ def create_app():
     from .routes import auth_routes
     from .routes import pms_fast_routes
     from .routes import fast_pipeline_routes
+    from .routes import dedge_auth_routes
     app.register_blueprint(main.bp)
     app.register_blueprint(database_routes.bp)
     app.register_blueprint(pipeline_routes.bp)
     app.register_blueprint(auth_routes.bp)
     app.register_blueprint(pms_fast_routes.bp)
     app.register_blueprint(fast_pipeline_routes.bp)
+    app.register_blueprint(dedge_auth_routes.bp)
     
     return app 

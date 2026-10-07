@@ -24,6 +24,8 @@
         </span>
       </header>
 
+      <DedgeCodeBanner />
+
       <main class="flex flex-1 flex-col">
         <slot></slot>
       </main>
@@ -36,6 +38,7 @@ import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Bars3Icon, ChartBarSquareIcon } from '@heroicons/vue/24/outline'
 import AppSidebar from './AppSidebar.vue'
+import DedgeCodeBanner from './DedgeCodeBanner.vue'
 
 const sidebarOpen = ref(false)
 const route = useRoute()

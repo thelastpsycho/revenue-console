@@ -192,6 +192,7 @@
 
       <!-- Right: compact config -->
       <div class="space-y-4 xl:col-span-1">
+        <DedgeSessionCard />
         <PipelineScheduleCard :page-config="buildScheduleConfig" :step-label="stepLabel" />
 
         <div class="neu-card p-4">
@@ -393,6 +394,7 @@ import { ref, computed, nextTick, watch, onMounted } from 'vue'
 import axios from '../plugins/axios'
 import PageHeader from '../components/PageHeader.vue'
 import PipelineScheduleCard, { type ScheduleRunConfig } from '../components/PipelineScheduleCard.vue'
+import DedgeSessionCard from '../components/DedgeSessionCard.vue'
 import { usePipelineStream, type PipelineStepDef } from '../composables/usePipelineStream'
 import { todayLocalDateString } from '../utils/date'
 import {

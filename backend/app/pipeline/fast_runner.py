@@ -109,6 +109,14 @@ def try_acquire():
         return True, None
 
 
+def release():
+    """Undo try_acquire() for work that isn't a run_pipeline call (which clears
+    pipeline_active itself), e.g. the D-EDGE session check."""
+    global pipeline_active
+    with _lock:
+        pipeline_active = False
+
+
 def _notify_pipeline_result(run_id):
     """POSTs the full run record plus every log line (the same data the Fast
     API Pipeline History page reads) to an n8n webhook after every run.

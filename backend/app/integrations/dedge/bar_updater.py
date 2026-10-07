@@ -48,6 +48,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, StaleElementReferenceException, NoSuchElementException
 
 from .bar_checkpoint import BarCheckpoint
+from . import device_auth
 
 from ...shared import log_queue
 from ...inventory.allocation_repository import load_allocation_rows
@@ -145,20 +146,109 @@ def _find_first(driver, selectors):
     return None
 
 
-def _wait_for_device_authorization(driver, timeout=300):
-    """Pause here while a human enters the emailed device-verification code.
+EXTRANET_ORIGIN = "https://extranet.availpro.com"
+# How long a run waits for someone to enter the emailed device code.
+DEVICE_CODE_TIMEOUT = int(os.environ.get("DEDGE_DEVICE_CODE_TIMEOUT", "900"))
+# How long D-EDGE gets to accept a submitted code before we call it rejected.
+DEVICE_CODE_CHECK_SECONDS = 15
 
-    Only useful when the browser is actually visible (headless=False) - there is
-    no one to read the email or click otherwise. Once this passes, the trust
-    cookie is written into the persistent Chrome profile and every later run
-    (headless or not) skips this step entirely.
+
+def _device_verified(driver):
+    url = driver.current_url
+    return "/Device" not in url and "extranet.availpro.com" in url
+
+
+def _device_email_hint(driver):
+    try:
+        text = driver.find_element(By.TAG_NAME, "body").text
+    except Exception:
+        return None
+    match = re.search(r"sent to\s+(\S+@\S+?)\s+to\b", text)
+    return match.group(1) if match else None
+
+
+def _open_device_code_form(driver):
+    """/Device/Unknown only explains that an email was sent; the code input
+    lives behind its "enter the code" link (/Device)."""
+    if _find_first(driver, [(By.NAME, "formCode")]):
+        return
+    link = _find_first(driver, [(By.ID, "authorisation-link")])
+    if link:
+        link.click()
+    else:
+        driver.get(f"{EXTRANET_ORIGIN}/Device")
+    wait_for_page_load(driver)
+    time.sleep(1)
+
+
+def _submit_device_code(driver, code):
+    """Type the code into D-EDGE's form. Returns True once D-EDGE lets us
+    through to the extranet."""
+    _open_device_code_form(driver)
+    field = _find_first(driver, [(By.NAME, "formCode"), (By.ID, "formCode")])
+    if not field:
+        raise RuntimeError(f"Could not find the D-EDGE device code field (at {driver.current_url})")
+    field.clear()
+    field.send_keys(code)
+    button = _find_first(driver, [
+        (By.XPATH, "//button[contains(translate(normalize-space(.), 'CONFIRM', 'confirm'), 'confirm')]"),
+        (By.CSS_SELECTOR, "button[type='submit']"),
+        (By.CSS_SELECTOR, "input[type='submit']"),
+    ])
+    if button:
+        button.click()
+    else:
+        field.submit()
+    try:
+        WebDriverWait(driver, DEVICE_CODE_CHECK_SECONDS).until(_device_verified)
+        return True
+    except TimeoutException:
+        return False
+
+
+def _wait_for_device_authorization(driver, timeout=None):
+    """D-EDGE no longer trusts this Chrome profile and emailed a code to the
+    hotel mailbox. Wait for that code to arrive from the console UI (Fast API
+    Pipeline page, see device_auth.py) and type it in - the browser is headless
+    in Docker, so nobody can type into it directly. With a visible browser,
+    entering the code in the window by hand works too.
+
+    Once this passes, the trust cookie is stored in the persistent profile and
+    later runs skip this step.
     """
+    timeout = timeout or DEVICE_CODE_TIMEOUT
+    hint = _device_email_hint(driver)
+    deadline = time.monotonic() + timeout
+    device_auth.begin_wait(timeout, email_hint=hint)
     log(driver,
-        "New device detected - D-EDGE emailed a verification code to authorize this "
-        f"browser. Enter it in the open Chrome window within {timeout // 60} minutes...")
-    WebDriverWait(driver, timeout).until(
-        lambda d: "/Device" not in d.current_url and "extranet.availpro.com" in d.current_url
-    )
+        f"New device detected - D-EDGE emailed a verification code to {hint or 'the hotel mailbox'}. "
+        f"Enter it in the console (Fast API Pipeline page) within {timeout // 60} minutes...")
+    verified = False
+    try:
+        while time.monotonic() < deadline:
+            if _device_verified(driver):
+                verified = True
+                break
+            action, code = device_auth.take_action(min(2, max(0, deadline - time.monotonic())))
+            if action == "resend":
+                log(driver, "Asking D-EDGE to resend the device code email...")
+                driver.get(f"{EXTRANET_ORIGIN}/Device/Validation/SendMailAgain")
+                wait_for_page_load(driver)
+            elif action == "code":
+                log(driver, "Device code received from the console - submitting it to D-EDGE...")
+                if _submit_device_code(driver, code):
+                    verified = True
+                    break
+                device_auth.set_error("D-EDGE didn't accept that code - check the latest email and try again")
+                log(driver, "D-EDGE rejected the device code - waiting for another one")
+    finally:
+        device_auth.end_wait(verified)
+
+    if not verified:
+        device_auth.set_error(f"No valid code was entered within {timeout // 60} minutes")
+        raise RuntimeError(
+            f"D-EDGE device verification timed out after {timeout // 60} minutes - "
+            "no valid code was entered in the console")
     log(driver, "Device verified - trust is now stored in this Chrome profile for future runs")
 
 
@@ -167,8 +257,7 @@ def ensure_logged_in(driver, username, password, timeout=30):
 
     Returns True when the extranet is reachable. If a one-time device
     authorisation code is required (emailed, cannot be automated), this blocks
-    until a human enters it in the visible browser window (see
-    _wait_for_device_authorization) - only works with headless=False.
+    until someone enters it in the console UI (see _wait_for_device_authorization).
     """
     driver.get(APPLY_URL)
     wait_for_page_load(driver)
@@ -177,6 +266,7 @@ def ensure_logged_in(driver, username, password, timeout=30):
 
     if "extranet.availpro.com" in url and "/Device" not in url:
         log(driver, "Existing D-EDGE session is valid - skipping login")
+        device_auth.mark_verified()
         return True
 
     if "/Device" in url:
@@ -186,6 +276,7 @@ def ensure_logged_in(driver, username, password, timeout=30):
         if "extranet.availpro.com" not in driver.current_url:
             raise RuntimeError(f"Login did not reach the extranet (at {driver.current_url})")
         log(driver, "Logged in to D-EDGE successfully")
+        device_auth.mark_verified()
         return True
 
     # We are on the login domain. Step 1: username.
@@ -223,6 +314,7 @@ def ensure_logged_in(driver, username, password, timeout=30):
     if "extranet.availpro.com" not in driver.current_url:
         raise RuntimeError(f"Login did not reach the extranet (at {driver.current_url})")
     log(driver, "Logged in to D-EDGE successfully")
+    device_auth.mark_verified()
     return True
 
 
