@@ -31,9 +31,11 @@ date ranges, group those ranges by price level, and do ONE "apply" per level
 ~50 daily runs into ~10 applies.
 """
 
+import glob
 import json
 import os
 import re
+import signal
 import tempfile
 import time
 import platform
@@ -107,6 +109,45 @@ def resolve_headless(headless=None):
     return bool(headless)
 
 
+def _kill_stale_chrome(user_data_dir):
+    """A previous run's Chrome that crashed, got OOM-killed, or whose own
+    driver.quit() raised (swallowed in a bare except, see run_pipeline's
+    finally blocks) can leave the browser process alive, still holding this
+    profile directory. Chrome then treats the profile as already open by
+    another instance and exits immediately - this is the documented cause of
+    "session not created: Chrome instance exited" (see the comments in
+    pipeline/runner.py and pipeline/fast_runner.py next to driver.quit()).
+
+    Every caller of setup_driver() already holds the in-process pipeline/
+    check lock (try_acquire()/try_start_check()) before reaching here, so
+    nothing legitimate can be using this profile right now - any Chrome
+    process still pinned to it is leftover and safe to kill. Scans /proc
+    directly instead of shelling out to pgrep/pkill, which aren't installed
+    in the slim Docker image; a no-op on macOS/dev, where /proc doesn't
+    exist."""
+    for cmdline_path in glob.glob("/proc/[0-9]*/cmdline"):
+        try:
+            with open(cmdline_path, "rb") as f:
+                cmdline = f.read().replace(b"\x00", b" ").decode(errors="replace")
+        except OSError:
+            continue
+        if user_data_dir in cmdline and "chrome" in cmdline.lower():
+            pid = int(cmdline_path.split("/")[2])
+            try:
+                os.kill(pid, signal.SIGKILL)
+                print(f"[bar_updater] killed stale Chrome process {pid} holding {user_data_dir}")
+            except OSError:
+                pass
+    for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        path = os.path.join(user_data_dir, name)
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            print(f"[bar_updater] could not clear stale Chrome lock {path}: {e}")
+
+
 def setup_driver(user_data_dir=DEFAULT_PROFILE_DIR, headless=None):
     chrome_options = Options()
     headless = resolve_headless(headless)
@@ -122,6 +163,7 @@ def setup_driver(user_data_dir=DEFAULT_PROFILE_DIR, headless=None):
     # Persistent profile => the "new device" email code is only needed once.
     if user_data_dir:
         os.makedirs(user_data_dir, exist_ok=True)
+        _kill_stale_chrome(user_data_dir)
         chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
         chrome_options.add_argument("--profile-directory=Default")
 
