@@ -64,6 +64,7 @@ def test_live_keeps_configured_bar_rooms_and_pushes_allotment():
     assert config["steps"]["bar"] is True
     assert config["pmsPassword"] == "pp"
     assert config["resetCheckpoint"] is False
+    assert config["discardStaleCheckpoint"] is True
     assert config["headless"] is None
 
 

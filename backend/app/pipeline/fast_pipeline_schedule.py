@@ -190,6 +190,9 @@ def build_run_config(state, env=None):
         "startDate": datetime.now().strftime("%Y-%m-%d"),
         "headless": None,
         "resetCheckpoint": False,
+        # Nobody is watching a scheduled run to press Reset checkpoint, so a
+        # checkpoint left by a killed run would block BAR on every run after it.
+        "discardStaleCheckpoint": True,
         "allotmentDryRun": not live,
         "trigger": "schedule",
         "scheduleMode": "live" if live else "preview",

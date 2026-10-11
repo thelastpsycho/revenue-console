@@ -726,7 +726,8 @@ def _build_skip_map(rows, rooms, last_applied):
 def update_bar(driver=None, username=None, password=None,
                rooms=("deluxe", "premiere"), user_data_dir=DEFAULT_PROFILE_DIR,
                dry_run=False, max_levels_per_room=None, headless=None,
-               reset_checkpoint=False, skip_unchanged=True):
+               reset_checkpoint=False, skip_unchanged=True,
+               discard_stale_checkpoint=False):
     """Apply yield engine BAR levels to the extranet for the given rooms.
 
     dry_run: build and log every apply plan but stop before clicking the final
@@ -734,6 +735,9 @@ def update_bar(driver=None, username=None, password=None,
     max_levels_per_room: cap the number of price-level groups per room (testing).
     reset_checkpoint: explicitly discard a checkpoint if starting a new run
                       after a partial failure or after intentional external edits.
+    discard_stale_checkpoint: discard a checkpoint whose plan differs from this
+                      run's instead of refusing to start (scheduled runs). A
+                      checkpoint with the same plan is still resumed.
     skip_unchanged: when True (default), dates whose computed BAR level already
                     matches what was last successfully applied (tracked in
                     bar_last_applied.json, independent of the crash-resume
@@ -771,7 +775,11 @@ def update_bar(driver=None, username=None, password=None,
         checkpoint = BarCheckpoint(
             _planned_chunks(rows, rooms, max_levels_per_room, skip_map=exclude_map),
             reset=reset_checkpoint, dry_run=dry_run,
+            discard_stale=discard_stale_checkpoint,
         )
+        if checkpoint.discarded_stale:
+            log(driver, "Discarded a checkpoint left by an interrupted BAR run with a different plan; "
+                        "unconfirmed changes are re-applied from the current plan")
         if checkpoint.resumed:
             log(driver, f"Resuming BAR run: {len(checkpoint.completed)} previously confirmed chunk(s) will be skipped")
 

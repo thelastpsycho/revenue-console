@@ -43,3 +43,15 @@ def test_dry_run_does_not_mutate_partial_checkpoint(tmp_path):
     rehearsal.mark(DIFFERENT[0])
     rehearsal.finish()
     assert BarCheckpoint(PLAN, path=path).contains(PLAN[0])
+
+
+def test_discard_stale_drops_mismatched_checkpoint_but_keeps_matching(tmp_path):
+    path = tmp_path / "checkpoint.json"
+    BarCheckpoint(PLAN, path=str(path)).mark(PLAN[0])
+    same = BarCheckpoint(PLAN, path=str(path), discard_stale=True)
+    assert same.resumed and not same.discarded_stale
+    assert same.contains(PLAN[0])
+    fresh = BarCheckpoint(DIFFERENT, path=str(path), discard_stale=True)
+    assert fresh.discarded_stale and not fresh.resumed
+    assert not path.exists()
+    assert not fresh.contains(PLAN[0])

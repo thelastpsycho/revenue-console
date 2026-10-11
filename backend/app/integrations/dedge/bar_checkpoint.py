@@ -2,7 +2,11 @@
 
 A successful D-EDGE apply is recorded *after* the success banner. A subsequent
 run with an identical planned set of chunks skips those chunks. A changed plan
-requires an explicit reset so stale accomplishments cannot silently be reused.
+requires an explicit reset so stale accomplishments cannot silently be reused -
+except for unattended scheduled runs, which pass discard_stale=True: nobody is
+there to press Reset, and a dead checkpoint would otherwise block every run.
+That is safe because bar_last_applied.json only records confirmed applies, so
+anything the interrupted run didn't confirm is still in the new plan.
 
 Important: if the website accepts a change but Selenium loses its confirmation
 before the checkpoint is saved, inspect the D-EDGE extranet before retrying.
@@ -16,13 +20,14 @@ from ...infrastructure.paths import get_data_path
 
 
 class BarCheckpoint:
-    def __init__(self, plan, *, path=None, reset=False, dry_run=False):
+    def __init__(self, plan, *, path=None, reset=False, dry_run=False, discard_stale=False):
         self.enabled = not dry_run
         self.path = path or get_data_path("bar_apply_checkpoint.json")
         canonical = json.dumps(plan, sort_keys=True, separators=(",", ":"))
         self.signature = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         self.completed = set()
         self.resumed = False
+        self.discarded_stale = False
         if not self.enabled:
             return
         if reset and os.path.exists(self.path):
@@ -30,6 +35,10 @@ class BarCheckpoint:
         if os.path.exists(self.path):
             with open(self.path, "r", encoding="utf-8") as handle:
                 state = json.load(handle)
+            if state.get("signature") != self.signature and discard_stale:
+                os.unlink(self.path)
+                self.discarded_stale = True
+                return
             if state.get("signature") != self.signature:
                 raise RuntimeError(
                     "An unfinished BAR run has a different date/room/price plan. "
