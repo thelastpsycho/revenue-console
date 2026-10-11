@@ -1,10 +1,5 @@
 <template>
   <div class="mx-auto w-full max-w-7xl space-y-4 p-4 sm:p-6 lg:p-8">
-    <PageHeader
-      title="RMS"
-      subtitle="Forecast is read live from the PMS. Pace is rebuilt from the booking history cached locally, so it can compare against the same time last year. Room revenue only."
-    />
-
     <div class="flex max-w-full gap-1.5 overflow-x-auto rounded-xl bg-app-primary p-1.5 shadow-neu-inset-sm sm:w-fit" role="tablist">
       <button
         v-for="tab in TABS"
@@ -139,14 +134,26 @@
       </p>
 
       <div class="neu-card flex flex-wrap items-end gap-3 p-4 text-xs">
-        <label class="space-y-1">
-          <span class="font-semibold text-slate-600">Stay from</span>
-          <input v-model="pc.start" type="date" class="neu-input py-1.5 text-xs" />
-        </label>
-        <label class="space-y-1">
-          <span class="font-semibold text-slate-600">To</span>
-          <input v-model="pc.end" type="date" class="neu-input py-1.5 text-xs" />
-        </label>
+        <div class="relative space-y-1" ref="dateMenuRef">
+          <span class="block font-semibold text-slate-600">Stay dates</span>
+          <button type="button" class="neu-input flex items-center gap-2 py-1.5 text-xs" @click="dateMenuOpen = !dateMenuOpen">
+            <CalendarIcon class="h-3.5 w-3.5 text-slate-400" />
+            {{ shortDayYear(pc.start) }} – {{ shortDayYear(pc.end) }}
+          </button>
+          <div v-if="dateMenuOpen" class="neu-card absolute left-0 top-full z-20 mt-1 w-72 space-y-3 p-3 shadow-neu-sm">
+            <div class="flex gap-1.5">
+              <button type="button" class="btn-flat flex-1 px-2 py-1 text-xs" @click="applyDatePreset(3)">Next 3 months</button>
+              <button type="button" class="btn-flat flex-1 px-2 py-1 text-xs" @click="applyDatePreset(5)">Next 5 months</button>
+            </div>
+            <div class="border-t border-slate-200 pt-3">
+              <p class="mb-1.5 font-semibold text-slate-600">Custom range</p>
+              <DateRangeCalendar v-model:start="pc.start" v-model:end="pc.end" />
+              <div class="mt-2 flex justify-end">
+                <button type="button" class="btn-primary px-3 py-1 text-xs" :disabled="!pc.start || !pc.end" @click="dateMenuOpen = false">Apply</button>
+              </div>
+            </div>
+          </div>
+        </div>
         <label class="space-y-1">
           <span class="font-semibold text-slate-600">Room type</span>
           <select v-model="pc.roomType" class="neu-input py-1.5 text-xs">
@@ -174,6 +181,79 @@
       </div>
 
       <p v-if="pc.error" class="neu-card p-4 text-xs font-semibold text-rose-700">{{ pc.error }}</p>
+
+      <div v-if="paceRows.length" class="neu-card space-y-3 p-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <h2 class="text-sm font-semibold text-app-tertiary">Room nights and average daily rate</h2>
+          <div class="flex gap-1 rounded-lg bg-app-secondary p-1 shadow-neu-inset-sm" role="tablist">
+            <button v-for="g in CHART_VIEWS" :key="g" type="button" role="tab" :aria-selected="chartView === g"
+                    :class="[chartView === g ? 'bg-app-primary text-app-accent shadow-neu-sm' : 'text-slate-500 hover:text-app-tertiary', 'rounded-md px-2.5 py-1 text-xs font-semibold capitalize transition-all duration-200']"
+                    @click="chartView = g">{{ g }}</button>
+          </div>
+        </div>
+        <div class="h-72">
+          <Chart type="bar" :data="chartData" :options="chartOptions" />
+        </div>
+
+        <div class="overflow-x-auto border-t border-slate-200 pt-3">
+          <table class="min-w-full text-xs">
+            <thead>
+              <tr>
+                <th class="sticky left-0 bg-white px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">&nbsp;</th>
+                <th v-for="b in chartTable.buckets" :key="b.label" class="whitespace-nowrap px-3 py-2 text-right text-[11px] font-bold text-slate-500">{{ b.label }}</th>
+                <th class="whitespace-nowrap px-3 py-2 text-right text-[11px] font-bold text-slate-700">Total</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <tr>
+                <td class="sticky left-0 bg-white px-3 py-1.5 font-semibold text-slate-700">Room nights</td>
+                <td v-for="b in chartTable.buckets" :key="b.label" class="px-3 py-1.5 text-right tabular-nums">{{ b.rooms }}</td>
+                <td class="px-3 py-1.5 text-right tabular-nums font-semibold">{{ chartTable.totals.rooms }}</td>
+              </tr>
+              <tr>
+                <td class="sticky left-0 bg-white px-3 py-1.5 text-slate-500">Room nights (Last year)</td>
+                <td v-for="b in chartTable.buckets" :key="b.label" class="px-3 py-1.5 text-right tabular-nums text-slate-500">{{ b.stlyRooms }}</td>
+                <td class="px-3 py-1.5 text-right tabular-nums font-semibold text-slate-500">{{ chartTable.totals.stlyRooms }}</td>
+              </tr>
+              <tr>
+                <td class="sticky left-0 bg-white px-3 py-1.5 text-slate-500">% difference</td>
+                <td v-for="b in chartTable.buckets" :key="b.label" :class="['px-3 py-1.5 text-right tabular-nums', signClass(pctDiff(b.rooms, b.stlyRooms) ?? 0)]">{{ pct(pctDiff(b.rooms, b.stlyRooms)) }}</td>
+                <td :class="['px-3 py-1.5 text-right tabular-nums font-semibold', signClass(chartTable.totals.roomsDiff ?? 0)]">{{ pct(chartTable.totals.roomsDiff) }}</td>
+              </tr>
+              <tr>
+                <td class="sticky left-0 bg-white px-3 py-1.5 pt-3 font-semibold text-slate-700">Revenue (IDR)</td>
+                <td v-for="b in chartTable.buckets" :key="b.label" class="px-3 py-1.5 pt-3 text-right tabular-nums">{{ millions(b.revenue) }}</td>
+                <td class="px-3 py-1.5 pt-3 text-right tabular-nums font-semibold">{{ millions(chartTable.totals.revenue) }}</td>
+              </tr>
+              <tr>
+                <td class="sticky left-0 bg-white px-3 py-1.5 text-slate-500">Revenue (IDR) (Last year)</td>
+                <td v-for="b in chartTable.buckets" :key="b.label" class="px-3 py-1.5 text-right tabular-nums text-slate-500">{{ millions(b.stlyRevenue) }}</td>
+                <td class="px-3 py-1.5 text-right tabular-nums font-semibold text-slate-500">{{ millions(chartTable.totals.stlyRevenue) }}</td>
+              </tr>
+              <tr>
+                <td class="sticky left-0 bg-white px-3 py-1.5 text-slate-500">% difference</td>
+                <td v-for="b in chartTable.buckets" :key="b.label" :class="['px-3 py-1.5 text-right tabular-nums', signClass(pctDiff(b.revenue, b.stlyRevenue) ?? 0)]">{{ pct(pctDiff(b.revenue, b.stlyRevenue)) }}</td>
+                <td :class="['px-3 py-1.5 text-right tabular-nums font-semibold', signClass(chartTable.totals.revenueDiff ?? 0)]">{{ pct(chartTable.totals.revenueDiff) }}</td>
+              </tr>
+              <tr>
+                <td class="sticky left-0 bg-white px-3 py-1.5 pt-3 font-semibold text-slate-700">Average daily rate IDR</td>
+                <td v-for="b in chartTable.buckets" :key="b.label" class="px-3 py-1.5 pt-3 text-right tabular-nums">{{ thousands(b.adr) }}</td>
+                <td class="px-3 py-1.5 pt-3 text-right tabular-nums font-semibold">{{ thousands(chartTable.totals.adr) }}</td>
+              </tr>
+              <tr>
+                <td class="sticky left-0 bg-white px-3 py-1.5 text-slate-500">Average daily rate IDR (Last year)</td>
+                <td v-for="b in chartTable.buckets" :key="b.label" class="px-3 py-1.5 text-right tabular-nums text-slate-500">{{ thousands(b.stlyAdr) }}</td>
+                <td class="px-3 py-1.5 text-right tabular-nums font-semibold text-slate-500">{{ thousands(chartTable.totals.stlyAdr) }}</td>
+              </tr>
+              <tr>
+                <td class="sticky left-0 bg-white px-3 py-1.5 text-slate-500">% difference</td>
+                <td v-for="b in chartTable.buckets" :key="b.label" :class="['px-3 py-1.5 text-right tabular-nums', signClass(pctDiff(b.adr, b.stlyAdr) ?? 0)]">{{ pct(pctDiff(b.adr, b.stlyAdr)) }}</td>
+                <td :class="['px-3 py-1.5 text-right tabular-nums font-semibold', signClass(chartTable.totals.adrDiff ?? 0)]">{{ pct(chartTable.totals.adrDiff) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       <div v-if="paceRows.length" class="grid grid-cols-1 gap-4 xl:grid-cols-12">
         <div class="neu-card overflow-hidden xl:col-span-7">
@@ -339,10 +419,17 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from '../plugins/axios'
-import PageHeader from '../components/PageHeader.vue'
 import { todayLocalDateString } from '../utils/date'
 import { alertDialog } from '../composables/useDialog'
-import { ArrowPathIcon, PresentationChartLineIcon, ArrowTrendingUpIcon, CircleStackIcon } from '@heroicons/vue/24/outline'
+import { ArrowPathIcon, PresentationChartLineIcon, ArrowTrendingUpIcon, CircleStackIcon, CalendarIcon } from '@heroicons/vue/24/outline'
+import DateRangeCalendar from '../components/DateRangeCalendar.vue'
+import {
+  Chart as ChartJS, BarController, LineController, BarElement, LineElement, PointElement,
+  CategoryScale, LinearScale, Tooltip, Legend, type ChartOptions, type ChartTypeRegistry,
+} from 'chart.js'
+import { Chart } from 'vue-chartjs'
+
+ChartJS.register(BarController, LineController, BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend)
 
 interface HotelRow { date: string; roomsSold: number; roomCount: number; occupancy: number; revenue: number; adr: number; complimentary: number; houseUse: number; lastYear: number }
 interface SegmentRow { date: string; marketId: number; market: string; rooms: number; revenue: number }
@@ -390,6 +477,7 @@ function addDays(iso: string, n: number) {
 const formatDay = (iso: string) =>
   new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
 const shortDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+const shortDayYear = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
 const formatDateTime = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 const millions = (v: number | null | undefined) => (v == null ? '–' : `${(v / 1e6).toLocaleString(undefined, { maximumFractionDigits: 1 })} M`)
 const thousands = (v: number | null | undefined) => (v == null ? '–' : `${Math.round(v / 1e3).toLocaleString()} K`)
@@ -482,6 +570,19 @@ const paceRows = ref<PaceRow[]>([])
 const loadedPickupDays = ref(7)
 const curve = ref<Curve | null>(null)
 
+const dateMenuOpen = ref(false)
+const dateMenuRef = ref<HTMLElement | null>(null)
+function onDateMenuClickOutside(e: MouseEvent) {
+  if (dateMenuOpen.value && dateMenuRef.value && !dateMenuRef.value.contains(e.target as Node)) dateMenuOpen.value = false
+}
+function applyDatePreset(months: number) {
+  const today = new Date(`${todayLocalDateString()}T00:00:00`)
+  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  pc.start = iso(new Date(today.getFullYear(), today.getMonth(), 1))
+  pc.end = iso(new Date(today.getFullYear(), today.getMonth() + months, 0)) // day 0 = last day of the prior month
+  dateMenuOpen.value = false
+}
+
 async function loadPace() {
   pc.loading = true
   pc.error = ''
@@ -522,6 +623,115 @@ const paceTotals = computed(() => {
     lyFinal: finals.length === rows.length ? sum(r => r.lyFinalRooms ?? 0) : null,
   }
 })
+
+// Room nights + ADR combo chart, bucketed from the same paceRows.
+const CHART_VIEWS = ['daily', 'weekly', 'monthly'] as const
+type ChartView = (typeof CHART_VIEWS)[number]
+const chartView = ref<ChartView>('monthly')
+
+function bucketKey(date: string, view: ChartView) {
+  if (view === 'daily') return date
+  if (view === 'monthly') return date.slice(0, 7)
+  const d = new Date(`${date}T00:00:00`)
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7)) // back to that week's Monday
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function bucketLabel(key: string, view: ChartView) {
+  if (view === 'monthly') {
+    const [y, m] = key.split('-').map(Number)
+    return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
+  }
+  return new Date(`${key}T00:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+}
+
+const chartBuckets = computed(() => {
+  const map = new Map<string, { rooms: number; revenue: number; stlyRooms: number; stlyRevenue: number }>()
+  for (const r of paceRows.value) {
+    const key = bucketKey(r.date, chartView.value)
+    const b = map.get(key) ?? { rooms: 0, revenue: 0, stlyRooms: 0, stlyRevenue: 0 }
+    b.rooms += r.rooms
+    b.revenue += r.revenue
+    b.stlyRooms += r.stlyRooms
+    b.stlyRevenue += r.stlyRevenue
+    map.set(key, b)
+  }
+  return [...map.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, v]) => ({
+      label: bucketLabel(key, chartView.value),
+      rooms: v.rooms, stlyRooms: v.stlyRooms,
+      revenue: v.revenue, stlyRevenue: v.stlyRevenue,
+      adr: v.rooms ? v.revenue / v.rooms : 0,
+      stlyAdr: v.stlyRooms ? v.stlyRevenue / v.stlyRooms : 0,
+    }))
+})
+
+function pctDiff(cur: number, prev: number): number | null {
+  return prev ? ((cur - prev) / prev) * 100 : null
+}
+const pct = (v: number | null) => (v == null ? '–' : `${v > 0 ? '+' : ''}${v.toFixed(2)}%`)
+
+const chartTable = computed(() => {
+  const b = chartBuckets.value
+  const totalRooms = b.reduce((s, r) => s + r.rooms, 0)
+  const totalStlyRooms = b.reduce((s, r) => s + r.stlyRooms, 0)
+  const totalRevenue = b.reduce((s, r) => s + r.revenue, 0)
+  const totalStlyRevenue = b.reduce((s, r) => s + r.stlyRevenue, 0)
+  const totalAdr = totalRooms ? totalRevenue / totalRooms : 0
+  const totalStlyAdr = totalStlyRooms ? totalStlyRevenue / totalStlyRooms : 0
+  return {
+    buckets: b,
+    totals: {
+      rooms: totalRooms, stlyRooms: totalStlyRooms, roomsDiff: pctDiff(totalRooms, totalStlyRooms),
+      revenue: totalRevenue, stlyRevenue: totalStlyRevenue, revenueDiff: pctDiff(totalRevenue, totalStlyRevenue),
+      adr: totalAdr, stlyAdr: totalStlyAdr, adrDiff: pctDiff(totalAdr, totalStlyAdr),
+    },
+  }
+})
+
+// Monochrome, matching the app's slate palette (tailwind.config.js) and the
+// existing booking-curve chart's convention: solid dark = this year, dashed
+// gray = last year.
+const CHART_COLORS = { bar: '#334155', barLy: '#cbd5e1', line: '#0f172a', lineLy: '#94a3b8', grid: '#e2e8f0', tick: '#64748b' }
+
+const chartData = computed(() => ({
+  labels: chartBuckets.value.map(b => b.label),
+  datasets: [
+    { type: 'bar' as const, label: 'Room nights', data: chartBuckets.value.map(b => b.rooms),
+      backgroundColor: CHART_COLORS.bar, yAxisID: 'rooms', order: 2 },
+    { type: 'bar' as const, label: 'Room nights (Last year)', data: chartBuckets.value.map(b => b.stlyRooms),
+      backgroundColor: CHART_COLORS.barLy, yAxisID: 'rooms', order: 2 },
+    { type: 'line' as const, label: 'Average daily rate IDR', data: chartBuckets.value.map(b => b.adr),
+      borderColor: CHART_COLORS.line, backgroundColor: CHART_COLORS.line, pointRadius: 3, tension: 0.3, yAxisID: 'adr', order: 1 },
+    { type: 'line' as const, label: 'Average daily rate IDR (Last year)', data: chartBuckets.value.map(b => b.stlyAdr),
+      borderColor: CHART_COLORS.lineLy, backgroundColor: CHART_COLORS.lineLy, borderDash: [5, 4], pointRadius: 3, tension: 0.3, yAxisID: 'adr', order: 1 },
+  ],
+}))
+
+const chartOptions: ChartOptions<keyof ChartTypeRegistry> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  interaction: { mode: 'index' as const, intersect: false },
+  plugins: {
+    legend: { position: 'top' as const, labels: { usePointStyle: true, boxWidth: 8, font: { size: 11 }, color: CHART_COLORS.tick } },
+    tooltip: {
+      backgroundColor: '#0f172a', padding: 8, titleFont: { size: 11 }, bodyFont: { size: 11 },
+      callbacks: {
+        label: (ctx: any) =>
+          ` ${ctx.dataset.label}: ${ctx.dataset.yAxisID === 'adr' ? Math.round(ctx.parsed.y).toLocaleString() : ctx.parsed.y.toLocaleString()}`,
+      },
+    },
+  },
+  scales: {
+    x: { grid: { display: false }, ticks: { color: CHART_COLORS.tick, font: { size: 10 } } },
+    rooms: { type: 'linear' as const, position: 'left' as const, beginAtZero: true,
+      title: { display: true, text: 'Room nights', font: { size: 11 }, color: CHART_COLORS.tick },
+      grid: { color: CHART_COLORS.grid }, ticks: { color: CHART_COLORS.tick, font: { size: 10 } } },
+    adr: { type: 'linear' as const, position: 'right' as const, beginAtZero: false,
+      title: { display: true, text: 'Average daily rate in IDR', font: { size: 11 }, color: CHART_COLORS.tick },
+      grid: { drawOnChartArea: false }, ticks: { color: CHART_COLORS.tick, font: { size: 10 }, callback: (v: string | number) => v.toLocaleString() } },
+  },
+}
 
 const CW = 480, CH = 240, PAD_L = 36, PAD_R = 8, PAD_T = 8, PAD_B = 22
 const curveChart = computed(() => {
@@ -571,6 +781,10 @@ onMounted(() => {
   loadDimensions()
   loadSync()
   loadPace()
+  document.addEventListener('mousedown', onDateMenuClickOutside)
 })
-onBeforeUnmount(() => clearTimeout(syncTimer))
+onBeforeUnmount(() => {
+  clearTimeout(syncTimer)
+  document.removeEventListener('mousedown', onDateMenuClickOutside)
+})
 </script>

@@ -152,7 +152,7 @@ def test_sync_job_records_run_and_meta():
 
 
 def test_expected_room_pivot_unpivots_across_new_year():
-    row = {"TypeId": "DLT", "NoOfRooms": 138, "StartDate": "2026-12-29T00:00:00",
+    row = {"TypeId": "DLT", "NoOfRooms": 138, "StartDate": "2026-12-29T00:00:00", "EndDate": "2027-01-04T00:00:00",
            "12-29": 1.0, "12-30": 2.0, "12-31": 3.0, "01-01": 4.0, "01-02": 5.0, "01-03": 6.0, "01-04": 7.0}
     out = rms_forecast._room_types([row])
     assert [r["date"] for r in out][2:4] == ["2026-12-31", "2027-01-01"]
