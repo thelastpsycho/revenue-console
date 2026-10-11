@@ -184,7 +184,10 @@
 
       <div v-if="paceRows.length" class="neu-card space-y-3 p-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
-          <h2 class="text-sm font-semibold text-app-tertiary">Room nights and average daily rate</h2>
+          <div>
+            <h2 class="text-sm font-semibold text-app-tertiary">Room nights and average daily rate</h2>
+            <p class="mt-0.5 text-[11px] text-slate-500">ADR here is net of breakfast and tax/service, not the rate quoted in the PMS.</p>
+          </div>
           <div class="flex gap-1 rounded-lg bg-app-secondary p-1 shadow-neu-inset-sm" role="tablist">
             <button v-for="g in CHART_VIEWS" :key="g" type="button" role="tab" :aria-selected="chartView === g"
                     :class="[chartView === g ? 'bg-app-primary text-app-accent shadow-neu-sm' : 'text-slate-500 hover:text-app-tertiary', 'rounded-md px-2.5 py-1 text-xs font-semibold capitalize transition-all duration-200']"
@@ -436,8 +439,8 @@ interface SegmentRow { date: string; marketId: number; market: string; rooms: nu
 interface RoomTypeRow { date: string; typeId: string; rooms: number; roomCount: number }
 interface Forecast { start: string; end: string; hotel: HotelRow[]; segments: SegmentRow[]; roomTypes: RoomTypeRow[] }
 interface PaceRow {
-  date: string; lyDate: string; rooms: number; revenue: number; revenueUsd: number
-  pickupRooms: number; pickupRevenue: number; stlyRooms: number; stlyRevenue: number
+  date: string; lyDate: string; rooms: number; revenue: number; revenueUsd: number; netRevenue: number
+  pickupRooms: number; pickupRevenue: number; stlyRooms: number; stlyRevenue: number; stlyNetRevenue: number
   lyFinalRooms: number | null; lyFinalRevenue: number | null
 }
 interface CurvePoint { lead: number; rooms: number }
@@ -645,14 +648,16 @@ function bucketLabel(key: string, view: ChartView) {
 }
 
 const chartBuckets = computed(() => {
-  const map = new Map<string, { rooms: number; revenue: number; stlyRooms: number; stlyRevenue: number }>()
+  const map = new Map<string, { rooms: number; revenue: number; netRevenue: number; stlyRooms: number; stlyRevenue: number; stlyNetRevenue: number }>()
   for (const r of paceRows.value) {
     const key = bucketKey(r.date, chartView.value)
-    const b = map.get(key) ?? { rooms: 0, revenue: 0, stlyRooms: 0, stlyRevenue: 0 }
+    const b = map.get(key) ?? { rooms: 0, revenue: 0, netRevenue: 0, stlyRooms: 0, stlyRevenue: 0, stlyNetRevenue: 0 }
     b.rooms += r.rooms
     b.revenue += r.revenue
+    b.netRevenue += r.netRevenue
     b.stlyRooms += r.stlyRooms
     b.stlyRevenue += r.stlyRevenue
+    b.stlyNetRevenue += r.stlyNetRevenue
     map.set(key, b)
   }
   return [...map.entries()]
@@ -661,8 +666,10 @@ const chartBuckets = computed(() => {
       label: bucketLabel(key, chartView.value),
       rooms: v.rooms, stlyRooms: v.stlyRooms,
       revenue: v.revenue, stlyRevenue: v.stlyRevenue,
-      adr: v.rooms ? v.revenue / v.rooms : 0,
-      stlyAdr: v.stlyRooms ? v.stlyRevenue / v.stlyRooms : 0,
+      netRevenue: v.netRevenue, stlyNetRevenue: v.stlyNetRevenue,
+      // ADR = net of breakfast and tax/service, not the raw rate - revenue above stays gross.
+      adr: v.rooms ? v.netRevenue / v.rooms : 0,
+      stlyAdr: v.stlyRooms ? v.stlyNetRevenue / v.stlyRooms : 0,
     }))
 })
 
@@ -677,8 +684,10 @@ const chartTable = computed(() => {
   const totalStlyRooms = b.reduce((s, r) => s + r.stlyRooms, 0)
   const totalRevenue = b.reduce((s, r) => s + r.revenue, 0)
   const totalStlyRevenue = b.reduce((s, r) => s + r.stlyRevenue, 0)
-  const totalAdr = totalRooms ? totalRevenue / totalRooms : 0
-  const totalStlyAdr = totalStlyRooms ? totalStlyRevenue / totalStlyRooms : 0
+  const totalNetRevenue = b.reduce((s, r) => s + r.netRevenue, 0)
+  const totalStlyNetRevenue = b.reduce((s, r) => s + r.stlyNetRevenue, 0)
+  const totalAdr = totalRooms ? totalNetRevenue / totalRooms : 0
+  const totalStlyAdr = totalStlyRooms ? totalStlyNetRevenue / totalStlyRooms : 0
   return {
     buckets: b,
     totals: {
