@@ -9,6 +9,7 @@ import json
 from ..pipeline import fast_runner
 from ..pipeline import fast_pipeline_log_store
 from ..pipeline import fast_pipeline_schedule
+from ..revenue import booking_events
 
 bp = Blueprint('fast_pipeline', __name__)
 
@@ -101,7 +102,12 @@ def update_fast_pipeline_schedule():
 @bp.route('/api/fast-pipeline/schedule/tick', methods=['POST'])
 def fast_pipeline_schedule_tick():
     """Polled by the scheduler container (trigger_fast_pipeline.py --managed).
-    Starts a run when one is due; otherwise just records the heartbeat."""
+    Starts a run when one is due; otherwise just records the heartbeat.
+    Also starts the RMS booking-cache sync when its daily/weekly run is due."""
+    try:
+        booking_events.run_scheduled_if_due()
+    except Exception as exc:  # never let the cache sync break pipeline scheduling
+        print(f"Booking sync check failed: {exc}")
     try:
         config, reason = fast_pipeline_schedule.claim_due_run(fast_runner.try_acquire)
     except (OSError, ValueError) as exc:

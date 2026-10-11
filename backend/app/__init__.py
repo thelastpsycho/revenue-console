@@ -28,6 +28,7 @@ def create_app():
     from .routes import dedge_auth_routes
     from .routes import bar_hold_routes
     from .routes import stop_sale_routes
+    from .routes import rms_routes
     app.register_blueprint(main.bp)
     app.register_blueprint(database_routes.bp)
     app.register_blueprint(pipeline_routes.bp)
@@ -37,5 +38,6 @@ def create_app():
     app.register_blueprint(dedge_auth_routes.bp)
     app.register_blueprint(bar_hold_routes.bp)
     app.register_blueprint(stop_sale_routes.bp)
+    app.register_blueprint(rms_routes.bp)
     
     return app 

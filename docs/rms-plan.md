@@ -1,7 +1,43 @@
 # Simple RMS - Phase 1: Pace & Forecast
 
-**Status: planned, not started.** This is a design sketch to pick up
-later, not an active work-in-progress.
+**Status: phase 1 built (2026-10-11).** Forecast + pace are live on the
+`/rms` page. See "As built" below for where the build diverged from this
+sketch after live probing; the rest of this doc is the original plan.
+
+## As built (2026-10-11)
+
+- Code: `revenue/rms_forecast.py` (live forecast), `revenue/booking_events.py`
+  (cache, sync jobs, pace queries), `routes/rms_routes.py` (`/api/rms/*`),
+  `RmsView.vue` (`/rms`: Forecast / Pace / Booking data tabs).
+- **Cancelled is `L`, not `C`** - `C` returns nothing. `L` rows carry
+  `CancelReason`; the first `UpdatedDate` seen while `L` (converted to local
+  date via the row's `TimeZone`) is stored as the cancel date. `N` is valid.
+  Status filter used: `D,T,Q,I,O,L,N`.
+- **Rows repeat per folio** - one `ReservationId` appears once per folio with
+  identical fields; only the `IsMasterFolio` row is kept (exactly one each).
+- **`Mode: "ARRIVAL_DATE"` works** and returns every booking for those
+  arrivals regardless of when it was made, so the weekly resync is trailing
+  90 days by reservation date **plus** the next 365 days by arrival date -
+  that's what catches late cancellations/amendments of future stays.
+- Pace counts **stay nights** (`booking_nights`, arrival <= night < departure),
+  not just arrival date. STLY = same weekday (364 days back), as of the same
+  number of days before. Verified: on-the-books for future dates matched
+  `ReportForecastOccupancy` rooms sold exactly.
+- ~4% of bookings are USD-priced; they count in room nights but USD revenue
+  is summed separately, never converted.
+- Forecast endpoints: `ReportForecastOccupancy` and `ReportExpectedRoomOccupied`
+  ignore `Days` (always 7) but honour any `TrxDate`, so they're chunked.
+  `ReportExpectedRoomOccupied` uses a server temp table named by
+  hotel+timestamp - **concurrent calls fail** (`Invalid object name
+  'xtempRoomAvail_...'`), so its chunks run serially. Segment calls are slow
+  (~27 s / 30 days), so they're chunked in parallel; 90 days loads in ~45 s.
+- Scheduling: the scheduler container's 30 s tick
+  (`/api/fast-pipeline/schedule/tick`) also starts the booking sync when
+  due - weekly resync, otherwise the daily 7-day pull, after 04:00 local.
+  Nothing scheduled runs until the operator has run the backfill once
+  (Booking data tab, or `python -m app.revenue.booking_events backfill`).
+- Not built yet: the drill-down forecast cuts (`Company`, `Nationality`,
+  `Detail`, `Summary`, `Promotion`, `ExpectedAllotmentRoomOccupied`).
 
 **Phase 1 scope is deliberately narrowed to two things: forecast and
 pace.** Actuals, rate/yield detail, channel mix, and competitor

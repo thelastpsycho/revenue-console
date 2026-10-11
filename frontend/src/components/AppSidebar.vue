@@ -102,6 +102,7 @@ import {
   BoltIcon,
   ClockIcon,
   EnvelopeIcon,
+  PresentationChartLineIcon,
 } from '@heroicons/vue/24/outline'
 
 defineProps<{ open: boolean }>()
@@ -120,6 +121,7 @@ const navigation = [
   { name: 'Fast API Pipeline', href: '/fast-api-pipeline', icon: BoltIcon },
   { name: 'Pipeline History', href: '/fast-pipeline-history', icon: ClockIcon },
   { name: 'Stop Sale', href: '/stop-sale', icon: EnvelopeIcon },
+  { name: 'RMS', href: '/rms', icon: PresentationChartLineIcon },
   { name: 'PMS API Test', href: '/pms-api-test', icon: BeakerIcon },
 ]
 

@@ -78,6 +78,10 @@ PMS scrape → D-EDGE scrape → combine → yield → verify → PMS allotment 
 
 `stop_sale/` + `routes/stop_sale_routes.py` + `StopSaleView.vue` (`/stop-sale`). Reads `combined_inventory.db`: a date stops sale for every room type when occupancy >= the occupancy threshold, or for a single room type when its remaining rooms <= that room type's threshold. The operator ticks dates and presses Send - nothing is automatic. One email per recipient (no CC) over SMTP configured by `SMTP_*` env vars in `backend/.env`; recipients, rule/email settings and send history live in `stop_sale.db`. Sends recompute closures server-side; the browser only supplies the ticked dates.
 
+### RMS (forecast & pace)
+
+`revenue/rms_forecast.py` + `revenue/booking_events.py` + `routes/rms_routes.py` + `RmsView.vue` (`/rms`). Forecast is live PMS report calls, nothing stored. Pace reads `booking_events.db`, a PII-free local copy of `ReportReservationStatus` (master folio rows only; cancelled = status `L`). The operator runs the backfill once from the page; after that the scheduler tick runs a daily 7-day sync and a weekly resync. Endpoint quirks and decisions: `docs/rms-plan.md` ("As built").
+
 ### Progress streaming
 
 Long-running operations run in background threads and use SSE for live logs.
