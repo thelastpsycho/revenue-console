@@ -147,3 +147,44 @@ def test_malformed_codes_are_refused(code):
 
 def test_code_refused_when_nothing_is_waiting():
     assert device_auth.submit_code(GOOD_CODE) == (False, "D-EDGE isn't waiting for a code right now")
+
+
+def test_notifies_webhook_as_soon_as_a_code_is_needed(monkeypatch):
+    monkeypatch.setenv("N8N_FAST_PIPELINE_WEBHOOK_URL", "https://n8n.example/webhook")
+    calls = []
+    monkeypatch.setattr(bar_updater.requests, "post", lambda url, **kw: calls.append((url, kw)))
+    driver = FakeDriver()
+    thread, result = _run_wait(driver)
+    device_auth.submit_code(GOOD_CODE)
+    thread.join(5)
+    assert result == {"ok": True}
+    assert len(calls) == 1
+    url, kw = calls[0]
+    assert url == "https://n8n.example/webhook"
+    assert kw["json"] == {
+        "event": "dedge_device_code_needed",
+        "emailHint": "e*******e@theanvayabali.com",
+        "timeoutMinutes": 0,
+    }
+
+
+def test_no_webhook_call_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("N8N_FAST_PIPELINE_WEBHOOK_URL", raising=False)
+    calls = []
+    monkeypatch.setattr(bar_updater.requests, "post", lambda url, **kw: calls.append((url, kw)))
+    driver = FakeDriver()
+    thread, result = _run_wait(driver)
+    device_auth.submit_code(GOOD_CODE)
+    thread.join(5)
+    assert result == {"ok": True}
+    assert calls == []
+
+
+def test_webhook_failure_does_not_block_the_wait(monkeypatch):
+    monkeypatch.setenv("N8N_FAST_PIPELINE_WEBHOOK_URL", "https://n8n.example/webhook")
+    monkeypatch.setattr(bar_updater.requests, "post", lambda *a, **k: (_ for _ in ()).throw(ConnectionError("boom")))
+    driver = FakeDriver()
+    thread, result = _run_wait(driver)
+    device_auth.submit_code(GOOD_CODE)
+    thread.join(5)
+    assert result == {"ok": True}
