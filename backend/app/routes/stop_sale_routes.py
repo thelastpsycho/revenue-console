@@ -137,9 +137,9 @@ def _prepare(dates, recipients):
 # A full send (hundreds of individual emails) outlasts the ~100 s Cloudflare
 # tunnel request timeout, so it runs in a background thread and the page
 # polls /api/stop-sale/send-status for progress.
-_job = {"running": False, "total": 0, "sent": 0, "failed": 0, "results": [],
+_job = {"running": False, "total": 0, "sent": 0, "failed": 0, "notSent": 0, "results": [],
         "error": None, "logId": None, "startedAt": None, "finishedAt": None,
-        "pausedUntil": None, "stopped": False, "throttle": None}
+        "pausedUntil": None, "stopped": False, "throttle": None, "resendOf": None}
 _stop = threading.Event()
 
 
@@ -148,7 +148,10 @@ def _job_snapshot():
         return {**_job, "results": list(_job["results"])}
 
 
-def _run_send(email_settings, ranges, recipients, throttle):
+NOT_SENT = "Not sent - sending stopped before this email"
+
+
+def _run_send(email_settings, ranges, recipients, throttle, resend_of=None):
     def on_result(result):
         with _send_lock:
             _job["results"].append(result)
@@ -167,13 +170,37 @@ def _run_send(email_settings, ranges, recipients, throttle):
     try:
         mailer.send_individually(email_settings, ranges, recipients, on_result=on_result,
                                  throttle=throttle, wait=wait)
+    except mailer.MailServerUnavailable as exc:
+        error = str(exc)
     except (mailer.SmtpNotConfigured, smtplib.SMTPException, OSError) as exc:
         error = f"Could not send through the mail server: {exc}"
-    results = _job_snapshot()["results"]
-    log_id = store.log_send(email_settings["subject"], ranges, results) if results else None
+    with _send_lock:
+        attempted = {r["email"].lower() for r in _job["results"]}
+        # Recipients never reached (Stop, or the server refused us) are logged
+        # as not sent so "Resend to failed" picks them up too.
+        not_sent = [{**{k: r.get(k) for k in ("id", "name", "email", "company")},
+                     "ok": False, "error": NOT_SENT, "notSent": True}
+                    for r in recipients if r["email"].lower() not in attempted]
+        results = list(_job["results"]) + not_sent
+    log_id = store.log_send(email_settings, ranges, results, resend_of=resend_of) if results else None
     with _send_lock:
         _job.update(running=False, error=error, logId=log_id, finishedAt=_now(),
-                    pausedUntil=None, stopped=_stop.is_set())
+                    pausedUntil=None, stopped=_stop.is_set(), notSent=len(not_sent))
+
+
+def _start_job(email_settings, ranges, recipients, resend_of=None):
+    """Starts a background send; returns an error response if one is running."""
+    with _send_lock:
+        if _job["running"]:
+            return _error("A stop sale email is already being sent", 409)
+        throttle = store.get_settings()["throttle"]
+        _stop.clear()
+        _job.update(running=True, total=len(recipients), sent=0, failed=0, notSent=0, results=[],
+                    error=None, logId=None, startedAt=_now(), finishedAt=None,
+                    pausedUntil=None, stopped=False, throttle=throttle, resendOf=resend_of)
+    threading.Thread(target=_run_send, args=(email_settings, ranges, recipients, throttle, resend_of),
+                     daemon=True, name="stop-sale-send").start()
+    return None
 
 
 @bp.route('/api/stop-sale/send', methods=['POST'])
@@ -183,17 +210,53 @@ def send():
     ranges, failure = _prepare(data.get("dates"), recipients)
     if failure:
         return failure
-    with _send_lock:
-        if _job["running"]:
-            return _error("A stop sale email is already being sent", 409)
-        settings = store.get_settings()
-        _stop.clear()
-        _job.update(running=True, total=len(recipients), sent=0, failed=0, results=[],
-                    error=None, logId=None, startedAt=_now(), finishedAt=None,
-                    pausedUntil=None, stopped=False, throttle=settings["throttle"])
-    threading.Thread(target=_run_send, args=(settings["email"], ranges, recipients, settings["throttle"]),
-                     daemon=True, name="stop-sale-send").start()
+    failure = _start_job(store.get_settings()["email"], ranges, recipients)
+    if failure:
+        return failure
     return jsonify({"status": "success", "job": _job_snapshot()}), 202
+
+
+@bp.route('/api/stop-sale/history/<int:log_id>/resend', methods=['POST'])
+def resend_failed(log_id):
+    """Resends send `log_id` - the same dates/room types and email text as
+    it went out - to recipients it failed for (or never reached) that have
+    not since received it. Recipients deleted or deactivated since are skipped."""
+    entry = store.get_send(log_id)
+    if entry is None:
+        return _error("Send not found", 404)
+    if entry["resendOf"]:
+        return _error(f"Resend from the original send (#{entry['resendOf']})", 400)
+    smtp = mailer.smtp_config()
+    if not smtp["configured"]:
+        return _error(f"Email is not set up yet: {'; '.join(smtp['problems'])}", 503)
+    current = {r["email"].lower(): r for r in store.get_recipients()}
+    recipients, skipped = [], []
+    for failed in store.outstanding_failures(log_id):
+        recipient = current.get(failed["email"].lower())
+        (recipients if recipient else skipped).append(recipient or failed["email"])
+    if not recipients:
+        return _error("Nobody left to resend to" + (" - the remaining recipients were deleted or switched off"
+                                                    if skipped else ""), 400)
+    email_settings = entry["email"] or store.get_settings()["email"]
+    failure = _start_job(email_settings, entry["ranges"], recipients, resend_of=log_id)
+    if failure:
+        return failure
+    return jsonify({"status": "success", "job": _job_snapshot(), "skipped": skipped}), 202
+
+
+@bp.route('/api/stop-sale/history/<int:log_id>/email', methods=['GET'])
+def history_email(log_id):
+    """The email of a past send as its first recipient got it."""
+    entry = store.get_send(log_id)
+    if entry is None:
+        return _error("Send not found", 404)
+    email_settings = entry["email"] or store.get_settings()["email"]
+    first = entry["results"][0] if entry["results"] else {"name": "Partner", "email": "partner@example.com", "company": ""}
+    from_email = mailer.smtp_config()["fromEmail"] or "reservations@example.com"
+    msg = mailer.build_message(email_settings, entry["ranges"], first, from_email)
+    return jsonify({"status": "success", "subject": msg["Subject"], "from": msg["From"], "to": msg["To"],
+                    "html": msg.get_body(("html",)).get_content(),
+                    "snapshot": entry["email"] is not None})
 
 
 @bp.route('/api/stop-sale/send-status', methods=['GET'])

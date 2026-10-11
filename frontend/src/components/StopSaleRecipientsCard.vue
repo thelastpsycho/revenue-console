@@ -126,6 +126,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import axios from '../plugins/axios'
+import { confirmDialog } from '../composables/useDialog'
 
 export interface Recipient {
   id: number
@@ -217,7 +218,18 @@ async function toggleActive(r: Recipient) {
 }
 
 async function remove(r: Recipient) {
-  if (!window.confirm(`Delete ${r.name} (${r.email}) from the stop sale list?`)) return
+  const ok = await confirmDialog({
+    tone: 'warning',
+    title: 'Delete recipient?',
+    message: 'They will no longer receive stop sale emails. Past sends in History are kept.',
+    details: [
+      { label: 'Name', value: r.name },
+      { label: 'Email', value: r.email },
+      ...(r.company ? [{ label: 'Company', value: r.company }] : []),
+    ],
+    confirmText: 'Delete',
+  })
+  if (!ok) return
   busy.value = true
   try {
     await axios.delete(`/api/stop-sale/recipients/${r.id}`)

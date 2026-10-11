@@ -31,6 +31,12 @@ class SmtpNotConfigured(RuntimeError):
     pass
 
 
+class MailServerUnavailable(RuntimeError):
+    """The server refused to (re)connect or log in mid-send, e.g. a temporary
+    block after sending too fast. The send stops here rather than failing
+    every remaining recipient against a server that won't take mail."""
+
+
 def smtp_config():
     host = os.environ.get("SMTP_HOST", "").strip()
     port_text = os.environ.get("SMTP_PORT", "").strip() or "587"
@@ -110,7 +116,9 @@ def build_message(email_settings, ranges, recipient, from_email):
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = formataddr((email_settings["fromName"], from_email))
-    msg["To"] = formataddr((recipient["name"], recipient["email"]))
+    # Display the partner's company in To ("Hotelbeds <updates@hotelbeds.com>");
+    # fall back to the contact name when no company is set.
+    msg["To"] = formataddr((recipient.get("company") or recipient["name"], recipient["email"]))
     msg["Date"] = formatdate(localtime=True)
     msg["Message-ID"] = make_msgid(domain=from_email.split("@")[-1])
     msg.set_content(text)
@@ -149,7 +157,9 @@ def send_individually(email_settings, ranges, recipients, on_result=None, thrott
     every N emails (0 = never), "batchPauseMinutes": length of that pause}.
     wait(seconds) does the waiting and returns True to stop the send early
     (default: plain sleep, never stops). The connection is closed during long
-    waits (servers drop idle connections) and reopened for the next email."""
+    waits (servers drop idle connections) and reopened for the next email.
+    Raises MailServerUnavailable if a reconnect or login is refused mid-send;
+    results so far have already gone to on_result."""
     cfg = smtp_config()
     if not cfg["configured"]:
         raise SmtpNotConfigured("; ".join(cfg["problems"]))
@@ -173,9 +183,13 @@ def send_individually(email_settings, ranges, recipients, on_result=None, thrott
             result = {k: recipient.get(k) for k in ("id", "name", "email", "company")}
             message = build_message(email_settings, ranges, recipient, cfg["fromEmail"])
             for attempt in (1, 2):
-                try:
-                    if server is None:
+                if server is None:
+                    try:
                         server = _open_smtp(cfg)
+                    except (smtplib.SMTPException, OSError) as exc:
+                        raise MailServerUnavailable(
+                            f"The mail server refused to connect or log in, so sending stopped: {exc}") from exc
+                try:
                     server.send_message(message)
                     result.update(ok=True, error=None)
                     break

@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from ..infrastructure.paths import get_data_path
-from .rules import ROOM_TYPES
+from .rules import ROOM_TYPES, format_range, group_by_room
 
 DB_FILE = "stop_sale.db"
 
@@ -87,6 +87,11 @@ def _connect():
             failed_count INTEGER NOT NULL
         );
     """)
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(send_log)")}
+    if "email" not in columns:  # email text as sent (fromName/subject/intro/closing)
+        conn.execute("ALTER TABLE send_log ADD COLUMN email TEXT")
+    if "resend_of" not in columns:  # id of the original send this resend retried
+        conn.execute("ALTER TABLE send_log ADD COLUMN resend_of INTEGER")
     return conn
 
 
@@ -255,20 +260,54 @@ def save_settings(data):
 
 # ------------------------------------------------------------------- history
 
-def log_send(subject, ranges, results):
+def log_send(email, ranges, results, resend_of=None):
     sent = sum(1 for r in results if r["ok"])
     with _lock, _db() as conn:
         cur = conn.execute(
-            "INSERT INTO send_log (sent_at, subject, ranges, results, sent_count, failed_count) VALUES (?, ?, ?, ?, ?, ?)",
-            (_now(), subject, json.dumps(ranges), json.dumps(results), sent, len(results) - sent))
+            "INSERT INTO send_log (sent_at, subject, ranges, results, sent_count, failed_count, email, resend_of) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (_now(), email["subject"], json.dumps(ranges), json.dumps(results), sent, len(results) - sent,
+             json.dumps(email), resend_of))
         return cur.lastrowid
+
+
+def _entry(row):
+    ranges = json.loads(row["ranges"])
+    return {
+        "id": row["id"], "sentAt": row["sent_at"], "subject": row["subject"],
+        "ranges": ranges, "results": json.loads(row["results"]),
+        "sentCount": row["sent_count"], "failedCount": row["failed_count"],
+        "resendOf": row["resend_of"],
+        # Email text as sent; older sends predate the snapshot (None).
+        "email": json.loads(row["email"]) if row["email"] else None,
+        # The table exactly as the email showed it: room type, then its dates.
+        "byRoom": [{"room": g["room"], "dates": [format_range(r["start"], r["end"]) for r in g["ranges"]]}
+                   for g in group_by_room(ranges)],
+    }
+
+
+def get_send(log_id):
+    with _lock, _db() as conn:
+        row = conn.execute("SELECT * FROM send_log WHERE id = ?", (log_id,)).fetchone()
+    return _entry(row) if row else None
+
+
+def outstanding_failures(log_id):
+    """Results of send `log_id` that failed (or were never sent) and have not
+    since gone through in a resend of it."""
+    with _lock, _db() as conn:
+        row = conn.execute("SELECT results FROM send_log WHERE id = ?", (log_id,)).fetchone()
+        resends = conn.execute("SELECT results FROM send_log WHERE resend_of = ?", (log_id,)).fetchall()
+    if not row:
+        return []
+    delivered = {r["email"].lower() for rs in resends for r in json.loads(rs["results"]) if r["ok"]}
+    return [r for r in json.loads(row["results"]) if not r["ok"] and r["email"].lower() not in delivered]
 
 
 def list_history(limit=50):
     with _lock, _db() as conn:
         rows = conn.execute("SELECT * FROM send_log ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-    return [{
-        "id": r["id"], "sentAt": r["sent_at"], "subject": r["subject"],
-        "ranges": json.loads(r["ranges"]), "results": json.loads(r["results"]),
-        "sentCount": r["sent_count"], "failedCount": r["failed_count"],
-    } for r in rows]
+    entries = [_entry(r) for r in rows]
+    for entry in entries:
+        entry["outstanding"] = [] if entry["resendOf"] else [r["email"] for r in outstanding_failures(entry["id"])]
+    return entries

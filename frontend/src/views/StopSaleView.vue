@@ -266,29 +266,104 @@
       <p v-else-if="!history.length" class="p-4 text-xs text-slate-500">Nothing sent yet.</p>
       <ul v-else class="divide-y divide-slate-100 text-xs">
         <li v-for="h in history" :key="h.id">
-          <button type="button" class="flex w-full flex-wrap items-center justify-between gap-2 px-4 py-3 text-left hover:bg-slate-50" @click="toggleHistory(h.id)">
-            <span class="font-semibold text-slate-800">{{ formatDateTime(h.sentAt) }}</span>
-            <span class="text-slate-500">{{ h.ranges.length }} range{{ h.ranges.length === 1 ? '' : 's' }}</span>
-            <span :class="h.failedCount ? 'font-semibold text-amber-800' : 'text-emerald-700'">
-              {{ h.sentCount }} sent<template v-if="h.failedCount"> · {{ h.failedCount }} failed</template>
+          <button
+            type="button"
+            class="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-slate-50"
+            :aria-expanded="openHistory.has(h.id)"
+            @click="toggleHistory(h.id)"
+          >
+            <ChevronRightIcon :class="['h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform', openHistory.has(h.id) && 'rotate-90']" />
+            <span class="font-semibold text-slate-800">#{{ h.id }} · {{ formatDateTime(h.sentAt) }}</span>
+            <span v-if="h.resendOf" class="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-600">Resend of #{{ h.resendOf }}</span>
+            <span class="ml-auto flex flex-wrap items-center gap-2">
+              <span class="text-emerald-700">{{ h.sentCount }} sent</span>
+              <span v-if="h.failedCount" class="font-semibold text-rose-700">{{ h.failedCount }} failed</span>
+              <span v-if="h.outstanding.length" class="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-800">
+                {{ h.outstanding.length }} to resend
+              </span>
+              <span v-else-if="h.failedCount && !h.resendOf" class="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
+                All resent
+              </span>
             </span>
           </button>
-          <div v-if="openHistory.has(h.id)" class="grid grid-cols-1 gap-4 bg-slate-50 px-4 py-3 md:grid-cols-2">
-            <div>
-              <p class="mb-1 font-semibold text-slate-600">{{ h.subject }}</p>
-              <ul class="space-y-0.5 text-slate-700">
-                <li v-for="r in h.ranges" :key="r.start">
-                  <span class="font-semibold">{{ formatRange(r.start, r.end) }}</span>:
-                  {{ r.allRooms ? 'All room types' : r.rooms.join(', ') }}
+
+          <div v-if="openHistory.has(h.id)" class="grid grid-cols-1 gap-4 bg-slate-50 px-4 py-4 lg:grid-cols-2">
+            <!-- The email as sent: room type on the left, its dates on the right -->
+            <div class="min-w-0 space-y-3">
+              <p class="font-semibold text-slate-700">{{ h.subject }}</p>
+              <div class="overflow-x-auto">
+                <table class="w-full border-collapse bg-white text-left text-[13px]" style="font-family: Arial, Helvetica, sans-serif">
+                  <thead>
+                    <tr class="bg-stone-100">
+                      <th class="border border-stone-300 px-3 py-2">Room type</th>
+                      <th class="border border-stone-300 px-3 py-2">Stop sale dates</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="g in h.byRoom" :key="g.room" class="align-top">
+                      <td :class="['border border-stone-300 px-3 py-2', g.room === 'All room types' && 'font-bold']">{{ g.room }}</td>
+                      <td class="whitespace-nowrap border border-stone-300 px-3 py-2">
+                        <div v-for="d in g.dates" :key="d">{{ d }}</div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" class="btn-flat px-2.5 py-1 text-xs" @click="toggleHistoryEmail(h.id)">
+                  {{ historyEmails[h.id] ? 'Hide full email' : 'View full email' }}
+                </button>
+                <button
+                  v-if="!h.resendOf && h.outstanding.length"
+                  type="button"
+                  class="btn-primary bg-rose-700 px-2.5 py-1 text-xs hover:bg-rose-800"
+                  :disabled="job?.running || !smtp?.configured"
+                  @click="resendFailed(h)"
+                >
+                  <ArrowPathIcon class="h-3.5 w-3.5" />
+                  Resend to {{ h.outstanding.length }} failed
+                </button>
+              </div>
+              <template v-if="historyEmails[h.id]">
+                <p v-if="historyEmails[h.id].error" class="font-semibold text-rose-700">{{ historyEmails[h.id].error }}</p>
+                <div v-else-if="historyEmails[h.id].html" class="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                  <div class="border-b border-slate-200 p-3 text-slate-600">
+                    <p><span class="text-slate-400">From</span> {{ historyEmails[h.id].from }}</p>
+                    <p><span class="text-slate-400">To</span> {{ historyEmails[h.id].to }}</p>
+                    <p class="font-semibold text-slate-800"><span class="font-normal text-slate-400">Subject</span> {{ historyEmails[h.id].subject }}</p>
+                    <p v-if="!h.email" class="mt-1 text-amber-700">This send is older than saved email copies, so the intro and closing show today's text.</p>
+                  </div>
+                  <iframe :srcdoc="historyEmails[h.id].html" sandbox="" title="Email as sent" class="h-96 w-full" />
+                </div>
+                <p v-else class="text-slate-500">Loading…</p>
+              </template>
+            </div>
+
+            <!-- Recipients -->
+            <div class="min-w-0 space-y-2">
+              <div class="flex items-center justify-between gap-2">
+                <p class="font-semibold text-slate-700">Recipients ({{ h.results.length }})</p>
+                <label v-if="h.failedCount" class="flex cursor-pointer items-center gap-1.5 text-slate-600">
+                  <input v-model="failedOnly" type="checkbox" class="h-3.5 w-3.5 accent-app-accent" />
+                  Failed only
+                </label>
+              </div>
+              <ul class="max-h-[28rem] space-y-0.5 overflow-auto rounded-lg border border-slate-200 bg-white p-2">
+                <li
+                  v-for="r in (failedOnly && h.failedCount ? h.results.filter(x => !x.ok) : h.results)"
+                  :key="r.email"
+                  :class="r.ok ? 'text-slate-600' : r.notSent ? 'text-slate-500' : 'text-rose-700'"
+                >
+                  <span class="font-semibold">{{ r.ok ? '✓' : r.notSent ? '–' : '✗' }}</span>
+                  {{ r.company || r.name }} · {{ r.email }}
+                  <span
+                    v-if="!r.ok && !h.resendOf && !h.outstanding.includes(r.email)"
+                    class="ml-1 rounded-full bg-emerald-50 px-1.5 font-semibold text-emerald-700"
+                  >resent</span>
+                  <div v-if="!r.ok" class="pl-4 text-[11px]">{{ r.error }}</div>
                 </li>
               </ul>
             </div>
-            <ul class="space-y-0.5">
-              <li v-for="r in h.results" :key="r.email" :class="r.ok ? 'text-slate-600' : 'text-rose-700'">
-                {{ r.ok ? '✓' : '✗' }} {{ r.name }}<template v-if="r.company"> ({{ r.company }})</template> · {{ r.email }}
-                <template v-if="!r.ok"> - {{ r.error }}</template>
-              </li>
-            </ul>
           </div>
         </li>
       </ul>
@@ -302,6 +377,7 @@ import { useRoute, useRouter } from 'vue-router'
 import axios from '../plugins/axios'
 import PageHeader from '../components/PageHeader.vue'
 import { estimateSendSeconds, formatDuration, type Throttle } from '../utils/stopSale'
+import { alertDialog, confirmDialog } from '../composables/useDialog'
 import StopSaleRecipientsCard, { type Recipient } from '../components/StopSaleRecipientsCard.vue'
 import StopSaleSettingsCard, { type SmtpStatus } from '../components/StopSaleSettingsCard.vue'
 import {
@@ -311,6 +387,7 @@ import {
   UserGroupIcon,
   Cog6ToothIcon,
   ClockIcon,
+  ChevronRightIcon,
 } from '@heroicons/vue/24/outline'
 
 interface Closure {
@@ -321,7 +398,7 @@ interface Closure {
   rooms: { room: string; remaining: number | null; threshold: number | null }[]
 }
 interface Range { start: string; end: string; allRooms: boolean; rooms: string[] }
-interface SendResultRow { name: string; email: string; company: string; ok: boolean; error: string | null }
+interface SendResultRow { name: string; email: string; company: string; ok: boolean; error: string | null; notSent?: boolean }
 interface HistoryEntry {
   id: number
   sentAt: string
@@ -330,6 +407,11 @@ interface HistoryEntry {
   results: SendResultRow[]
   sentCount: number
   failedCount: number
+  resendOf: number | null
+  email: Record<string, string> | null
+  byRoom: { room: string; dates: string[] }[]
+  /** Emails that failed and haven't gone through in a resend since. */
+  outstanding: string[]
 }
 
 type TabId = 'send' | 'recipients' | 'settings' | 'history'
@@ -431,6 +513,8 @@ interface SendJob {
   finishedAt: string | null
   pausedUntil: string | null
   stopped: boolean
+  notSent?: number
+  resendOf?: number | null
   throttle: Throttle | null
 }
 const sending = ref(false)
@@ -443,6 +527,25 @@ const canSend = computed(() =>
   activeRecipients.value > 0 && !!smtp.value?.configured)
 
 let pollTimer: ReturnType<typeof setTimeout> | undefined
+// Set once this page has seen the send running, so the result pops up only for
+// a send that finished while the page was open (not on every page load).
+let watchedRunning = false
+
+function announceFinished(j: SendJob) {
+  const notSent = j.notSent ?? j.total - j.sent - j.failed
+  const clean = !j.failed && !j.error && !j.stopped
+  alertDialog({
+    tone: clean ? 'success' : 'warning',
+    title: clean ? 'Stop sale sent' : j.error ? 'Sending stopped by an error' : j.stopped ? 'Sending stopped' : 'Sent with some failures',
+    message: j.error || (clean ? `All ${j.sent} emails were accepted by the mail server.` : undefined),
+    details: [
+      { label: 'Sent', value: String(j.sent) },
+      ...(j.failed ? [{ label: 'Failed', value: String(j.failed) }] : []),
+      ...(notSent > 0 ? [{ label: 'Not sent', value: String(notSent) }] : []),
+    ],
+    items: j.results.filter(r => !r.ok).map(r => `${r.email}: ${r.error}`),
+  })
+}
 async function pollJob() {
   clearTimeout(pollTimer)
   try {
@@ -452,18 +555,35 @@ async function pollJob() {
     // keep polling; a blip shouldn't hide a send that's still running
   }
   if (job.value?.running) {
+    watchedRunning = true
     pollTimer = setTimeout(pollJob, 1000)
     return
   }
   stopping.value = false
   if (job.value?.finishedAt) loadHistory()
+  if (watchedRunning && job.value?.finishedAt) {
+    watchedRunning = false
+    announceFinished(job.value)
+  }
 }
 
 async function send() {
-  const ranges = preview.value?.ranges.length
-  const summary = `${selectedDates.value.length} date${selectedDates.value.length === 1 ? '' : 's'}${ranges ? ` (${ranges} range${ranges === 1 ? '' : 's'})` : ''}`
-  const duration = throttle.value ? ` It will take about ${formatDuration(estimateSendSeconds(activeRecipients.value, throttle.value))}.` : ''
-  if (!window.confirm(`Send the stop sale for ${summary} to ${activeRecipients.value} recipient${activeRecipients.value === 1 ? '' : 's'}?${duration}`)) return
+  const days = selectedDates.value.length
+  const ok = await confirmDialog({
+    tone: 'danger',
+    title: 'Send stop sale?',
+    message: "Every active recipient gets their own email. This can't be undone once emails go out.",
+    details: [
+      { label: 'Dates', value: `${days} date${days === 1 ? '' : 's'}` },
+      { label: 'Recipients', value: String(activeRecipients.value) },
+      ...(throttle.value
+        ? [{ label: 'Takes about', value: formatDuration(estimateSendSeconds(activeRecipients.value, throttle.value)) }]
+        : []),
+      ...(preview.value ? [{ label: 'From', value: preview.value.from }, { label: 'Subject', value: preview.value.subject }] : []),
+    ],
+    confirmText: `Send to ${activeRecipients.value} recipient${activeRecipients.value === 1 ? '' : 's'}`,
+  })
+  if (!ok) return
   sending.value = true
   sendError.value = ''
   testSent.value = ''
@@ -508,7 +628,16 @@ const remainingEstimate = computed(() => {
 })
 
 async function stopSend() {
-  if (!window.confirm("Stop sending? Emails already sent stay sent; the rest won't go out.")) return
+  const j = job.value
+  const left = j ? j.total - j.sent - j.failed : 0
+  const ok = await confirmDialog({
+    tone: 'warning',
+    title: 'Stop sending?',
+    message: `Emails already sent stay sent. The remaining ${left} recipient${left === 1 ? '' : 's'} won't get this stop sale.`,
+    confirmText: 'Stop sending',
+    cancelText: 'Keep sending',
+  })
+  if (!ok) return
   stopping.value = true
   try {
     await axios.post('/api/stop-sale/send-stop')
@@ -545,6 +674,58 @@ async function loadHistory() {
     historyError.value = message(err, 'Could not load history.')
   }
 }
+const failedOnly = ref(true)
+const historyEmails = ref<Record<number, { html?: string; subject?: string; from?: string; to?: string; error?: string }>>({})
+async function toggleHistoryEmail(id: number) {
+  if (historyEmails.value[id]) {
+    const rest = { ...historyEmails.value }
+    delete rest[id]
+    historyEmails.value = rest
+    return
+  }
+  historyEmails.value = { ...historyEmails.value, [id]: {} }
+  try {
+    const res = await axios.get(`/api/stop-sale/history/${id}/email`)
+    historyEmails.value = { ...historyEmails.value, [id]: res.data }
+  } catch (err: any) {
+    historyEmails.value = { ...historyEmails.value, [id]: { error: message(err, 'Could not load the email.') } }
+  }
+}
+
+async function resendFailed(h: HistoryEntry) {
+  const count = h.outstanding.length
+  const ok = await confirmDialog({
+    tone: 'danger',
+    title: `Resend send #${h.id} to ${count} recipient${count === 1 ? '' : 's'}?`,
+    message: `They get the same stop sale as on ${formatDateTime(h.sentAt)} - same dates and room types, not today's inventory.`
+      + (h.email ? '' : "\nThis send is older than saved email copies, so the intro and closing use today's text."),
+    details: [
+      { label: 'Recipients', value: String(count) },
+      ...(throttle.value ? [{ label: 'Takes about', value: formatDuration(estimateSendSeconds(count, throttle.value)) }] : []),
+      { label: 'Subject', value: h.subject },
+    ],
+    items: h.outstanding,
+    confirmText: `Resend to ${count}`,
+  })
+  if (!ok) return
+  try {
+    const res = await axios.post(`/api/stop-sale/history/${h.id}/resend`)
+    job.value = res.data.job
+    if (res.data.skipped?.length) {
+      await alertDialog({
+        tone: 'warning',
+        title: `${res.data.skipped.length} skipped`,
+        message: 'These were deleted or switched off in Recipients since the original send, so they were left out.',
+        items: res.data.skipped,
+      })
+    }
+    selectTab('send')
+    pollJob()
+  } catch (err: any) {
+    await alertDialog({ tone: 'warning', title: 'Resend did not start', message: message(err, 'Could not start the resend.') })
+  }
+}
+
 function toggleHistory(id: number) {
   const next = new Set(openHistory.value)
   if (next.has(id)) next.delete(id)
@@ -561,9 +742,6 @@ function formatDay(iso: string, withYear = true) {
   return parseDay(iso).toLocaleDateString(undefined, {
     weekday: 'short', day: 'numeric', month: 'short', ...(withYear ? { year: 'numeric' } : {}),
   })
-}
-function formatRange(start: string, end: string) {
-  return start === end ? formatDay(start) : `${formatDay(start, start.slice(0, 4) !== end.slice(0, 4))} – ${formatDay(end)}`
 }
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })

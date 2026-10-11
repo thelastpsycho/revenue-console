@@ -90,8 +90,8 @@ def test_group_ranges_merges_consecutive_identical_days():
         ("2026-10-09", "2026-10-10", True),
         ("2026-10-12", "2026-10-12", False),
     ]
-    assert rules.format_range("2026-10-09", "2026-10-10") == "Fri 9 Oct – Sat 10 Oct 2026"
-    assert rules.format_range("2026-12-31", "2027-01-02") == "Thu 31 Dec 2026 – Sat 2 Jan 2027"
+    assert rules.format_range("2026-10-09", "2026-10-10") == "9 Oct – 10 Oct 2026"
+    assert rules.format_range("2026-12-31", "2027-01-02") == "31 Dec 2026 – 2 Jan 2027"
 
 
 def test_group_by_room_lists_each_room_once_without_whole_hotel_days():
@@ -149,12 +149,15 @@ def test_message_is_personalised_and_escaped():
     msg = mailer.build_message(email, ranges, {"name": "Ana", "email": "ana@partner.com", "company": "Partner"},
                                "rsvn@anvaya.com")
     assert msg["From"] == "The Anvaya Beach Resort Bali <rsvn@anvaya.com>"
-    assert msg["To"] == "Ana <ana@partner.com>" and msg["Cc"] is None
+    assert msg["To"] == "Partner <ana@partner.com>" and msg["Cc"] is None
+    no_company = mailer.build_message(email, ranges, {"name": "Ana", "email": "ana@partner.com", "company": ""},
+                                      "rsvn@anvaya.com")
+    assert no_company["To"] == "Ana <ana@partner.com>"
     text = msg.get_body(("plain",)).get_content()
     assert "Dear Ana," in text and "Hello Partner <team>" in text
-    assert ("All room types:\n  - Fri 9 Oct – Sat 10 Oct 2026\n"
-            "Deluxe Room:\n  - Mon 12 Oct 2026\n"
-            "Premiere Room:\n  - Mon 12 Oct 2026") in text
+    assert ("All room types:\n  - 9 Oct – 10 Oct 2026\n"
+            "Deluxe Room:\n  - 12 Oct 2026\n"
+            "Premiere Room:\n  - 12 Oct 2026") in text
     assert "Hello Partner &lt;team&gt;" in msg.get_body(("html",)).get_content()
 
 
@@ -298,3 +301,72 @@ def test_send_without_smtp_reports_it(client, data_dir, monkeypatch):
     assert res.status_code == 503 and "SMTP_HOST" in res.get_json()["message"]
     assert store.list_history() == []
     assert client.get("/api/stop-sale/settings").get_json()["smtp"]["configured"] is False
+
+
+def test_refused_reconnect_stops_the_send_instead_of_failing_everyone(fake_smtp, monkeypatch):
+    log, _ = fake_smtp
+    opens = []
+
+    def open_smtp(cfg):
+        opens.append(1)
+        if len(opens) > 1:
+            raise mailer.smtplib.SMTPAuthenticationError(535, b"5.7.8 Authentication failed")
+        return FakeServer(log, fail_first=False)
+    monkeypatch.setattr(mailer, "_open_smtp", open_smtp)
+    seen = []
+    with pytest.raises(mailer.MailServerUnavailable, match="535"):
+        # A 5-minute batch pause after 2 emails forces a reconnect, which is refused.
+        mailer.send_individually(store.DEFAULT_SETTINGS["email"], RANGES, PEOPLE, on_result=seen.append,
+                                 throttle={"batchSize": 2, "batchPauseMinutes": 5}, wait=lambda s: False)
+    assert [r["ok"] for r in seen] == [True, True]
+    assert len(opens) == 2  # one refused login, not one per remaining recipient
+
+
+def test_failed_and_unsent_recipients_can_be_resent_once(client, data_dir, monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_FROM_EMAIL", "rsvn@anvaya.com")
+    monkeypatch.delenv("SMTP_USERNAME", raising=False)
+    write_combined(data_dir, [row("2026-10-07", occupancy=90)])
+    for name in ("a", "b", "c", "d"):
+        store.add_recipient({"name": name.upper(), "email": f"{name}@x.com", "company": f"Co {name}"})
+
+    calls = []
+
+    def first_send(email_settings, ranges, recipients, on_result=None, throttle=None, wait=None):
+        calls.append([r["email"] for r in recipients])
+        on_result({**recipients[0], "ok": True, "error": None})
+        on_result({**recipients[1], "ok": False, "error": "550 Too many messages"})
+        raise mailer.MailServerUnavailable("refused: 535 Authentication failed")
+    monkeypatch.setattr(mailer, "send_individually", first_send)
+    assert client.post("/api/stop-sale/send", json={"dates": ["2026-10-07"]}).status_code == 202
+    job = wait_for_send(client)
+    assert (job["sent"], job["failed"], job["notSent"]) == (1, 1, 2) and "535" in job["error"]
+
+    original = store.list_history()[0]
+    assert original["outstanding"] == ["b@x.com", "c@x.com", "d@x.com"]
+    assert original["byRoom"] == [{"room": "All room types", "dates": ["7 Oct 2026"]}]
+    assert original["email"]["subject"] == store.get_settings()["email"]["subject"]
+
+    # d is switched off before the resend, so only b and c get it.
+    d = next(r for r in store.list_recipients() if r["email"] == "d@x.com")
+    store.update_recipient(d["id"], {**d, "active": False})
+
+    def resend(email_settings, ranges, recipients, on_result=None, throttle=None, wait=None):
+        calls.append([r["email"] for r in recipients])
+        assert ranges == original["ranges"]
+        for r in recipients:
+            on_result({**r, "ok": True, "error": None})
+    monkeypatch.setattr(mailer, "send_individually", resend)
+    res = client.post(f"/api/stop-sale/history/{original['id']}/resend")
+    assert res.status_code == 202 and res.get_json()["skipped"] == ["d@x.com"]
+    wait_for_send(client)
+    assert calls[-1] == ["b@x.com", "c@x.com"]
+
+    history = store.list_history()
+    assert history[0]["resendOf"] == original["id"] and history[0]["sentCount"] == 2
+    assert history[1]["outstanding"] == ["d@x.com"]
+    assert client.post(f"/api/stop-sale/history/{history[0]['id']}/resend").status_code == 400
+    assert client.post(f"/api/stop-sale/history/{original['id']}/resend").status_code == 400  # only d, inactive
+
+    email = client.get(f"/api/stop-sale/history/{original['id']}/email").get_json()
+    assert email["to"] == "Co a <a@x.com>" and "All room types" in email["html"]

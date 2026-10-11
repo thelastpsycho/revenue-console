@@ -163,12 +163,12 @@ def group_by_room(ranges):
 
 
 def format_range(start, end):
-    """'Fri 9 Oct 2026' or 'Fri 9 Oct – Sun 11 Oct 2026'."""
+    """'9 Oct 2026' or '9 Oct – 11 Oct 2026' (no weekday)."""
     s = datetime.strptime(start, "%Y-%m-%d").date()
     e = datetime.strptime(end, "%Y-%m-%d").date()
 
     def fmt(d, year):
-        text = f"{d:%a} {d.day} {d:%b}"
+        text = f"{d.day} {d:%b}"
         return f"{text} {d.year}" if year else text
 
     if s == e:
