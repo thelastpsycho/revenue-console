@@ -91,13 +91,10 @@ import { useRoute } from 'vue-router'
 import axios from '../plugins/axios'
 import {
   HomeIcon,
-  DocumentTextIcon,
   CircleStackIcon,
   ChartBarIcon,
-  ArchiveBoxIcon,
   ChartBarSquareIcon,
   ReceiptPercentIcon,
-  RocketLaunchIcon,
   BeakerIcon,
   BoltIcon,
   ClockIcon,
@@ -112,12 +109,9 @@ const route = useRoute()
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: HomeIcon },
-  { name: 'Scraping', href: '/scraping', icon: DocumentTextIcon },
   { name: 'Data', href: '/data', icon: CircleStackIcon },
   { name: 'Yielder', href: '/yielder', icon: ChartBarIcon },
-  { name: 'Allotment', href: '/allotment', icon: ArchiveBoxIcon },
   { name: 'BAR Calculator', href: '/bar-calculator', icon: ReceiptPercentIcon },
-  { name: 'Pipeline', href: '/pipeline', icon: RocketLaunchIcon },
   { name: 'Fast API Pipeline', href: '/fast-api-pipeline', icon: BoltIcon },
   { name: 'Pipeline History', href: '/fast-pipeline-history', icon: ClockIcon },
   { name: 'Stop Sale', href: '/stop-sale', icon: EnvelopeIcon },
