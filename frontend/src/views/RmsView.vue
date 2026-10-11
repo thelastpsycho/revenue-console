@@ -186,7 +186,7 @@
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 class="text-sm font-semibold text-app-tertiary">Room nights and average daily rate</h2>
-            <p class="mt-0.5 text-[11px] text-slate-500">ADR here is net of breakfast and tax/service, not the rate quoted in the PMS.</p>
+            <p class="mt-0.5 text-[11px] text-slate-500">ADR here is net of breakfast and tax/service, not the rate quoted in the PMS, and covers IDR-priced bookings only.</p>
           </div>
           <div class="flex gap-1 rounded-lg bg-app-secondary p-1 shadow-neu-inset-sm" role="tablist">
             <button v-for="g in CHART_VIEWS" :key="g" type="button" role="tab" :aria-selected="chartView === g"
@@ -439,8 +439,8 @@ interface SegmentRow { date: string; marketId: number; market: string; rooms: nu
 interface RoomTypeRow { date: string; typeId: string; rooms: number; roomCount: number }
 interface Forecast { start: string; end: string; hotel: HotelRow[]; segments: SegmentRow[]; roomTypes: RoomTypeRow[] }
 interface PaceRow {
-  date: string; lyDate: string; rooms: number; revenue: number; revenueUsd: number; netRevenue: number
-  pickupRooms: number; pickupRevenue: number; stlyRooms: number; stlyRevenue: number; stlyNetRevenue: number
+  date: string; lyDate: string; rooms: number; idrRooms: number; revenue: number; revenueUsd: number; netRevenue: number
+  pickupRooms: number; pickupRevenue: number; stlyRooms: number; stlyIdrRooms: number; stlyRevenue: number; stlyNetRevenue: number
   lyFinalRooms: number | null; lyFinalRevenue: number | null
 }
 interface CurvePoint { lead: number; rooms: number }
@@ -648,11 +648,16 @@ function bucketLabel(key: string, view: ChartView) {
 }
 
 const chartBuckets = computed(() => {
-  const map = new Map<string, { rooms: number; revenue: number; netRevenue: number; stlyRooms: number; stlyRevenue: number; stlyNetRevenue: number }>()
+  const map = new Map<string, {
+    rooms: number; idrRooms: number; revenue: number; netRevenue: number
+    stlyRooms: number; stlyIdrRooms: number; stlyRevenue: number; stlyNetRevenue: number
+  }>()
   for (const r of paceRows.value) {
     const key = bucketKey(r.date, chartView.value)
-    const b = map.get(key) ?? { rooms: 0, revenue: 0, netRevenue: 0, stlyRooms: 0, stlyRevenue: 0, stlyNetRevenue: 0 }
+    const b = map.get(key) ?? { rooms: 0, idrRooms: 0, revenue: 0, netRevenue: 0, stlyRooms: 0, stlyIdrRooms: 0, stlyRevenue: 0, stlyNetRevenue: 0 }
     b.rooms += r.rooms
+    b.idrRooms += r.idrRooms
+    b.stlyIdrRooms += r.stlyIdrRooms
     b.revenue += r.revenue
     b.netRevenue += r.netRevenue
     b.stlyRooms += r.stlyRooms
@@ -667,9 +672,11 @@ const chartBuckets = computed(() => {
       rooms: v.rooms, stlyRooms: v.stlyRooms,
       revenue: v.revenue, stlyRevenue: v.stlyRevenue,
       netRevenue: v.netRevenue, stlyNetRevenue: v.stlyNetRevenue,
+      idrRooms: v.idrRooms, stlyIdrRooms: v.stlyIdrRooms,
       // ADR = net of breakfast and tax/service, not the raw rate - revenue above stays gross.
-      adr: v.rooms ? v.netRevenue / v.rooms : 0,
-      stlyAdr: v.stlyRooms ? v.stlyNetRevenue / v.stlyRooms : 0,
+      // Divided by IDR-priced nights only: USD bookings add rooms but no IDR revenue.
+      adr: v.idrRooms ? v.netRevenue / v.idrRooms : 0,
+      stlyAdr: v.stlyIdrRooms ? v.stlyNetRevenue / v.stlyIdrRooms : 0,
     }))
 })
 
@@ -686,8 +693,10 @@ const chartTable = computed(() => {
   const totalStlyRevenue = b.reduce((s, r) => s + r.stlyRevenue, 0)
   const totalNetRevenue = b.reduce((s, r) => s + r.netRevenue, 0)
   const totalStlyNetRevenue = b.reduce((s, r) => s + r.stlyNetRevenue, 0)
-  const totalAdr = totalRooms ? totalNetRevenue / totalRooms : 0
-  const totalStlyAdr = totalStlyRooms ? totalStlyNetRevenue / totalStlyRooms : 0
+  const totalIdrRooms = b.reduce((s, r) => s + r.idrRooms, 0)
+  const totalStlyIdrRooms = b.reduce((s, r) => s + r.stlyIdrRooms, 0)
+  const totalAdr = totalIdrRooms ? totalNetRevenue / totalIdrRooms : 0
+  const totalStlyAdr = totalStlyIdrRooms ? totalStlyNetRevenue / totalStlyIdrRooms : 0
   return {
     buckets: b,
     totals: {

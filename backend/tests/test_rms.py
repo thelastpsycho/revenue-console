@@ -84,6 +84,18 @@ def test_ingest_computes_net_rate_net_of_breakfast_and_tax_excludes_usd(data_dir
     assert net_rates[2] is None
 
 
+def test_adr_basis_excludes_usd_nights_and_floors_zero_rate_rooms():
+    be.upsert([
+        api_row(1, "2026-10-01", "2026-10-20", "2026-10-21", rate=1_560_000.0),
+        api_row(2, "2026-10-01", "2026-10-20", "2026-10-21", rate=0.0),               # comp: net 0, not negative
+        api_row(3, "2026-10-01", "2026-10-20", "2026-10-21", currency="USD", rate=150.0),
+    ])
+    day = be.pace_table("2026-10-20", "2026-10-20")[0]
+    assert (day["rooms"], day["idrRooms"]) == (3, 2)
+    assert day["netRevenue"] == pytest.approx(1_000_000)               # (1,560,000 - 350,000) / 1.21
+    assert day["netRevenue"] / day["idrRooms"] == pytest.approx(500_000)  # ADR over IDR nights only
+
+
 def test_migration_backfills_net_rate_for_a_pre_existing_database(data_dir):
     # Simulate a bookings table from before the net_rate column existed.
     conn = sqlite3.connect(data_dir / be.DB_FILE)
