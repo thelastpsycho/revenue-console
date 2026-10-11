@@ -40,6 +40,8 @@ import platform
 import traceback
 from datetime import datetime, timedelta
 
+import requests
+
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -206,6 +208,30 @@ def _submit_device_code(driver, code):
         return False
 
 
+def _notify_device_code_needed(hint, timeout):
+    """Pings the same n8n webhook fast_runner.py uses for end-of-run results,
+    the moment a device code is actually needed - not at the end of the run.
+    The console's DedgeCodeBanner only reaches someone who already has a tab
+    open and polling; unattended/scheduled runs need a push instead. Opt-in
+    via N8N_FAST_PIPELINE_WEBHOOK_URL (same env var, so no extra config), a
+    no-op when unset. This payload has a different shape from the end-of-run
+    one (no run id/logs - this can fire from the manual session check too,
+    which has no run) - branch on the "event" key on the n8n side. A
+    notification failure must never block the actual wait, so it's logged and
+    swallowed, not raised."""
+    webhook_url = os.environ.get("N8N_FAST_PIPELINE_WEBHOOK_URL")
+    if not webhook_url:
+        return
+    try:
+        requests.post(webhook_url, json={
+            "event": "dedge_device_code_needed",
+            "emailHint": hint,
+            "timeoutMinutes": timeout // 60,
+        }, timeout=10)
+    except Exception as e:
+        print(f"[bar_updater] device-code webhook notification failed: {e}")
+
+
 def _wait_for_device_authorization(driver, timeout=None):
     """D-EDGE no longer trusts this Chrome profile and emailed a code to the
     hotel mailbox. Wait for that code to arrive from the console UI (Fast API
@@ -220,6 +246,7 @@ def _wait_for_device_authorization(driver, timeout=None):
     hint = _device_email_hint(driver)
     deadline = time.monotonic() + timeout
     device_auth.begin_wait(timeout, email_hint=hint)
+    _notify_device_code_needed(hint, timeout)
     log(driver,
         f"New device detected - D-EDGE emailed a verification code to {hint or 'the hotel mailbox'}. "
         f"Enter it in the console (Fast API Pipeline page) within {timeout // 60} minutes...")
