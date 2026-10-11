@@ -40,6 +40,10 @@ DB_FILE = "booking_events.db"
 STATUSES = "D,T,Q,I,O,L,N"
 CANCELLED = "L"
 CHUNK_DAYS = 30
+# ADR here means the rate net of breakfast and tax/service, not the PMS's
+# raw quoted rate: net_rate = (room_rate - BREAKFAST_IDR) / (1 + TAX_SERVICE_RATE).
+BREAKFAST_IDR = 350_000
+TAX_SERVICE_RATE = 0.21
 DEFAULT_BACKFILL_DAYS = 3 * 365
 MAX_BACKFILL_DAYS = 6 * 365
 DAILY_DAYS = 7
@@ -102,6 +106,13 @@ def _connect():
             value TEXT
         );
     """)
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(bookings)")}
+    if "net_rate" not in columns:
+        conn.execute("ALTER TABLE bookings ADD COLUMN net_rate REAL")
+        conn.execute(
+            "UPDATE bookings SET net_rate = (room_rate - ?) / (1 + ?) WHERE currency != 'USD'",
+            (BREAKFAST_IDR, TAX_SERVICE_RATE),
+        )
     return conn
 
 
@@ -141,6 +152,8 @@ def _cancel_day(row):
 
 def _normalize(row):
     """The whitelisted, PII-free subset of one API row."""
+    room_rate = float(row.get("RoomRate") or 0)
+    currency = row.get("Currency") or "IDR"
     return {
         "reservation_id": int(row["ReservationId"]),
         "reservation_date": _day(row["ReservationDate"]),
@@ -152,8 +165,11 @@ def _normalize(row):
         "rate_type": row.get("RateType"),
         "market_id": row.get("MarketId"),
         "market": row.get("MarketDescription"),
-        "room_rate": float(row.get("RoomRate") or 0),
-        "currency": row.get("Currency") or "IDR",
+        "room_rate": room_rate,
+        "currency": currency,
+        # Net of breakfast and tax/service; USD rooms are left NULL since
+        # breakfast is an IDR figure and this app doesn't track an FX rate.
+        "net_rate": (room_rate - BREAKFAST_IDR) / (1 + TAX_SERVICE_RATE) if currency != "USD" else None,
         "updated_at": row.get("UpdatedDate"),
         "cancel_day": _cancel_day(row) if row.get("ReservationStatus") == CANCELLED else None,
     }
@@ -193,12 +209,12 @@ def upsert(rows):
                     cancelled_on = rec["cancel_day"] or rec["reservation_date"]
             conn.execute("""
                 INSERT OR REPLACE INTO bookings (reservation_id, reservation_date, arrival_date, departure_date,
-                    nights, status, type_id, rate_type, market_id, market, room_rate, currency,
+                    nights, status, type_id, rate_type, market_id, market, room_rate, currency, net_rate,
                     cancelled_on, updated_at, synced_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (rec["reservation_id"], rec["reservation_date"], rec["arrival_date"], rec["departure_date"],
                  rec["nights"], rec["status"], rec["type_id"], rec["rate_type"], rec["market_id"], rec["market"],
-                 rec["room_rate"], rec["currency"], cancelled_on, rec["updated_at"], synced))
+                 rec["room_rate"], rec["currency"], rec["net_rate"], cancelled_on, rec["updated_at"], synced))
             conn.execute("DELETE FROM booking_nights WHERE reservation_id = ?", (rec["reservation_id"],))
             conn.executemany("INSERT INTO booking_nights (reservation_id, stay_date) VALUES (?, ?)",
                              [(rec["reservation_id"], d) for d in _stay_dates(rec["arrival_date"], rec["departure_date"])])
@@ -347,24 +363,27 @@ def _filters(room_type, market_id):
 
 
 def on_the_books(start, end, as_of, room_type=None, market_id=None):
-    """{stay_date: {"rooms", "revenue", "revenueUsd"}} for stay dates in
-    [start, end], counting bookings made on/before as_of and not cancelled
-    by then. Revenue is room rate (IDR); USD-priced bookings are summed
-    separately rather than converted."""
+    """{stay_date: {"rooms", "revenue", "revenueUsd", "netRevenue"}} for stay
+    dates in [start, end], counting bookings made on/before as_of and not
+    cancelled by then. Revenue is room rate (IDR); USD-priced bookings are
+    summed separately rather than converted. netRevenue is revenue net of
+    breakfast and tax/service (ADR's basis in this app) - see net_rate."""
     extra, params = _filters(room_type, market_id)
     with _db_lock, _db() as conn:
         rows = conn.execute(f"""
             SELECT n.stay_date,
                    COUNT(*) AS rooms,
                    SUM(CASE WHEN b.currency = 'USD' THEN 0 ELSE b.room_rate END) AS revenue,
-                   SUM(CASE WHEN b.currency = 'USD' THEN b.room_rate ELSE 0 END) AS revenue_usd
+                   SUM(CASE WHEN b.currency = 'USD' THEN b.room_rate ELSE 0 END) AS revenue_usd,
+                   SUM(CASE WHEN b.currency = 'USD' THEN 0 ELSE b.net_rate END) AS net_revenue
             FROM booking_nights n JOIN bookings b ON b.reservation_id = n.reservation_id
             WHERE n.stay_date BETWEEN ? AND ?
               AND b.reservation_date <= ?
               AND (b.status != '{CANCELLED}' OR COALESCE(b.cancelled_on, b.reservation_date) > ?)
               {extra}
             GROUP BY n.stay_date""", (start, end, as_of, as_of, *params)).fetchall()
-    return {r["stay_date"]: {"rooms": r["rooms"], "revenue": r["revenue"] or 0, "revenueUsd": r["revenue_usd"] or 0}
+    return {r["stay_date"]: {"rooms": r["rooms"], "revenue": r["revenue"] or 0, "revenueUsd": r["revenue_usd"] or 0,
+                              "netRevenue": r["net_revenue"] or 0}
             for r in rows}
 
 
@@ -380,7 +399,7 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
     now = on_the_books(start, end, today.isoformat(), room_type, market_id)
     before = on_the_books(start, end, (today - timedelta(days=pickup_days)).isoformat(), room_type, market_id)
     stly = on_the_books(ly_s, ly_e, (today - LY_OFFSET).isoformat(), room_type, market_id)
-    empty = {"rooms": 0, "revenue": 0, "revenueUsd": 0}
+    empty = {"rooms": 0, "revenue": 0, "revenueUsd": 0, "netRevenue": 0}
     out = []
     for i in range((e - s).days + 1):
         d = s + timedelta(days=i)
@@ -392,8 +411,10 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
             "date": d.isoformat(),
             "lyDate": ly,
             "rooms": cur["rooms"], "revenue": cur["revenue"], "revenueUsd": cur["revenueUsd"],
+            "netRevenue": cur["netRevenue"],
             "pickupRooms": cur["rooms"] - prev["rooms"], "pickupRevenue": cur["revenue"] - prev["revenue"],
             "stlyRooms": stly.get(ly, empty)["rooms"], "stlyRevenue": stly.get(ly, empty)["revenue"],
+            "stlyNetRevenue": stly.get(ly, empty)["netRevenue"],
             "lyFinalRooms": final["rooms"] if final else None,
             "lyFinalRevenue": final["revenue"] if final else None,
         })

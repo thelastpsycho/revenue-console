@@ -64,7 +64,44 @@ def test_on_the_books_respects_booking_and_cancel_dates():
     assert otb("2026-10-05")["2026-10-20"]["rooms"] == 1          # cancellation counts from its day
     now = otb("2026-10-11")["2026-10-20"]
     assert (now["rooms"], now["revenue"], now["revenueUsd"]) == (2, 1_000_000, 120)
+    # netRevenue: row 1's net rate only - the USD room is excluded, same as revenue.
+    assert now["netRevenue"] == pytest.approx((1_000_000 - be.BREAKFAST_IDR) / (1 + be.TAX_SERVICE_RATE))
+    # Night 21 is covered by row 1 only (row 3's stay doesn't reach it, row 2 is cancelled).
     assert otb("2026-10-11")["2026-10-21"]["rooms"] == 1
+    assert otb("2026-10-11")["2026-10-21"]["netRevenue"] == pytest.approx(
+        (1_000_000 - be.BREAKFAST_IDR) / (1 + be.TAX_SERVICE_RATE))
+
+
+def test_ingest_computes_net_rate_net_of_breakfast_and_tax_excludes_usd(data_dir):
+    be.upsert([
+        api_row(1, "2026-10-01", "2026-10-20", "2026-10-21"),
+        api_row(2, "2026-10-01", "2026-10-20", "2026-10-21", currency="USD", rate=120.0),
+    ])
+    conn = sqlite3.connect(data_dir / be.DB_FILE)
+    conn.row_factory = sqlite3.Row
+    net_rates = {r["reservation_id"]: r["net_rate"] for r in conn.execute("SELECT reservation_id, net_rate FROM bookings")}
+    assert net_rates[1] == pytest.approx((1_000_000 - be.BREAKFAST_IDR) / (1 + be.TAX_SERVICE_RATE))
+    assert net_rates[2] is None
+
+
+def test_migration_backfills_net_rate_for_a_pre_existing_database(data_dir):
+    # Simulate a bookings table from before the net_rate column existed.
+    conn = sqlite3.connect(data_dir / be.DB_FILE)
+    conn.execute("""CREATE TABLE bookings (
+        reservation_id INTEGER PRIMARY KEY, reservation_date TEXT, arrival_date TEXT, departure_date TEXT,
+        nights INTEGER, status TEXT, type_id TEXT, rate_type TEXT, market_id INTEGER, market TEXT,
+        room_rate REAL, currency TEXT, cancelled_on TEXT, updated_at TEXT, synced_at TEXT)""")
+    conn.execute("INSERT INTO bookings (reservation_id, room_rate, currency) VALUES (1, 1000000, 'IDR')")
+    conn.execute("INSERT INTO bookings (reservation_id, room_rate, currency) VALUES (2, 120, 'USD')")
+    conn.commit()
+    conn.close()
+    with be._db():  # _connect() runs the migration as a side effect
+        pass
+    conn = sqlite3.connect(data_dir / be.DB_FILE)
+    conn.row_factory = sqlite3.Row
+    net_rates = {r["reservation_id"]: r["net_rate"] for r in conn.execute("SELECT reservation_id, net_rate FROM bookings")}
+    assert net_rates[1] == pytest.approx((1_000_000 - be.BREAKFAST_IDR) / (1 + be.TAX_SERVICE_RATE))
+    assert net_rates[2] is None
 
 
 def test_first_cancel_date_is_kept_when_a_cancelled_booking_is_edited_later():
@@ -86,6 +123,9 @@ def test_pace_table_pickup_and_same_time_last_year():
     row = be.pace_table("2026-10-20", "2026-10-20")[0]
     assert row["lyDate"] == "2025-10-21"
     assert (row["rooms"], row["pickupRooms"], row["stlyRooms"], row["lyFinalRooms"]) == (2, 1, 1, 2)
+    net_rate = (1_000_000 - be.BREAKFAST_IDR) / (1 + be.TAX_SERVICE_RATE)
+    assert row["netRevenue"] == pytest.approx(2 * net_rate)
+    assert row["stlyNetRevenue"] == pytest.approx(net_rate)
     future = be.pace_table("2027-12-01", "2027-12-01")[0]
     assert future["lyFinalRooms"] is None  # LY date hasn't happened yet
 
