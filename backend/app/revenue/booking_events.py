@@ -23,11 +23,14 @@ Confirmed by live probes (2026-10-11):
 
 Three sync jobs, differing only in mode/window:
 - backfill: RESERVATION_DATE, 30-day chunks back from today (runs once).
-- daily: RESERVATION_DATE, trailing 7 days.
-- weekly: RESERVATION_DATE trailing 90 days + ARRIVAL_DATE next 365 days.
+- daily: trailing 7 creation days + ARRIVAL_DATE lookback/in-house through next 365 days.
+- weekly: trailing 90 creation days + the same arrival refresh.
+- booking_versions: append-only observed changes; older reconstructed history is estimated.
 """
 
 import re
+import json
+from zoneinfo import ZoneInfo
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -63,11 +66,11 @@ def _now():
 
 
 def _today():
-    return date.today()
+    return datetime.now(ZoneInfo("Asia/Makassar")).date()
 
 
 def _connect():
-    conn = sqlite3.connect(get_data_path(DB_FILE))
+    conn = sqlite3.connect(get_data_path(DB_FILE), timeout=30)
     conn.row_factory = sqlite3.Row
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS bookings (
@@ -101,6 +104,16 @@ def _connect():
             rows INTEGER NOT NULL DEFAULT 0,
             error TEXT
         );
+        CREATE TABLE IF NOT EXISTS booking_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reservation_id INTEGER NOT NULL,
+            observed_on TEXT NOT NULL,
+            observed_at TEXT NOT NULL,
+            payload TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_versions_reservation ON booking_versions(reservation_id, id);
+        CREATE INDEX IF NOT EXISTS idx_versions_day ON booking_versions(observed_on);
+        CREATE INDEX IF NOT EXISTS idx_versions_arrival ON booking_versions(json_extract(payload, '$.arrival_date'));
         CREATE TABLE IF NOT EXISTS meta (
             key TEXT PRIMARY KEY,
             value TEXT
@@ -110,9 +123,26 @@ def _connect():
     if "net_rate" not in columns:
         conn.execute("ALTER TABLE bookings ADD COLUMN net_rate REAL")
         conn.execute(
-            "UPDATE bookings SET net_rate = MAX((room_rate - ?) / (1 + ?), 0) WHERE currency != 'USD'",
+            "UPDATE bookings SET net_rate = MAX((room_rate - ?) / (1 + ?), 0) WHERE currency = 'IDR'",
             (BREAKFAST_IDR, TAX_SERVICE_RATE),
         )
+    if "rate_id" not in columns:
+        conn.execute("ALTER TABLE bookings ADD COLUMN rate_id TEXT")
+    # Seed an existing installation once, preserving only the same PII-free fields.
+    seeded = conn.execute("SELECT value FROM meta WHERE key='versionsSeeded'").fetchone()
+    if not seeded:
+        conn.execute("""INSERT INTO booking_versions(reservation_id, observed_on, observed_at, payload)
+        SELECT b.reservation_id, ?, ?, json_object(
+          'reservation_id', b.reservation_id, 'reservation_date', b.reservation_date,
+          'arrival_date', b.arrival_date, 'departure_date', b.departure_date,
+          'status', b.status, 'type_id', b.type_id, 'rate_type', b.rate_type, 'rate_id', b.rate_id,
+          'market_id', b.market_id, 'market', b.market, 'room_rate', b.room_rate,
+          'currency', b.currency, 'cancelled_on', b.cancelled_on)
+        FROM bookings b WHERE NOT EXISTS (
+          SELECT 1 FROM booking_versions v WHERE v.reservation_id = b.reservation_id)""",
+            (_today().isoformat(), _now()))
+        conn.execute("INSERT INTO meta(key,value) VALUES ('versionsSeeded','1')")
+    conn.commit()
     return conn
 
 
@@ -153,7 +183,7 @@ def _cancel_day(row):
 def _normalize(row):
     """The whitelisted, PII-free subset of one API row."""
     room_rate = float(row.get("RoomRate") or 0)
-    currency = row.get("Currency") or "IDR"
+    currency = (row.get("Currency") or "IDR").strip().upper()
     return {
         "reservation_id": int(row["ReservationId"]),
         "reservation_date": _day(row["ReservationDate"]),
@@ -163,6 +193,7 @@ def _normalize(row):
         "status": row.get("ReservationStatus") or "",
         "type_id": row.get("TypeId"),
         "rate_type": row.get("RateType"),
+        "rate_id": row.get("RateId"),
         "market_id": row.get("MarketId"),
         "market": row.get("MarketDescription"),
         "room_rate": room_rate,
@@ -170,7 +201,7 @@ def _normalize(row):
         # Net of breakfast and tax/service; USD rooms are left NULL since
         # breakfast is an IDR figure and this app doesn't track an FX rate.
         # Floored at 0: zero-rate (comp/house-use) rooms have no breakfast to take off.
-        "net_rate": max(room_rate - BREAKFAST_IDR, 0) / (1 + TAX_SERVICE_RATE) if currency != "USD" else None,
+        "net_rate": max(room_rate - BREAKFAST_IDR, 0) / (1 + TAX_SERVICE_RATE) if currency == "IDR" else None,
         "updated_at": row.get("UpdatedDate"),
         "cancel_day": _cancel_day(row) if row.get("ReservationStatus") == CANCELLED else None,
     }
@@ -210,12 +241,22 @@ def upsert(rows):
                     cancelled_on = rec["cancel_day"] or rec["reservation_date"]
             conn.execute("""
                 INSERT OR REPLACE INTO bookings (reservation_id, reservation_date, arrival_date, departure_date,
-                    nights, status, type_id, rate_type, market_id, market, room_rate, currency, net_rate,
+                    nights, status, type_id, rate_type, market_id, market, room_rate, currency, net_rate, rate_id,
                     cancelled_on, updated_at, synced_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (rec["reservation_id"], rec["reservation_date"], rec["arrival_date"], rec["departure_date"],
                  rec["nights"], rec["status"], rec["type_id"], rec["rate_type"], rec["market_id"], rec["market"],
-                 rec["room_rate"], rec["currency"], rec["net_rate"], cancelled_on, rec["updated_at"], synced))
+                 rec["room_rate"], rec["currency"], rec["net_rate"], rec["rate_id"], cancelled_on, rec["updated_at"], synced))
+            version = {key: rec[key] for key in (
+                "reservation_id", "reservation_date", "arrival_date", "departure_date", "status",
+                "type_id", "rate_type", "rate_id", "market_id", "market", "room_rate", "currency")}
+            version["cancelled_on"] = cancelled_on
+            payload = json.dumps(version, sort_keys=True)
+            last = conn.execute("SELECT payload FROM booking_versions WHERE reservation_id = ? ORDER BY id DESC LIMIT 1",
+                                (rec["reservation_id"],)).fetchone()
+            if not last or json.loads(last["payload"]) != version:
+                conn.execute("INSERT INTO booking_versions(reservation_id, observed_on, observed_at, payload) VALUES (?, ?, ?, ?)",
+                             (rec["reservation_id"], _today().isoformat(), synced, payload))
             conn.execute("DELETE FROM booking_nights WHERE reservation_id = ?", (rec["reservation_id"],))
             conn.executemany("INSERT INTO booking_nights (reservation_id, stay_date) VALUES (?, ?)",
                              [(rec["reservation_id"], d) for d in _stay_dates(rec["arrival_date"], rec["departure_date"])])
@@ -235,6 +276,14 @@ def _windows(start, end):
     return windows
 
 
+def _arrival_refresh_start(today):
+    # Include all known in-house stays, even long stays that began before the lookback.
+    with _db_lock, _db() as conn:
+        row = conn.execute("SELECT MIN(arrival_date) d FROM bookings WHERE arrival_date < ? AND departure_date > ? AND status != ?",
+                           (today.isoformat(), today.isoformat(), CANCELLED)).fetchone()
+    return min(today - timedelta(days=30), date.fromisoformat(row["d"])) if row["d"] else today - timedelta(days=30)
+
+
 def plan(kind, backfill_days=DEFAULT_BACKFILL_DAYS, today=None):
     """[(mode, start, end), ...] for a sync kind."""
     today = today or _today()
@@ -242,9 +291,10 @@ def plan(kind, backfill_days=DEFAULT_BACKFILL_DAYS, today=None):
         jobs = [("RESERVATION_DATE", *w) for w in _windows(today - timedelta(days=backfill_days), today)]
     elif kind == "daily":
         jobs = [("RESERVATION_DATE", *w) for w in _windows(today - timedelta(days=DAILY_DAYS - 1), today)]
+        jobs += [("ARRIVAL_DATE", *w) for w in _windows(_arrival_refresh_start(today), today + timedelta(days=WEEKLY_FORWARD_DAYS))]
     elif kind == "weekly":
         jobs = ([("RESERVATION_DATE", *w) for w in _windows(today - timedelta(days=WEEKLY_BACK_DAYS - 1), today)]
-                + [("ARRIVAL_DATE", *w) for w in _windows(today, today + timedelta(days=WEEKLY_FORWARD_DAYS))])
+                + [("ARRIVAL_DATE", *w) for w in _windows(_arrival_refresh_start(today), today + timedelta(days=WEEKLY_FORWARD_DAYS))])
     else:
         raise ValueError(f"Unknown sync kind: {kind}")
     return jobs
@@ -265,8 +315,12 @@ def status():
         counts = conn.execute("SELECT COUNT(*) n, MIN(reservation_date) first, MAX(reservation_date) last "
                               "FROM bookings").fetchone()
         runs = conn.execute("SELECT * FROM sync_runs ORDER BY id DESC LIMIT 10").fetchall()
-        meta = {k: _get_meta(conn, k) for k in ("backfillFrom", "lastDaily", "lastWeekly", "lastBackfill")}
+        meta = {k: _get_meta(conn, k) for k in ("backfillFrom", "lastDaily", "lastWeekly", "lastBackfill", "lastSuccessfulSync")}
     return {
+        "lastSuccessfulSync": meta["lastSuccessfulSync"],
+        "historyBasis": "Observed booking versions; earlier history is reconstructed and estimated",
+        "stale": not meta["lastSuccessfulSync"] or
+            (datetime.now(timezone.utc) - datetime.fromisoformat(meta["lastSuccessfulSync"])).total_seconds() > 36 * 3600,
         "job": snapshot,
         "bookings": counts["n"],
         "firstReservationDate": counts["first"],
@@ -315,6 +369,7 @@ def _run_sync(kind, jobs, backfill_days, client_factory):
                      (finished, rows, error, run_id))
         if not error:
             today = _today().isoformat()
+            _set_meta(conn, "lastSuccessfulSync", finished)
             if kind == "backfill":
                 start = (_today() - timedelta(days=backfill_days)).isoformat()
                 current = _get_meta(conn, "backfillFrom")
@@ -327,7 +382,7 @@ def _run_sync(kind, jobs, backfill_days, client_factory):
 def due_scheduled_kind(now=None):
     """'weekly', 'daily' or None - what the scheduler tick should start.
     Nothing runs before a backfill exists (the operator starts that)."""
-    now = now or datetime.now()
+    now = now or datetime.now(ZoneInfo("Asia/Makassar"))
     if now.hour < SCHEDULED_HOUR:
         return None
     with _db_lock, _db() as conn:
@@ -352,106 +407,205 @@ def run_scheduled_if_due():
 
 # --------------------------------------------------------------------- pace
 
-def _filters(room_type, market_id):
-    clauses, params = [], []
-    if room_type:
-        clauses.append("b.type_id = ?")
-        params.append(room_type)
-    if market_id not in (None, ""):
-        clauses.append("b.market_id = ?")
-        params.append(int(market_id))
-    return "".join(f" AND {c}" for c in clauses), params
+class BookingHistory(dict):
+    observed_from = None
+
+
+def version_history(ranges=None):
+    """One read per request; no guest PII or per-day database opens."""
+    with _db_lock, _db() as conn:
+        if ranges:
+            clauses = " OR ".join("(json_extract(payload, '$.arrival_date') <= ? AND json_extract(payload, '$.departure_date') > ?)" for _ in ranges)
+            params = [v for start, end in ranges for v in (end, start)]
+            rows = conn.execute(f"""SELECT reservation_id, observed_on, payload FROM booking_versions
+                WHERE reservation_id IN (SELECT DISTINCT reservation_id FROM booking_versions WHERE {clauses})
+                ORDER BY id""", params).fetchall()
+        else:
+            rows = conn.execute("SELECT reservation_id, observed_on, payload FROM booking_versions ORDER BY id").fetchall()
+        first = conn.execute("SELECT MIN(observed_on) FROM booking_versions").fetchone()[0]
+    history = BookingHistory()
+    history.observed_from = first
+    for r in rows:
+        history.setdefault(r["reservation_id"], []).append((r["observed_on"], json.loads(r["payload"])))
+    return history
+
+
+def state_as_of(history, as_of):
+    result = {}
+    for rid, versions in history.items():
+        # Earlier than first observation: best-effort reconstruction, never called observed history.
+        chosen = None
+        for observed, payload in versions:
+            if observed <= as_of:
+                chosen = payload
+            else:
+                break
+        if chosen is None:
+            if history.observed_from and as_of >= history.observed_from:
+                # Newly discovered old bookings must not rewrite already observed history.
+                continue
+            chosen = versions[0][1]
+        if chosen["reservation_date"] <= as_of:
+            result[rid] = chosen
+    return result
+
+
+def _active(r, as_of):
+    return r["status"] != CANCELLED or (r.get("cancelled_on") or r["reservation_date"]) > as_of
+
+
+def _matches(r, room_type, market_id):
+    return (not room_type or r["type_id"] == room_type) and (
+        market_id in (None, "") or r["market_id"] == int(market_id))
+
+
+def _empty():
+    return {"rooms": 0, "idrRooms": 0, "revenue": 0, "revenueUsd": 0, "netRevenue": 0}
+
+
+def aggregate(states, start, end, as_of, room_type=None, market_id=None, rules=None):
+    from .rms_workspace import net_rate, get_settings
+    rules = rules if rules is not None else get_settings()["revenueRules"]
+    out = {}
+    for r in states.values():
+        if not _active(r, as_of) or not _matches(r, room_type, market_id):
+            continue
+        first, last = max(start, r["arrival_date"]), min(end, (date.fromisoformat(r["departure_date"]) - timedelta(days=1)).isoformat())
+        if first > last:
+            continue
+        for day in _stay_dates(first, (date.fromisoformat(last) + timedelta(days=1)).isoformat()):
+            bucket = out.setdefault(day, _empty())
+            bucket["rooms"] += 1
+            if r["currency"] == "IDR":
+                bucket["idrRooms"] += 1
+                bucket["revenue"] += r["room_rate"]
+                bucket["netRevenue"] += net_rate(r["room_rate"], r.get("rate_type"), day, rules, r.get("rate_id"))
+            elif r["currency"] == "USD":
+                bucket["revenueUsd"] += r["room_rate"]
+    return out
 
 
 def on_the_books(start, end, as_of, room_type=None, market_id=None):
-    """{stay_date: {"rooms", "idrRooms", "revenue", "revenueUsd", "netRevenue"}}
-    for stay dates in [start, end], counting bookings made on/before as_of and
-    not cancelled by then. Revenue is room rate (IDR); USD-priced bookings are
-    summed separately rather than converted. netRevenue is revenue net of
-    breakfast and tax/service (ADR's basis in this app) - see net_rate.
-    idrRooms counts only IDR-priced room nights: ADR must divide IDR revenue
-    by these, not by `rooms`, or USD nights (~10%) drag it down."""
-    extra, params = _filters(room_type, market_id)
-    with _db_lock, _db() as conn:
-        rows = conn.execute(f"""
-            SELECT n.stay_date,
-                   COUNT(*) AS rooms,
-                   SUM(CASE WHEN b.currency = 'USD' THEN 0 ELSE b.room_rate END) AS revenue,
-                   SUM(CASE WHEN b.currency = 'USD' THEN b.room_rate ELSE 0 END) AS revenue_usd,
-                   SUM(CASE WHEN b.currency = 'USD' THEN 0 ELSE 1 END) AS idr_rooms,
-                   SUM(CASE WHEN b.currency = 'USD' THEN 0 ELSE MAX(b.net_rate, 0) END) AS net_revenue
-            FROM booking_nights n JOIN bookings b ON b.reservation_id = n.reservation_id
-            WHERE n.stay_date BETWEEN ? AND ?
-              AND b.reservation_date <= ?
-              AND (b.status != '{CANCELLED}' OR COALESCE(b.cancelled_on, b.reservation_date) > ?)
-              {extra}
-            GROUP BY n.stay_date""", (start, end, as_of, as_of, *params)).fetchall()
-    return {r["stay_date"]: {"rooms": r["rooms"], "idrRooms": r["idr_rooms"] or 0,
-                              "revenue": r["revenue"] or 0, "revenueUsd": r["revenue_usd"] or 0,
-                              "netRevenue": r["net_revenue"] or 0}
-            for r in rows}
+    return aggregate(state_as_of(version_history([(start, end)]), as_of), start, end, as_of, room_type, market_id)
 
 
-LY_OFFSET = timedelta(days=364)  # same weekday last year
+LY_OFFSET = timedelta(days=364)
 
 
-def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_days=7):
-    """Per stay date: on the books now, pickup over the last pickup_days,
-    same time last year (STLY), and last year's final on-the-books."""
+def comparison_date(day, mode="weekday", custom_start=None, start=None):
+    if mode == "weekday":
+        return day - LY_OFFSET
+    if mode == "calendar":
+        try:
+            return day.replace(year=day.year - 1)
+        except ValueError:  # Feb 29 -> Feb 28
+            return day.replace(year=day.year - 1, day=28)
+    if mode == "custom" and custom_start and start:
+        return date.fromisoformat(custom_start) + (day - date.fromisoformat(start))
+    raise ValueError("comparison must be weekday, calendar, or custom with comparisonStart")
+
+
+def _quality(as_of, coverage, history):
+    if not coverage or as_of < coverage:
+        return "unavailable"
+    first = history.observed_from
+    return "observed" if first and as_of >= first else "estimated"
+
+
+def pickup_breakdown(previous, current, day, before, today, room_type, market_id):
+    new = cancelled = amendments = 0
+    for rid in previous.keys() | current.keys():
+        old, cur = previous.get(rid), current.get(rid)
+        def counts(r, at):
+            return bool(r and r["arrival_date"] <= day < r["departure_date"] and
+                        _active(r, at) and _matches(r, room_type, market_id))
+        delta = int(counts(cur, today)) - int(counts(old, before))
+        if not delta:
+            continue
+        if delta > 0 and cur["reservation_date"] > before:
+            new += delta
+        elif delta < 0 and cur and not _active(cur, today):
+            cancelled -= delta
+        else:
+            amendments += delta
+    return {"newRooms": new, "cancelledRooms": cancelled, "amendedRooms": amendments}
+
+
+def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_days=7,
+               comparison="weekday", comparison_start=None):
+    from .rms_workspace import get_settings
     today = today or _today()
     s, e = date.fromisoformat(start), date.fromisoformat(end)
-    ly_s, ly_e = (s - LY_OFFSET).isoformat(), (e - LY_OFFSET).isoformat()
-    now = on_the_books(start, end, today.isoformat(), room_type, market_id)
-    before = on_the_books(start, end, (today - timedelta(days=pickup_days)).isoformat(), room_type, market_id)
-    stly = on_the_books(ly_s, ly_e, (today - LY_OFFSET).isoformat(), room_type, market_id)
-    empty = {"rooms": 0, "idrRooms": 0, "revenue": 0, "revenueUsd": 0, "netRevenue": 0}
+    ly_start = comparison_date(s, comparison, comparison_start, start).isoformat()
+    ly_end = comparison_date(e, comparison, comparison_start, start).isoformat()
+    history = version_history([(start, end), (ly_start, ly_end)])
+    rules = get_settings()["revenueRules"]
+    with _db_lock, _db() as conn:
+        coverage = _get_meta(conn, "backfillFrom")
+    current_day, prior_day = today.isoformat(), (today - timedelta(days=pickup_days)).isoformat()
+    current, previous = state_as_of(history, current_day), state_as_of(history, prior_day)
+    now = aggregate(current, start, end, current_day, room_type, market_id, rules)
+    before = aggregate(previous, start, end, prior_day, room_type, market_id, rules)
+    states_cache = {}
+    def at(day, as_of):
+        if as_of not in states_cache:
+            states_cache[as_of] = state_as_of(history, as_of)
+        return aggregate(states_cache[as_of], day, day, as_of, room_type, market_id, rules).get(day, _empty())
     out = []
     for i in range((e - s).days + 1):
         d = s + timedelta(days=i)
-        ly = (d - LY_OFFSET).isoformat()
-        cur, prev = now.get(d.isoformat(), empty), before.get(d.isoformat(), empty)
-        # LY final = on the books as of that LY stay date itself.
-        final = on_the_books(ly, ly, ly, room_type, market_id).get(ly, empty) if d - LY_OFFSET < today else None
+        day = d.isoformat()
+        ly_day = comparison_date(d, comparison, comparison_start, start)
+        ly = ly_day.isoformat()
+        ly_as_of = (today - (d - ly_day)).isoformat()
+        quality = _quality(ly_as_of, coverage, history) if ly_as_of <= current_day else "unavailable"
+        stly = at(ly, ly_as_of) if quality != "unavailable" else None
+        final_quality = _quality(ly, coverage, history)
+        final = at(ly, ly) if ly_day < today and final_quality != "unavailable" else None
+        cur, prev = now.get(day, _empty()), before.get(day, _empty())
+        pickup_quality = _quality(prior_day, coverage, history)
+        breakdown = pickup_breakdown(previous, current, day, prior_day, current_day, room_type, market_id)
         out.append({
-            "date": d.isoformat(),
-            "lyDate": ly,
-            "rooms": cur["rooms"], "revenue": cur["revenue"], "revenueUsd": cur["revenueUsd"],
-            "idrRooms": cur["idrRooms"], "netRevenue": cur["netRevenue"],
-            "pickupRooms": cur["rooms"] - prev["rooms"], "pickupRevenue": cur["revenue"] - prev["revenue"],
-            "stlyRooms": stly.get(ly, empty)["rooms"], "stlyRevenue": stly.get(ly, empty)["revenue"],
-            "stlyIdrRooms": stly.get(ly, empty)["idrRooms"], "stlyNetRevenue": stly.get(ly, empty)["netRevenue"],
+            "date": day, "lyDate": ly, **cur,
+            "pickupRooms": cur["rooms"] - prev["rooms"] if pickup_quality != "unavailable" else None,
+            "pickupRevenue": cur["revenue"] - prev["revenue"] if pickup_quality != "unavailable" else None,
+            **{k: v if pickup_quality != "unavailable" else None for k, v in breakdown.items()},
+            "comparisonQuality": quality, "pickupQuality": pickup_quality,
+            "currentQuality": _quality(current_day, coverage, history),
+            "stlyRooms": stly["rooms"] if stly else None,
+            "stlyRevenue": stly["revenue"] if stly else None,
+            "stlyIdrRooms": stly["idrRooms"] if stly else None,
+            "stlyNetRevenue": stly["netRevenue"] if stly else None,
             "lyFinalRooms": final["rooms"] if final else None,
             "lyFinalRevenue": final["revenue"] if final else None,
         })
     return out
 
 
-def pace_curve(stay_date, max_lead=180, room_type=None, market_id=None):
-    """On-the-books for one stay date at each lead time (days before arrival),
-    for this year and the same weekday last year."""
-    extra, params = _filters(room_type, market_id)
+def pace_curve(stay_date, max_lead=180, room_type=None, market_id=None,
+               comparison="weekday", comparison_start=None, range_start=None):
+    from .rms_workspace import get_settings
     d = date.fromisoformat(stay_date)
-    ly = d - LY_OFFSET
-
-    def bookings_for(day):
-        with _db_lock, _db() as conn:
-            return conn.execute(f"""
-                SELECT b.reservation_date, b.status, b.cancelled_on, b.currency, b.room_rate
-                FROM booking_nights n JOIN bookings b ON b.reservation_id = n.reservation_id
-                WHERE n.stay_date = ? {extra}""", (day.isoformat(), *params)).fetchall()
-
-    def curve(day, rows):
+    ly = comparison_date(d, comparison, comparison_start, range_start or stay_date)
+    history, today = version_history([(stay_date, stay_date), (ly.isoformat(), ly.isoformat())]), _today()
+    rules = get_settings()["revenueRules"]
+    with _db_lock, _db() as conn:
+        coverage = _get_meta(conn, "backfillFrom")
+    def curve(day):
         points = []
         for lead in range(max_lead, -1, -1):
-            as_of = (day - timedelta(days=lead)).isoformat()
-            live = [r for r in rows if r["reservation_date"] <= as_of
-                    and (r["status"] != CANCELLED or (r["cancelled_on"] or r["reservation_date"]) > as_of)]
-            points.append({"lead": lead, "asOf": as_of, "rooms": len(live),
-                           "revenue": sum(r["room_rate"] for r in live if r["currency"] != "USD")})
+            as_of = day - timedelta(days=lead)
+            if as_of > today:
+                continue
+            quality = _quality(as_of.isoformat(), coverage, history)
+            value = aggregate(state_as_of(history, as_of.isoformat()), day.isoformat(), day.isoformat(),
+                              as_of.isoformat(), room_type, market_id, rules).get(day.isoformat(), _empty())
+            points.append({"lead": lead, "asOf": as_of.isoformat(), "quality": quality,
+                           "rooms": value["rooms"] if quality != "unavailable" else None,
+                           "revenue": value["revenue"] if quality != "unavailable" else None})
         return points
-
-    return {"date": stay_date, "lyDate": ly.isoformat(),
-            "current": curve(d, bookings_for(d)), "lastYear": curve(ly, bookings_for(ly))}
+    return {"date": stay_date, "lyDate": ly.isoformat(), "todayLead": (d - today).days,
+            "maxLead": max_lead, "current": curve(d), "lastYear": curve(ly)}
 
 
 def dimensions():

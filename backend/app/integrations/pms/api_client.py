@@ -42,7 +42,7 @@ class PMSApiClient:
 
     def login(self):
         """POST the login form and capture the JWT/hotel/user cookies it sets."""
-        login_page = self.session.get(f"{BASE_URL}/")
+        login_page = self.session.get(f"{BASE_URL}/", timeout=(10, 60))
         login_page.raise_for_status()
         soup = BeautifulSoup(login_page.text, "html.parser")
         form = soup.find("form", id="formLogin")
@@ -54,6 +54,7 @@ class PMSApiClient:
 
         resp = self.session.post(
             f"{BASE_URL}/Login/Login",
+            timeout=(10, 60),
             data={
                 "__RequestVerificationToken": token_input["value"],
                 "UserId": self.username,
@@ -78,6 +79,7 @@ class PMSApiClient:
             raise PMSApiError("Not logged in - call login() first")
         resp = self.session.post(
             f"{API_BASE_URL}/api/{path}",
+            timeout=(10, 60),
             json=payload,
             headers={"Authorization": f"Bearer {self._token}"},
         )

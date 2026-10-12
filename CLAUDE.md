@@ -80,7 +80,7 @@ PMS scrape → D-EDGE scrape → combine → yield → verify → PMS allotment 
 
 ### RMS (forecast & pace)
 
-`revenue/rms_forecast.py` + `revenue/booking_events.py` + `routes/rms_routes.py` + `RmsView.vue` (`/rms`). Forecast is live PMS report calls, nothing stored. Pace reads `booking_events.db`, a PII-free local copy of `ReportReservationStatus` (master folio rows only; cancelled = status `L`). The operator runs the backfill once from the page; after that the scheduler tick runs a daily 7-day sync and a weekly resync. Endpoint quirks and decisions: `docs/rms-plan.md` ("As built").
+`revenue/rms_forecast.py` + `revenue/booking_events.py` + `routes/rms_routes.py` + `RmsView.vue` (`/rms`). Forecast uses independently refreshed, persistent PMS report sections. Pace reads append-only observed versions in `booking_events.db` (PII-free master folios; cancelled = `L`); earlier reconstructed history is labeled estimated. After initial backfill, daily and weekly syncs revisit future and in-house arrivals. Local settings provide revenue rules, attention thresholds and monthly targets; notes and exports support meetings. Current behavior and limitations: `docs/rms-improvements.md`; original endpoint findings: `docs/rms-plan.md`.
 
 ### Progress streaming
 

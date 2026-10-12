@@ -1,5 +1,7 @@
 # Simple RMS - Phase 1: Pace & Forecast
 
+**Follow-up implementation:** see [RMS decision workspace](rms-improvements.md) for the current versioned history, daily arrival refresh, cached sections, comparisons, targets and meeting workflow. The phase-1 notes below describe the original build.
+
 **Status: phase 1 built (2026-10-11).** Forecast + pace are live on the
 `/rms` page. See "As built" below for where the build diverged from this
 sketch after live probing; the rest of this doc is the original plan.

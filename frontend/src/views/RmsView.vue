@@ -1,808 +1,1626 @@
 <template>
-  <div class="mx-auto w-full max-w-7xl space-y-4 p-4 sm:p-6 lg:p-8">
-    <div class="flex max-w-full gap-1.5 overflow-x-auto rounded-xl bg-app-primary p-1.5 shadow-neu-inset-sm sm:w-fit" role="tablist">
-      <button
-        v-for="tab in TABS"
-        :key="tab.id"
-        type="button"
-        role="tab"
-        :aria-selected="activeTab === tab.id"
-        @click="selectTab(tab.id)"
-        :class="[
-          activeTab === tab.id ? 'bg-app-primary text-app-accent shadow-neu-sm' : 'text-slate-500 hover:text-app-tertiary',
-          'flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-200',
-        ]"
-      >
-        <component :is="tab.icon" class="h-4 w-4" />
-        {{ tab.name }}
-      </button>
-    </div>
-
-    <!-- ===== Forecast ===== -->
-    <div v-show="activeTab === 'forecast'" class="space-y-4">
-      <div class="neu-card flex flex-wrap items-end gap-3 p-4 text-xs">
-        <label class="space-y-1">
-          <span class="font-semibold text-slate-600">From</span>
-          <input v-model="fc.start" type="date" class="neu-input py-1.5 text-xs" />
-        </label>
-        <label class="space-y-1">
-          <span class="font-semibold text-slate-600">Days</span>
-          <select v-model.number="fc.days" class="neu-input py-1.5 text-xs">
-            <option v-for="d in [7, 14, 30, 60, 90]" :key="d" :value="d">{{ d }}</option>
-          </select>
-        </label>
-        <button type="button" class="btn-primary px-3 py-1.5 text-xs" :disabled="fc.loading" @click="loadForecast">
-          <ArrowPathIcon :class="['h-4 w-4', fc.loading && 'animate-spin']" />
-          {{ fc.loading ? 'Loading from PMS…' : 'Load forecast' }}
-        </button>
-        <p class="text-[11px] text-slate-500">Read live from the PMS - takes 20-45 seconds.</p>
+  <div class="mx-auto w-full max-w-screen-2xl space-y-4 p-4 sm:p-6">
+    <div class="flex flex-wrap justify-between gap-3">
+      <div>
+        <h1 class="text-xl font-semibold">Revenue management</h1>
+        <p class="text-xs text-slate-500">
+          Daily decisions · {{ today }} · Bali time
+        </p>
       </div>
-
-      <p v-if="fc.error" class="neu-card p-4 text-xs font-semibold text-rose-700">{{ fc.error }}</p>
-
-      <template v-if="forecast">
-        <dl class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div v-for="tile in forecastTiles" :key="tile.label" class="neu-card p-3">
-            <dt class="text-[11px] text-slate-500">{{ tile.label }}</dt>
-            <dd class="mt-1 text-lg font-semibold tabular-nums text-slate-900">{{ tile.value }}</dd>
+      <nav class="flex flex-wrap gap-1" aria-label="RMS sections">
+        <button
+          v-for="t in tabs"
+          :key="t.id"
+          :class="[
+            'rounded-lg px-3 py-2 text-sm',
+            tab === t.id ? 'bg-slate-800 text-white' : 'bg-slate-100',
+          ]"
+          :aria-current="tab === t.id ? 'page' : undefined"
+          @click="selectTab(t.id)"
+        >
+          {{ t.label }}
+        </button>
+      </nav>
+    </div>
+    <p
+      v-if="error"
+      role="alert"
+      class="rounded bg-rose-50 p-3 text-sm text-rose-800"
+    >
+      {{ error }}
+    </p>
+    <div
+      v-if="sync"
+      :class="[
+        'rounded-lg border p-3 text-xs',
+        sync.stale ? 'border-amber-200 bg-amber-50' : 'border-slate-200',
+      ]"
+    >
+      <strong>{{
+        sync.stale ? "Booking data needs refresh." : "Booking data updated."
+      }}</strong>
+      Last successful sync: {{ timestamp(sync.lastSuccessfulSync) }}.
+      Booking-date coverage:
+      {{ sync.coverageFrom || "Unavailable — run backfill" }}.
+      <p class="mt-1">
+        Observed history records what each sync saw. Earlier history is
+        reconstructed and estimated; missing coverage is unavailable. No
+        currency conversion is applied.
+      </p>
+    </div>
+    <template v-if="tab !== 'data'">
+      <form
+        class="neu-card flex flex-wrap items-end gap-3 p-4 text-xs"
+        @submit.prevent="loadAll"
+      >
+        <label
+          >From<input
+            v-model="filters.start"
+            type="date"
+            required
+            class="neu-input mt-1 block" /></label
+        ><label
+          >Through<input
+            v-model="filters.end"
+            type="date"
+            required
+            class="neu-input mt-1 block"
+        /></label>
+        <label
+          >Room type<select
+            v-model="filters.roomType"
+            class="neu-input mt-1 block"
+          >
+            <option value="">All</option>
+            <option v-for="r in dims.roomTypes" :key="r" :value="r">
+              {{ label(r) }}
+            </option>
+          </select></label
+        >
+        <label
+          >Market<select
+            v-model="filters.marketId"
+            class="neu-input mt-1 block"
+          >
+            <option value="">All</option>
+            <option v-for="m in dims.markets" :key="m.id" :value="String(m.id)">
+              {{ m.name }}
+            </option>
+          </select></label
+        >
+        <label
+          >Pickup<select
+            v-model.number="filters.pickupDays"
+            class="neu-input mt-1 block"
+          >
+            <option v-for="d in [1, 3, 7, 14, 30]" :key="d" :value="d">
+              {{ d }} days
+            </option>
+          </select></label
+        >
+        <label
+          >Compare with<select
+            v-model="filters.comparison"
+            class="neu-input mt-1 block"
+          >
+            <option value="weekday">Same weekday last year</option>
+            <option value="calendar">Same calendar date last year</option>
+            <option value="custom">Matched event / holiday</option>
+          </select></label
+        >
+        <label v-if="filters.comparison === 'custom'"
+          >Comparison begins<input
+            v-model="filters.comparisonStart"
+            type="date"
+            required
+            class="neu-input mt-1 block"
+        /></label>
+        <label
+          >Revenue basis<select v-model="basis" class="neu-input mt-1 block">
+            <option value="gross">Gross IDR rate</option>
+            <option value="net">Estimated net IDR rate</option>
+          </select></label
+        >
+        <button class="btn-primary px-3 py-2" :disabled="loading">
+          {{ loading ? "Loading…" : "Apply" }}</button
+        ><button type="button" class="btn-flat px-3 py-2" @click="thisMonth">
+          This month</button
+        ><button
+          type="button"
+          class="btn-flat px-3 py-2"
+          :disabled="!rows.length"
+          @click="exportCsv"
+        >
+          Export CSV
+        </button>
+      </form>
+      <p v-if="dirty" class="text-xs text-amber-800">
+        Filters changed. Press Apply. Displayed data and exports still use the
+        previous selection.
+      </p>
+      <p v-if="loaded" class="text-xs text-slate-500">
+        Showing {{ loaded.start }}–{{ loaded.end }} ·
+        {{ loaded.roomType ? label(loaded.roomType) : "All room types" }} ·
+        {{ loaded.marketId ? marketName(loaded.marketId) : "All markets" }} ·
+        {{ comparisonLabel }} · {{ loaded.pickupDays }}-day pickup.
+      </p>
+      <div v-if="forecast" class="flex flex-wrap gap-3 text-xs text-slate-500">
+        <span v-for="(s, k) in forecast.sections" :key="k"
+          >{{ k }}:
+          {{
+            s.refreshing
+              ? "refreshing…"
+              : s.error
+                ? "failed"
+                : s.stale
+                  ? "stale"
+                  : "ready"
+          }}
+          · {{ timestamp(s.fetchedAt)
+          }}<span v-if="s.error" class="text-rose-700">
+            {{ s.error }}</span
+          ></span
+        ><button
+          class="underline"
+          :disabled="forecastBusy"
+          @click="refreshForecast"
+        >
+          Refresh PMS reports
+        </button>
+      </div>
+      <p v-if="loaded" class="text-xs text-slate-500">
+        Displayed booking data from sync:
+        {{ timestamp(reportSync?.lastSuccessfulSync) }}.
+        {{
+          reportSync?.lastSuccessfulSync !== sync?.lastSuccessfulSync
+            ? "New data is available — press Apply."
+            : ""
+        }}
+      </p>
+      <p class="text-xs text-slate-500">
+        PMS reports cover the first 90 selected days; pace covers up to 366. PMS
+        forecast revenue uses the PMS definition and is not combined with
+        booking-rate revenue.
+      </p>
+      <template v-if="tab === 'overview'">
+        <dl class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div v-for="t in tiles" :key="t.label" class="neu-card p-4">
+            <dt class="text-xs text-slate-500">{{ t.label }}</dt>
+            <dd class="mt-1 text-lg font-semibold tabular-nums">
+              {{ t.value }}
+            </dd>
           </div>
         </dl>
-
         <div class="neu-card overflow-hidden">
-          <h2 class="border-b border-slate-200 p-4 text-sm font-semibold text-app-tertiary">Hotel forecast</h2>
-          <div class="max-h-[60vh] overflow-auto">
+          <div class="flex flex-wrap justify-between gap-2 p-4">
+            <h2 class="font-semibold">Dates requiring attention</h2>
+            <label class="text-xs"
+              ><input v-model="onlyAttention" type="checkbox" /> Only flagged
+              dates</label
+            >
+          </div>
+          <p class="px-4 pb-3 text-xs text-slate-500">
+            Flags never change rates. Availability is physical PMS inventory;
+            last-applied BAR levels may differ from live prices. BAR record
+            updated: {{ timestamp(bar.updatedAt) }}.
+          </p>
+          <div class="max-h-[55vh] overflow-auto">
             <table class="min-w-full text-xs">
-              <thead class="sticky top-0 z-10 bg-white shadow-[0_1px_0_rgb(226_232_240)]">
+              <thead class="sticky top-0 bg-white">
                 <tr>
-                  <th v-for="h in ['Date', 'Occ.', 'Rooms sold', 'Room revenue', 'ADR', 'Comp / HU', 'LY transient']" :key="h"
-                      :class="['px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-slate-500', h === 'Date' ? 'text-left' : 'text-right']">{{ h }}</th>
+                  <th
+                    v-for="h in [
+                      'Stay date',
+                      'OTB',
+                      'OTB occ.',
+                      'Pickup',
+                      'Comparison gap',
+                      'Available',
+                      'Last applied BAR',
+                      'PMS room difference',
+                      'Review reason',
+                    ]"
+                    :key="h"
+                    class="whitespace-nowrap p-3 text-left"
+                  >
+                    {{ h }}
+                  </th>
                 </tr>
               </thead>
-              <tbody class="divide-y divide-slate-100">
-                <tr v-for="r in forecast.hotel" :key="r.date" class="hover:bg-slate-50">
-                  <td class="whitespace-nowrap px-3 py-2 font-semibold text-slate-700">{{ formatDay(r.date) }}</td>
-                  <td class="px-3 py-2 text-right tabular-nums">
-                    <span :class="['rounded-full px-2 py-0.5 font-semibold', occClass(r.occupancy)]">{{ r.occupancy?.toFixed(1) }}%</span>
+              <tbody>
+                <tr
+                  v-for="r in attentionRows"
+                  :key="r.date"
+                  class="border-t border-slate-100 hover:bg-slate-50"
+                >
+                  <td class="whitespace-nowrap p-3">
+                    <button
+                      class="font-semibold underline"
+                      @click="openDay(r.date)"
+                    >
+                      {{ dayLabel(r.date) }}
+                    </button>
                   </td>
-                  <td class="px-3 py-2 text-right tabular-nums text-slate-700">{{ r.roomsSold }} / {{ r.roomCount }}</td>
-                  <td class="px-3 py-2 text-right tabular-nums text-slate-700">{{ millions(r.revenue) }}</td>
-                  <td class="px-3 py-2 text-right tabular-nums text-slate-700">{{ thousands(r.adr) }}</td>
-                  <td class="px-3 py-2 text-right tabular-nums text-slate-500">{{ r.complimentary }} / {{ r.houseUse }}</td>
-                  <td class="px-3 py-2 text-right tabular-nums text-slate-500">{{ r.lastYear }}</td>
+                  <td class="p-3">{{ num(r.otb) }}</td>
+                  <td class="p-3">{{ percent(r.occupancy) }}</td>
+                  <td class="p-3">{{ signed(r.pickupRooms) }}</td>
+                  <td class="p-3">{{ signed(r.gap) }}</td>
+                  <td class="p-3">{{ num(r.available) }}</td>
+                  <td class="max-w-48 p-3">{{ r.bar || "Unavailable" }}</td>
+                  <td class="p-3">{{ signed(r.reconciliation) }}</td>
+                  <td class="min-w-44 p-3">
+                    {{ r.reasons.join(" · ") || "No flags"
+                    }}<span
+                      v-if="notes[r.date]?.text"
+                      class="block text-slate-500"
+                      >Note saved</span
+                    >
+                  </td>
                 </tr>
               </tbody>
             </table>
           </div>
+          <p v-if="!attentionRows.length" class="p-4 text-sm text-slate-500">
+            {{
+              rows.length
+                ? "No dates match the attention filter."
+                : "Apply a range to load data."
+            }}
+          </p>
         </div>
-
-        <div class="grid grid-cols-1 gap-4 xl:grid-cols-12">
-          <div class="neu-card overflow-hidden xl:col-span-5">
-            <h2 class="border-b border-slate-200 p-4 text-sm font-semibold text-app-tertiary">By market segment <span class="font-normal text-slate-500">(whole window)</span></h2>
-            <div class="overflow-x-auto">
-              <table class="min-w-full text-xs">
-                <thead>
-                  <tr>
-                    <th v-for="h in ['Segment', 'Room nights', 'Share', 'Revenue', 'ADR']" :key="h"
-                        :class="['px-3 py-2.5 text-[11px] font-bold uppercase tracking-wider text-slate-500', h === 'Segment' ? 'text-left' : 'text-right']">{{ h }}</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-100">
-                  <tr v-for="s in segmentTotals" :key="s.market">
-                    <td class="px-3 py-2 font-semibold text-slate-700">{{ s.market }}</td>
-                    <td class="px-3 py-2 text-right tabular-nums">{{ s.rooms }}</td>
-                    <td class="px-3 py-2 text-right tabular-nums text-slate-500">{{ s.share.toFixed(1) }}%</td>
-                    <td class="px-3 py-2 text-right tabular-nums">{{ millions(s.revenue) }}</td>
-                    <td class="px-3 py-2 text-right tabular-nums text-slate-500">{{ s.rooms ? thousands(s.revenue / s.rooms) : '–' }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="neu-card overflow-hidden xl:col-span-7">
-            <h2 class="border-b border-slate-200 p-4 text-sm font-semibold text-app-tertiary">Expected occupied by room type</h2>
-            <div class="max-h-[60vh] overflow-auto">
-              <table class="min-w-full text-xs">
-                <thead class="sticky top-0 z-10 bg-white shadow-[0_1px_0_rgb(226_232_240)]">
-                  <tr>
-                    <th class="sticky left-0 bg-white px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Room type</th>
-                    <th v-for="d in roomMatrix.dates" :key="d" class="whitespace-nowrap px-2 py-2.5 text-right text-[11px] font-bold text-slate-500">{{ shortDay(d) }}</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-100">
-                  <tr v-for="t in roomMatrix.types" :key="t.typeId">
-                    <td class="sticky left-0 whitespace-nowrap bg-white px-3 py-1.5 font-semibold text-slate-700" :title="t.typeId">
-                      {{ roomLabel(t.typeId) }} <span class="font-normal text-slate-400">{{ t.roomCount }}</span>
-                    </td>
-                    <td v-for="d in roomMatrix.dates" :key="d"
-                        :class="['px-2 py-1.5 text-right tabular-nums', cellClass(t.cells[d], t.roomCount)]">
-                      {{ t.cells[d] ?? '' }}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+        <div class="neu-card overflow-hidden">
+          <h2 class="p-4 font-semibold">Monthly booking position & targets</h2>
+          <p class="px-4 pb-3 text-xs text-slate-500">
+            {{ basisLabel }}. ADR uses IDR nights only. RevPAR is the IDR
+            revenue component / room capacity. Targets require complete,
+            unfiltered months on the same basis. These are booking positions,
+            not audited actuals.
+          </p>
+          <div class="overflow-x-auto">
+            <table class="min-w-full text-xs">
+              <thead>
+                <tr>
+                  <th
+                    v-for="h in [
+                      'Month',
+                      'Room nights',
+                      'Room revenue',
+                      'ADR',
+                      'RevPAR (IDR component)',
+                      'Target',
+                      'Target gap',
+                      'Required revenue / remaining day',
+                    ]"
+                    :key="h"
+                    class="p-3 text-left"
+                  >
+                    {{ h }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="m in months"
+                  :key="m.month"
+                  class="border-t border-slate-100"
+                >
+                  <td class="p-3">
+                    {{ m.month
+                    }}<span v-if="!m.fullMonth" class="block text-amber-800"
+                      >Partial month</span
+                    ><span v-if="m.hasForeign" class="block text-slate-500"
+                      >Foreign revenue excluded</span
+                    >
+                  </td>
+                  <td class="p-3">{{ num(m.roomNights) }}</td>
+                  <td class="p-3">{{ money(m.revenue) }}</td>
+                  <td class="p-3">{{ money(m.adr) }}</td>
+                  <td class="p-3">{{ money(m.revpar) }}</td>
+                  <td class="p-3">{{ money(m.budget) }}</td>
+                  <td class="p-3">{{ money(m.gap) }}</td>
+                  <td class="p-3">{{ money(m.required) }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </template>
-    </div>
-
-    <!-- ===== Pace ===== -->
-    <div v-show="activeTab === 'pace'" class="space-y-4">
-      <p v-if="sync && !sync.coverageFrom" class="neu-card bg-amber-50 p-4 text-xs font-semibold text-amber-800">
-        No booking history yet. Run the backfill in the Booking data tab first. Until then, pace and same-time-last-year are empty.
-      </p>
-
-      <div class="neu-card flex flex-wrap items-end gap-3 p-4 text-xs">
-        <div class="relative space-y-1" ref="dateMenuRef">
-          <span class="block font-semibold text-slate-600">Stay dates</span>
-          <button type="button" class="neu-input flex items-center gap-2 py-1.5 text-xs" @click="dateMenuOpen = !dateMenuOpen">
-            <CalendarIcon class="h-3.5 w-3.5 text-slate-400" />
-            {{ shortDayYear(pc.start) }} – {{ shortDayYear(pc.end) }}
-          </button>
-          <div v-if="dateMenuOpen" class="neu-card absolute left-0 top-full z-20 mt-1 w-72 space-y-3 p-3 shadow-neu-sm">
-            <div class="flex gap-1.5">
-              <button type="button" class="btn-flat flex-1 px-2 py-1 text-xs" @click="applyDatePreset(3)">Next 3 months</button>
-              <button type="button" class="btn-flat flex-1 px-2 py-1 text-xs" @click="applyDatePreset(5)">Next 5 months</button>
-            </div>
-            <div class="border-t border-slate-200 pt-3">
-              <p class="mb-1.5 font-semibold text-slate-600">Custom range</p>
-              <DateRangeCalendar v-model:start="pc.start" v-model:end="pc.end" />
-              <div class="mt-2 flex justify-end">
-                <button type="button" class="btn-primary px-3 py-1 text-xs" :disabled="!pc.start || !pc.end" @click="dateMenuOpen = false">Apply</button>
-              </div>
-            </div>
+      <template v-if="tab === 'pace'">
+        <div class="neu-card p-4">
+          <div class="flex justify-between">
+            <h2 class="font-semibold">Room nights & ADR</h2>
+            <select
+              v-model="chartView"
+              aria-label="Chart grouping"
+              class="neu-input text-xs"
+            >
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+          </div>
+          <p class="my-2 text-xs text-slate-500">
+            {{ basisLabel }}. IDR ADR coverage: {{ percent(idrCoverage) }} of
+            room nights. Comparison history may be estimated.
+          </p>
+          <div class="h-72">
+            <Chart type="bar" :data="chartData" :options="chartOptions" />
           </div>
         </div>
-        <label class="space-y-1">
-          <span class="font-semibold text-slate-600">Room type</span>
-          <select v-model="pc.roomType" class="neu-input py-1.5 text-xs">
-            <option value="">All</option>
-            <option v-for="t in dims.roomTypes" :key="t" :value="t">{{ roomLabel(t) }}</option>
-          </select>
-        </label>
-        <label class="space-y-1">
-          <span class="font-semibold text-slate-600">Market</span>
-          <select v-model="pc.marketId" class="neu-input py-1.5 text-xs">
-            <option value="">All</option>
-            <option v-for="m in dims.markets" :key="m.id" :value="String(m.id)">{{ m.name }}</option>
-          </select>
-        </label>
-        <label class="space-y-1">
-          <span class="font-semibold text-slate-600">Pickup over</span>
-          <select v-model.number="pc.pickupDays" class="neu-input py-1.5 text-xs">
-            <option v-for="d in [1, 3, 7, 14, 30]" :key="d" :value="d">{{ d }} day{{ d > 1 ? 's' : '' }}</option>
-          </select>
-        </label>
-        <button type="button" class="btn-primary px-3 py-1.5 text-xs" :disabled="pc.loading" @click="loadPace">
-          <ArrowPathIcon :class="['h-4 w-4', pc.loading && 'animate-spin']" />
-          Load pace
-        </button>
-      </div>
-
-      <p v-if="pc.error" class="neu-card p-4 text-xs font-semibold text-rose-700">{{ pc.error }}</p>
-
-      <div v-if="paceRows.length" class="neu-card space-y-3 p-4">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 class="text-sm font-semibold text-app-tertiary">Room nights and average daily rate</h2>
-            <p class="mt-0.5 text-[11px] text-slate-500">ADR here is net of breakfast and tax/service, not the rate quoted in the PMS, and covers IDR-priced bookings only.</p>
-          </div>
-          <div class="flex gap-1 rounded-lg bg-app-secondary p-1 shadow-neu-inset-sm" role="tablist">
-            <button v-for="g in CHART_VIEWS" :key="g" type="button" role="tab" :aria-selected="chartView === g"
-                    :class="[chartView === g ? 'bg-app-primary text-app-accent shadow-neu-sm' : 'text-slate-500 hover:text-app-tertiary', 'rounded-md px-2.5 py-1 text-xs font-semibold capitalize transition-all duration-200']"
-                    @click="chartView = g">{{ g }}</button>
-          </div>
-        </div>
-        <div class="h-72">
-          <Chart type="bar" :data="chartData" :options="chartOptions" />
-        </div>
-
-        <div class="overflow-x-auto border-t border-slate-200 pt-3">
-          <table class="min-w-full text-xs">
-            <thead>
-              <tr>
-                <th class="sticky left-0 bg-white px-3 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">&nbsp;</th>
-                <th v-for="b in chartTable.buckets" :key="b.label" class="whitespace-nowrap px-3 py-2 text-right text-[11px] font-bold text-slate-500">{{ b.label }}</th>
-                <th class="whitespace-nowrap px-3 py-2 text-right text-[11px] font-bold text-slate-700">Total</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100">
-              <tr>
-                <td class="sticky left-0 bg-white px-3 py-1.5 font-semibold text-slate-700">Room nights</td>
-                <td v-for="b in chartTable.buckets" :key="b.label" class="px-3 py-1.5 text-right tabular-nums">{{ b.rooms }}</td>
-                <td class="px-3 py-1.5 text-right tabular-nums font-semibold">{{ chartTable.totals.rooms }}</td>
-              </tr>
-              <tr>
-                <td class="sticky left-0 bg-white px-3 py-1.5 text-slate-500">Room nights (Last year)</td>
-                <td v-for="b in chartTable.buckets" :key="b.label" class="px-3 py-1.5 text-right tabular-nums text-slate-500">{{ b.stlyRooms }}</td>
-                <td class="px-3 py-1.5 text-right tabular-nums font-semibold text-slate-500">{{ chartTable.totals.stlyRooms }}</td>
-              </tr>
-              <tr>
-                <td class="sticky left-0 bg-white px-3 py-1.5 text-slate-500">% difference</td>
-                <td v-for="b in chartTable.buckets" :key="b.label" :class="['px-3 py-1.5 text-right tabular-nums', signClass(pctDiff(b.rooms, b.stlyRooms) ?? 0)]">{{ pct(pctDiff(b.rooms, b.stlyRooms)) }}</td>
-                <td :class="['px-3 py-1.5 text-right tabular-nums font-semibold', signClass(chartTable.totals.roomsDiff ?? 0)]">{{ pct(chartTable.totals.roomsDiff) }}</td>
-              </tr>
-              <tr>
-                <td class="sticky left-0 bg-white px-3 py-1.5 pt-3 font-semibold text-slate-700">Revenue (IDR)</td>
-                <td v-for="b in chartTable.buckets" :key="b.label" class="px-3 py-1.5 pt-3 text-right tabular-nums">{{ millions(b.revenue) }}</td>
-                <td class="px-3 py-1.5 pt-3 text-right tabular-nums font-semibold">{{ millions(chartTable.totals.revenue) }}</td>
-              </tr>
-              <tr>
-                <td class="sticky left-0 bg-white px-3 py-1.5 text-slate-500">Revenue (IDR) (Last year)</td>
-                <td v-for="b in chartTable.buckets" :key="b.label" class="px-3 py-1.5 text-right tabular-nums text-slate-500">{{ millions(b.stlyRevenue) }}</td>
-                <td class="px-3 py-1.5 text-right tabular-nums font-semibold text-slate-500">{{ millions(chartTable.totals.stlyRevenue) }}</td>
-              </tr>
-              <tr>
-                <td class="sticky left-0 bg-white px-3 py-1.5 text-slate-500">% difference</td>
-                <td v-for="b in chartTable.buckets" :key="b.label" :class="['px-3 py-1.5 text-right tabular-nums', signClass(pctDiff(b.revenue, b.stlyRevenue) ?? 0)]">{{ pct(pctDiff(b.revenue, b.stlyRevenue)) }}</td>
-                <td :class="['px-3 py-1.5 text-right tabular-nums font-semibold', signClass(chartTable.totals.revenueDiff ?? 0)]">{{ pct(chartTable.totals.revenueDiff) }}</td>
-              </tr>
-              <tr>
-                <td class="sticky left-0 bg-white px-3 py-1.5 pt-3 font-semibold text-slate-700">Average daily rate IDR</td>
-                <td v-for="b in chartTable.buckets" :key="b.label" class="px-3 py-1.5 pt-3 text-right tabular-nums">{{ thousands(b.adr) }}</td>
-                <td class="px-3 py-1.5 pt-3 text-right tabular-nums font-semibold">{{ thousands(chartTable.totals.adr) }}</td>
-              </tr>
-              <tr>
-                <td class="sticky left-0 bg-white px-3 py-1.5 text-slate-500">Average daily rate IDR (Last year)</td>
-                <td v-for="b in chartTable.buckets" :key="b.label" class="px-3 py-1.5 text-right tabular-nums text-slate-500">{{ thousands(b.stlyAdr) }}</td>
-                <td class="px-3 py-1.5 text-right tabular-nums font-semibold text-slate-500">{{ thousands(chartTable.totals.stlyAdr) }}</td>
-              </tr>
-              <tr>
-                <td class="sticky left-0 bg-white px-3 py-1.5 text-slate-500">% difference</td>
-                <td v-for="b in chartTable.buckets" :key="b.label" :class="['px-3 py-1.5 text-right tabular-nums', signClass(pctDiff(b.adr, b.stlyAdr) ?? 0)]">{{ pct(pctDiff(b.adr, b.stlyAdr)) }}</td>
-                <td :class="['px-3 py-1.5 text-right tabular-nums font-semibold', signClass(chartTable.totals.adrDiff ?? 0)]">{{ pct(chartTable.totals.adrDiff) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div v-if="paceRows.length" class="grid grid-cols-1 gap-4 xl:grid-cols-12">
-        <div class="neu-card overflow-hidden xl:col-span-7">
-          <div class="border-b border-slate-200 p-4">
-            <h2 class="text-sm font-semibold text-app-tertiary">On the books by stay date</h2>
-            <p class="mt-0.5 text-[11px] text-slate-500">
-              STLY = same weekday last year, as of the same days before arrival. Click a date for its booking curve.
-              <template v-if="usdBookings"> USD-priced bookings count in room nights but not in IDR revenue.</template>
-            </p>
-          </div>
-          <div class="max-h-[65vh] overflow-auto">
+        <div class="neu-card overflow-hidden">
+          <h2 class="p-4 font-semibold">Pickup by stay date</h2>
+          <p class="px-4 pb-3 text-xs text-slate-500">
+            New − cancellations + net amendments = net pickup, in room nights.
+            Amendments include date/segment moves and reinstatements.
+            Pre-observation breakdowns are estimates.
+          </p>
+          <div class="max-h-[60vh] overflow-auto">
             <table class="min-w-full text-xs">
-              <thead class="sticky top-0 z-10 bg-white shadow-[0_1px_0_rgb(226_232_240)]">
+              <thead class="sticky top-0 bg-white">
                 <tr>
-                  <th class="px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Date</th>
-                  <th class="px-3 py-2.5 text-right text-[11px] font-bold uppercase tracking-wider text-slate-500">OTB</th>
-                  <th class="px-3 py-2.5 text-right text-[11px] font-bold uppercase tracking-wider text-slate-500">Revenue</th>
-                  <th class="px-3 py-2.5 text-right text-[11px] font-bold uppercase tracking-wider text-slate-500">Pickup {{ loadedPickupDays }}d</th>
-                  <th class="px-3 py-2.5 text-right text-[11px] font-bold uppercase tracking-wider text-slate-500">STLY</th>
-                  <th class="px-3 py-2.5 text-right text-[11px] font-bold uppercase tracking-wider text-slate-500">vs STLY</th>
-                  <th class="px-3 py-2.5 text-right text-[11px] font-bold uppercase tracking-wider text-slate-500">LY final</th>
+                  <th
+                    v-for="h in [
+                      'Date',
+                      'OTB',
+                      'Revenue',
+                      'New',
+                      'Cancelled',
+                      'Amendments',
+                      'Net pickup',
+                      'Comparison',
+                      'Gap',
+                      'LY / matched final',
+                      'Quality',
+                    ]"
+                    :key="h"
+                    class="whitespace-nowrap p-3 text-left"
+                  >
+                    {{ h }}
+                  </th>
                 </tr>
               </thead>
-              <tbody class="divide-y divide-slate-100">
-                <tr v-for="r in paceRows" :key="r.date"
-                    :class="['cursor-pointer hover:bg-slate-50', curve?.date === r.date && 'bg-slate-100']"
-                    @click="loadCurve(r.date)">
-                  <td class="whitespace-nowrap px-3 py-2 font-semibold text-slate-700">{{ formatDay(r.date) }}</td>
-                  <td class="px-3 py-2 text-right tabular-nums text-slate-900">{{ r.rooms }}</td>
-                  <td class="px-3 py-2 text-right tabular-nums text-slate-700">{{ millions(r.revenue) }}</td>
-                  <td :class="['px-3 py-2 text-right tabular-nums', signClass(r.pickupRooms)]">{{ signed(r.pickupRooms) }}</td>
-                  <td class="px-3 py-2 text-right tabular-nums text-slate-500">{{ r.stlyRooms }}</td>
-                  <td :class="['px-3 py-2 text-right tabular-nums font-semibold', signClass(r.rooms - r.stlyRooms)]">{{ signed(r.rooms - r.stlyRooms) }}</td>
-                  <td class="px-3 py-2 text-right tabular-nums text-slate-500">{{ r.lyFinalRooms ?? '–' }}</td>
+              <tbody>
+                <tr
+                  v-for="r in rows"
+                  :key="r.date"
+                  class="border-t border-slate-100"
+                >
+                  <td class="whitespace-nowrap p-3">
+                    <button class="underline" @click="openDay(r.date)">
+                      {{ dayLabel(r.date) }}
+                    </button>
+                  </td>
+                  <td class="p-3">{{ num(currentRooms(r)) }}</td>
+                  <td class="p-3">
+                    {{ money(currentRooms(r) == null ? null : revenue(r)) }}
+                  </td>
+                  <td class="p-3">{{ num(r.newRooms) }}</td>
+                  <td class="p-3">{{ num(r.cancelledRooms) }}</td>
+                  <td class="p-3">{{ signed(r.amendedRooms) }}</td>
+                  <td class="p-3">{{ signed(r.pickupRooms) }}</td>
+                  <td class="p-3">{{ num(r.stlyRooms) }}</td>
+                  <td class="p-3">
+                    {{ signed(difference(currentRooms(r), r.stlyRooms)) }}
+                  </td>
+                  <td class="p-3">{{ num(r.lyFinalRooms) }}</td>
+                  <td class="p-3">
+                    Comparison: {{ r.comparisonQuality }}<br />Pickup:
+                    {{ r.pickupQuality }}
+                  </td>
                 </tr>
               </tbody>
-              <tfoot class="sticky bottom-0 bg-slate-50 font-semibold">
-                <tr>
-                  <td class="px-3 py-2 text-slate-700">Total</td>
-                  <td class="px-3 py-2 text-right tabular-nums">{{ paceTotals.rooms }}</td>
-                  <td class="px-3 py-2 text-right tabular-nums">{{ millions(paceTotals.revenue) }}</td>
-                  <td :class="['px-3 py-2 text-right tabular-nums', signClass(paceTotals.pickup)]">{{ signed(paceTotals.pickup) }}</td>
-                  <td class="px-3 py-2 text-right tabular-nums text-slate-500">{{ paceTotals.stly }}</td>
-                  <td :class="['px-3 py-2 text-right tabular-nums', signClass(paceTotals.rooms - paceTotals.stly)]">{{ signed(paceTotals.rooms - paceTotals.stly) }}</td>
-                  <td class="px-3 py-2 text-right tabular-nums text-slate-500">{{ paceTotals.lyFinal ?? '–' }}</td>
-                </tr>
-              </tfoot>
             </table>
           </div>
         </div>
-
-        <div class="neu-card p-4 xl:col-span-5">
-          <h2 class="text-sm font-semibold text-app-tertiary">Booking curve</h2>
-          <p v-if="!curve" class="mt-2 text-xs text-slate-500">Click a stay date to see how its bookings built up.</p>
-          <template v-else>
-            <p class="mt-0.5 text-[11px] text-slate-500">
-              {{ formatDay(curve.date) }} vs {{ formatDay(curve.lyDate) }}. Rooms on the books by days before arrival.
-            </p>
-            <svg :viewBox="`0 0 ${CW} ${CH}`" class="mt-3 w-full" role="img" :aria-label="`Booking curve for ${curve.date}`">
-              <g class="text-slate-200" stroke="currentColor">
-                <line v-for="t in curveChart.yTicks" :key="t.v" :x1="PAD_L" :x2="CW - PAD_R" :y1="t.y" :y2="t.y" />
-              </g>
-              <g class="fill-slate-400 text-[10px]">
-                <text v-for="t in curveChart.yTicks" :key="`y${t.v}`" :x="PAD_L - 6" :y="t.y + 3" text-anchor="end">{{ t.v }}</text>
-                <text v-for="t in curveChart.xTicks" :key="`x${t.v}`" :x="t.x" :y="CH - 6" text-anchor="middle">{{ t.v }}</text>
-              </g>
-              <polyline :points="curveChart.ly" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4 3" />
-              <polyline :points="curveChart.cur" fill="none" stroke="#0f172a" stroke-width="2" />
-            </svg>
-            <div class="mt-2 flex gap-4 text-[11px] text-slate-600">
-              <span class="flex items-center gap-1.5"><span class="h-0.5 w-4 bg-slate-900" /> This year</span>
-              <span class="flex items-center gap-1.5"><span class="h-0.5 w-4 border-t-2 border-dashed border-slate-400" /> Last year</span>
-            </div>
-          </template>
-        </div>
-      </div>
-      <p v-else-if="pc.loaded && !pc.error" class="neu-card p-4 text-xs text-slate-500">No bookings on the books for this range.</p>
-    </div>
-
-    <!-- ===== Booking data ===== -->
-    <div v-show="activeTab === 'sync'" class="grid grid-cols-1 gap-4 xl:grid-cols-12">
-      <div class="neu-card space-y-3 p-4 text-xs xl:col-span-5">
-        <h2 class="text-sm font-semibold text-app-tertiary">Booking history cache</h2>
-        <p class="text-slate-500">
-          Pace reads bookings from a local copy of the PMS reservation log. Guest details are never stored.
-          Once the backfill has run, the scheduler keeps it current: a 7-day pull daily after 04:00, and a deeper resync weekly
-          (last 90 days of bookings plus every arrival in the next year, to catch cancellations).
-        </p>
-        <dl v-if="sync" class="grid grid-cols-2 gap-2">
-          <div class="rounded-lg bg-slate-50 p-2">
-            <dt class="text-[11px] text-slate-500">Bookings cached</dt>
-            <dd class="text-lg font-semibold tabular-nums text-slate-900">{{ sync.bookings.toLocaleString() }}</dd>
-          </div>
-          <div class="rounded-lg bg-slate-50 p-2">
-            <dt class="text-[11px] text-slate-500">Complete from</dt>
-            <dd class="text-lg font-semibold text-slate-900">{{ sync.coverageFrom ? formatDay(sync.coverageFrom) : '–' }}</dd>
-          </div>
-          <div class="rounded-lg bg-slate-50 p-2">
-            <dt class="text-[11px] text-slate-500">Last daily sync</dt>
-            <dd class="font-semibold text-slate-900">{{ sync.lastDaily ? formatDay(sync.lastDaily) : '–' }}</dd>
-          </div>
-          <div class="rounded-lg bg-slate-50 p-2">
-            <dt class="text-[11px] text-slate-500">Last weekly resync</dt>
-            <dd class="font-semibold text-slate-900">{{ sync.lastWeekly ? formatDay(sync.lastWeekly) : '–' }}</dd>
-          </div>
-        </dl>
-
-        <div v-if="sync?.job.running" class="space-y-1 rounded-lg bg-slate-50 p-3">
-          <p class="font-semibold text-slate-700">
-            {{ KIND_LABEL[sync.job.kind ?? ''] }} running - {{ sync.job.done }} / {{ sync.job.total }} windows, {{ sync.job.rows.toLocaleString() }} rows
+      </template>
+      <template v-if="tab === 'forecast'">
+        <div class="neu-card overflow-hidden">
+          <h2 class="p-4 font-semibold">PMS hotel forecast — whole hotel</h2>
+          <p class="px-4 pb-3 text-xs text-slate-500">
+            RoomUsed and revenue are reported by PMS. Room-type/market filters
+            apply to pace; this table remains hotel-wide.
           </p>
-          <div class="h-1.5 overflow-hidden rounded-full bg-slate-200">
-            <div class="h-full bg-slate-900 transition-all" :style="{ width: `${(sync.job.done / Math.max(1, sync.job.total)) * 100}%` }" />
+          <div class="max-h-[60vh] overflow-auto">
+            <table class="min-w-full text-xs">
+              <thead class="sticky top-0 bg-white">
+                <tr>
+                  <th
+                    v-for="h in [
+                      'Date',
+                      'Occupancy',
+                      'RoomUsed / capacity',
+                      'PMS revenue',
+                      'PMS ADR',
+                      'Comp / house use',
+                    ]"
+                    :key="h"
+                    class="p-3 text-left"
+                  >
+                    {{ h }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="r in forecast?.hotel || []"
+                  :key="r.date"
+                  class="border-t border-slate-100"
+                >
+                  <td class="p-3">{{ dayLabel(r.date) }}</td>
+                  <td class="p-3">{{ percent(r.occupancy) }}</td>
+                  <td class="p-3">
+                    {{ num(r.roomsSold) }} / {{ num(r.roomCount) }}
+                  </td>
+                  <td class="p-3">{{ money(r.revenue) }}</td>
+                  <td class="p-3">{{ money(r.adr) }}</td>
+                  <td class="p-3">
+                    {{ num(r.complimentary) }} / {{ num(r.houseUse) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p v-if="!forecast?.hotel.length" class="p-4 text-sm">
+            {{
+              forecastBusy
+                ? "Hotel totals are loading independently…"
+                : "No hotel forecast available."
+            }}
+          </p>
+        </div>
+        <div class="neu-card overflow-hidden">
+          <h2 class="p-4 font-semibold">
+            Market segments — whole forecast window
+          </h2>
+          <div class="overflow-x-auto">
+            <table class="min-w-full text-xs">
+              <thead>
+                <tr>
+                  <th
+                    v-for="h in [
+                      'Segment',
+                      'Room nights',
+                      'PMS revenue',
+                      'PMS revenue / night',
+                    ]"
+                    :key="h"
+                    class="p-3 text-left"
+                  >
+                    {{ h }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="s in segmentTotals"
+                  :key="s.market"
+                  class="border-t border-slate-100"
+                >
+                  <td class="p-3">{{ s.market }}</td>
+                  <td class="p-3">{{ num(s.rooms) }}</td>
+                  <td class="p-3">{{ money(s.revenue) }}</td>
+                  <td class="p-3">{{ money(ratio(s.revenue, s.rooms)) }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
-        <p v-else-if="sync?.job.error" class="rounded-lg bg-rose-50 px-3 py-2 font-semibold text-rose-700">
-          Last {{ KIND_LABEL[sync.job.kind ?? ''] }} failed: {{ sync.job.error }}
-        </p>
-
-        <div class="flex flex-wrap items-end gap-2 border-t border-slate-200 pt-3">
-          <label class="space-y-1">
-            <span class="font-semibold text-slate-600">Backfill depth</span>
-            <select v-model.number="backfillYears" class="neu-input py-1.5 text-xs">
-              <option v-for="y in [1, 2, 3, 4, 5]" :key="y" :value="y">{{ y }} year{{ y > 1 ? 's' : '' }}</option>
-            </select>
-          </label>
-          <button type="button" class="btn-primary px-3 py-1.5 text-xs" :disabled="sync?.job.running" @click="runSync('backfill')">Run backfill</button>
-          <button type="button" class="btn-flat px-3 py-1.5 text-xs" :disabled="sync?.job.running" @click="runSync('daily')">Sync last 7 days</button>
-          <button type="button" class="btn-flat px-3 py-1.5 text-xs" :disabled="sync?.job.running" @click="runSync('weekly')">Full resync</button>
+        <div class="neu-card overflow-hidden">
+          <h2 class="p-4 font-semibold">Expected occupied by room type</h2>
+          <div class="max-h-[50vh] overflow-auto">
+            <table class="min-w-full text-xs">
+              <thead class="sticky top-0 bg-white">
+                <tr>
+                  <th class="sticky left-0 bg-white p-3 text-left">
+                    Room type
+                  </th>
+                  <th
+                    v-for="d in matrix.dates"
+                    :key="d"
+                    class="whitespace-nowrap p-2"
+                  >
+                    {{ d.slice(5) }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="r in matrix.types"
+                  :key="r.typeId"
+                  class="border-t border-slate-100"
+                >
+                  <td class="sticky left-0 whitespace-nowrap bg-white p-3">
+                    {{ label(r.typeId) }}
+                  </td>
+                  <td
+                    v-for="d in matrix.dates"
+                    :key="d"
+                    :class="[
+                      'p-2 text-right',
+                      r.capacity && r.values[d] >= r.capacity * 0.9
+                        ? 'bg-amber-50'
+                        : '',
+                    ]"
+                  >
+                    {{ num(r.values[d]) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
-        <p class="text-[11px] text-slate-500">A 3-year backfill takes about 4 minutes. Same-time-last-year needs at least 2 years.</p>
+      </template>
+      <section
+        v-if="selectedDate"
+        ref="detailElement"
+        class="neu-card space-y-3 p-4"
+        aria-label="Stay date detail"
+      >
+        <div class="flex justify-between">
+          <h2 class="font-semibold">
+            {{ dayLabel(selectedDate) }} — booking curve & review
+          </h2>
+          <button class="text-xs underline" @click="closeDay">Close</button>
+        </div>
+        <p v-if="curveLoading" class="text-xs">Loading booking curve…</p>
+        <p v-if="curveError" role="alert" class="text-xs text-rose-700">
+          {{ curveError }}
+        </p>
+        <p class="text-xs text-slate-500">
+          Current curve stops at today. Earlier reconstructed history is
+          estimated; gaps mean unavailable. Comparison: {{ curve?.lyDate }}.
+        </p>
+        <div class="h-60">
+          <Chart
+            type="line"
+            :data="curveData"
+            :options="curveOptions"
+            :plugins="[todayMarker]"
+          />
+        </div>
+        <div class="grid gap-4 md:grid-cols-2">
+          <div>
+            <h3 class="text-sm font-semibold">Physical availability</h3>
+            <p v-if="!selectedAvailability.length" class="text-xs">
+              Unavailable for this date.
+            </p>
+            <div class="mt-2 flex flex-wrap gap-2">
+              <span
+                v-for="r in selectedAvailability"
+                :key="r.type"
+                class="rounded bg-slate-50 p-2 text-xs"
+                >{{ label(r.type) }}: {{ num(r.rooms) }}</span
+              >
+            </div>
+          </div>
+          <div>
+            <h3 class="text-sm font-semibold">PMS segment breakdown</h3>
+            <p v-if="!selectedSegments.length" class="text-xs">
+              Unavailable for this date.
+            </p>
+            <p
+              v-for="s in selectedSegments"
+              :key="s.marketId"
+              class="mt-1 text-xs"
+            >
+              {{ s.market }}: {{ num(s.rooms) }} nights · {{ money(s.revenue) }}
+            </p>
+          </div>
+        </div>
+        <label class="block text-xs font-semibold"
+          >Meeting note — do not enter guest details<textarea
+            v-model="noteDraft"
+            maxlength="2000"
+            rows="3"
+            class="neu-input mt-1 w-full"
+          /></label
+        ><button
+          class="btn-primary px-3 py-2 text-xs"
+          :disabled="noteSaving"
+          @click="saveNote"
+        >
+          {{ noteSaving ? "Saving…" : "Save note" }}</button
+        ><span v-if="notes[selectedDate]" class="ml-3 text-xs"
+          >Saved {{ timestamp(notes[selectedDate].updatedAt) }}</span
+        >
+      </section>
+    </template>
+    <template v-else>
+      <div class="neu-card space-y-3 p-4">
+        <h2 class="font-semibold">Booking history</h2>
+        <p class="text-xs text-slate-500">
+          Daily refresh includes new bookings, arrivals in the next year and
+          known in-house stays. Weekly refresh also revisits 90 days of booking
+          creation. Versions cannot recover amendments before first observation.
+        </p>
+        <p class="text-sm">
+          {{ num(sync?.bookings) }} bookings · Last daily:
+          {{ sync?.lastDaily || "Unavailable" }} · Last weekly:
+          {{ sync?.lastWeekly || "Unavailable" }}
+        </p>
+        <div class="flex flex-wrap items-center gap-3">
+          <label class="text-xs"
+            >Backfill years
+            <select v-model.number="backfillYears" class="neu-input">
+              <option v-for="n in [1, 2, 3, 4, 5]" :key="n" :value="n">
+                {{ n }}
+              </option>
+            </select></label
+          ><button
+            v-for="kind in ['backfill', 'daily', 'weekly']"
+            :key="kind"
+            class="btn-flat px-3 py-2 text-xs"
+            :disabled="sync?.job.running"
+            @click="runSync(kind)"
+          >
+            Run {{ kind }}
+          </button>
+        </div>
+        <p v-if="sync?.job.running" class="text-xs">
+          {{ sync.job.kind }}: {{ sync.job.done }} /
+          {{ sync.job.total }} windows · {{ sync.job.rows }} rows
+        </p>
+        <p v-if="sync?.job.error" class="text-xs text-rose-700">
+          {{ sync.job.error }}
+        </p>
       </div>
-
-      <div class="neu-card overflow-hidden xl:col-span-7">
-        <h2 class="border-b border-slate-200 p-4 text-sm font-semibold text-app-tertiary">Recent syncs</h2>
-        <p v-if="!sync?.runs.length" class="p-4 text-xs text-slate-500">No syncs yet.</p>
-        <table v-else class="min-w-full text-xs">
-          <thead>
-            <tr>
-              <th v-for="h in ['Started', 'Kind', 'Rows', 'Result']" :key="h"
-                  class="px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">{{ h }}</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-100">
-            <tr v-for="run in sync.runs" :key="run.id">
-              <td class="whitespace-nowrap px-3 py-2 text-slate-700">{{ formatDateTime(run.started_at) }}</td>
-              <td class="px-3 py-2 text-slate-700">{{ KIND_LABEL[run.kind] }}</td>
-              <td class="px-3 py-2 tabular-nums text-slate-700">{{ run.rows.toLocaleString() }}</td>
-              <td class="px-3 py-2">
-                <span v-if="!run.finished_at" class="font-semibold text-slate-500">Running</span>
-                <span v-else-if="run.error" class="font-semibold text-rose-700" :title="run.error">Failed</span>
-                <span v-else class="font-semibold text-emerald-700">OK</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
+      <form
+        v-if="settings"
+        class="neu-card space-y-4 p-4"
+        @submit.prevent="saveSettings"
+      >
+        <h2 class="font-semibold">Review thresholds</h2>
+        <div class="flex flex-wrap gap-4 text-xs">
+          <label
+            >High occupancy %<input
+              v-model.number="settings.thresholds.occupancy"
+              type="number"
+              min="0"
+              max="100"
+              required
+              class="neu-input mt-1 block" /></label
+          ><label
+            >Weak pickup below<input
+              v-model.number="settings.thresholds.weakPickup"
+              type="number"
+              min="0"
+              required
+              class="neu-input mt-1 block" /></label
+          ><label
+            >Behind comparison by (rooms)<input
+              v-model.number="settings.thresholds.behindRooms"
+              type="number"
+              min="0"
+              required
+              class="neu-input mt-1 block"
+          /></label>
+        </div>
+        <h2 class="font-semibold">Estimated net revenue rules</h2>
+        <p class="text-xs text-slate-500">
+          Net = max(gross rate − breakfast, 0) / (1 + tax/service). A specific
+          PMS RateType overrides *; an optional package RateId overrides the
+          type rule. Rules apply by stay date. Keep a * rule covering all report
+          dates. 0.21 means 21%. Changing rules restates estimated net figures;
+          gross booking history is retained.
+        </p>
+        <div
+          v-for="(r, i) in settings.revenueRules"
+          :key="i"
+          class="flex flex-wrap items-end gap-2 text-xs"
+        >
+          <label
+            >RateType<input
+              v-model="r.rateType"
+              required
+              maxlength="40"
+              class="neu-input mt-1 block w-24" /></label
+          ><label
+            >Package RateId (optional)<input
+              v-model="r.rateId"
+              maxlength="80"
+              class="neu-input mt-1 block w-36" /></label
+          ><label
+            >From<input
+              v-model="r.from"
+              type="date"
+              required
+              class="neu-input mt-1 block" /></label
+          ><label
+            >Through<input
+              v-model="r.to"
+              type="date"
+              required
+              class="neu-input mt-1 block" /></label
+          ><label
+            >Breakfast IDR<input
+              v-model.number="r.breakfast"
+              type="number"
+              min="0"
+              required
+              class="neu-input mt-1 block w-36" /></label
+          ><label
+            >Tax/service<input
+              v-model.number="r.taxService"
+              type="number"
+              min="0"
+              max="1"
+              step=".001"
+              required
+              class="neu-input mt-1 block w-28" /></label
+          ><button
+            type="button"
+            class="p-2 underline"
+            @click="settings.revenueRules.splice(i, 1)"
+          >
+            Remove
+          </button>
+        </div>
+        <button
+          type="button"
+          class="text-xs underline"
+          @click="
+            settings.revenueRules.push({
+              rateType: '',
+              rateId: '',
+              from: today,
+              to: '2099-12-31',
+              breakfast: 0,
+              taxService: 0.21,
+            })
+          "
+        >
+          Add rate-type rule
+        </button>
+        <h2 class="font-semibold">Monthly IDR booking revenue targets</h2>
+        <p class="text-xs text-slate-500">
+          Enter targets on the same basis as the report. Foreign revenue is
+          excluded. PMS budget figures are not imported because their units are
+          unverified.
+        </p>
+        <div
+          v-for="(b, i) in settings.budgets"
+          :key="i"
+          class="flex flex-wrap items-end gap-2 text-xs"
+        >
+          <label
+            >Month<input
+              v-model="b.month"
+              type="month"
+              required
+              class="neu-input mt-1 block" /></label
+          ><label
+            >Basis<select v-model="b.basis" class="neu-input mt-1 block">
+              <option value="gross">Gross IDR</option>
+              <option value="net">Estimated net IDR</option>
+            </select></label
+          ><label
+            >Target IDR<input
+              v-model.number="b.revenue"
+              type="number"
+              min="0"
+              required
+              class="neu-input mt-1 block" /></label
+          ><button
+            type="button"
+            class="p-2 underline"
+            @click="settings.budgets.splice(i, 1)"
+          >
+            Remove
+          </button>
+        </div>
+        <button
+          type="button"
+          class="block text-xs underline"
+          @click="
+            settings.budgets.push({
+              month: today.slice(0, 7),
+              basis: 'gross',
+              revenue: 0,
+            })
+          "
+        >
+          Add monthly target</button
+        ><button
+          class="btn-primary px-3 py-2 text-xs"
+          :disabled="settingsSaving"
+        >
+          {{ settingsSaving ? "Saving…" : "Save settings" }}</button
+        ><span class="ml-3 text-xs" role="status">{{ settingsMessage }}</span>
+      </form>
+    </template>
   </div>
 </template>
-
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount, type Component } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import axios from '../plugins/axios'
-import { todayLocalDateString } from '../utils/date'
-import { alertDialog } from '../composables/useDialog'
-import { ArrowPathIcon, PresentationChartLineIcon, ArrowTrendingUpIcon, CircleStackIcon, CalendarIcon } from '@heroicons/vue/24/outline'
-import DateRangeCalendar from '../components/DateRangeCalendar.vue'
 import {
-  Chart as ChartJS, BarController, LineController, BarElement, LineElement, PointElement,
-  CategoryScale, LinearScale, Tooltip, Legend, type ChartOptions, type ChartTypeRegistry,
-} from 'chart.js'
-import { Chart } from 'vue-chartjs'
-
-ChartJS.register(BarController, LineController, BarElement, LineElement, PointElement, CategoryScale, LinearScale, Tooltip, Legend)
-
-interface HotelRow { date: string; roomsSold: number; roomCount: number; occupancy: number; revenue: number; adr: number; complimentary: number; houseUse: number; lastYear: number }
-interface SegmentRow { date: string; marketId: number; market: string; rooms: number; revenue: number }
-interface RoomTypeRow { date: string; typeId: string; rooms: number; roomCount: number }
-interface Forecast { start: string; end: string; hotel: HotelRow[]; segments: SegmentRow[]; roomTypes: RoomTypeRow[] }
-interface PaceRow {
-  date: string; lyDate: string; rooms: number; idrRooms: number; revenue: number; revenueUsd: number; netRevenue: number
-  pickupRooms: number; pickupRevenue: number; stlyRooms: number; stlyIdrRooms: number; stlyRevenue: number; stlyNetRevenue: number
-  lyFinalRooms: number | null; lyFinalRevenue: number | null
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  watch,
+} from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { Chart } from "vue-chartjs";
+import {
+  Chart as ChartJS,
+  BarController,
+  LineController,
+  BarElement,
+  LineElement,
+  PointElement,
+  CategoryScale,
+  LinearScale,
+  Tooltip,
+  Legend,
+  type ChartOptions,
+  type ChartTypeRegistry,
+} from "chart.js";
+import axios from "../plugins/axios";
+import {
+  addDays,
+  hotelToday,
+  difference,
+  ratio,
+  sumKnown,
+  monthlySummary,
+  csvText,
+  type PaceRow,
+  type Budget,
+} from "../utils/rms";
+ChartJS.register(
+  BarController,
+  LineController,
+  BarElement,
+  LineElement,
+  PointElement,
+  CategoryScale,
+  LinearScale,
+  Tooltip,
+  Legend,
+);
+interface Settings {
+  thresholds: { occupancy: number; weakPickup: number; behindRooms: number };
+  revenueRules: {
+    rateType: string;
+    rateId?: string;
+    from: string;
+    to: string;
+    breakfast: number;
+    taxService: number;
+  }[];
+  budgets: Budget[];
 }
-interface CurvePoint { lead: number; rooms: number }
-interface Curve { date: string; lyDate: string; current: CurvePoint[]; lastYear: CurvePoint[] }
-interface SyncRun { id: number; kind: string; started_at: string; finished_at: string | null; rows: number; error: string | null }
-interface SyncStatus {
-  job: { running: boolean; kind: string | null; done: number; total: number; rows: number; error: string | null }
-  bookings: number; coverageFrom: string | null; lastDaily: string | null; lastWeekly: string | null; runs: SyncRun[]
+interface Sync {
+  stale: boolean;
+  coverageFrom: string | null;
+  lastSuccessfulSync: string | null;
+  bookings: number;
+  lastDaily: string | null;
+  lastWeekly: string | null;
+  job: {
+    running: boolean;
+    kind: string;
+    done: number;
+    total: number;
+    rows: number;
+    error: string | null;
+  };
 }
-
-type TabId = 'forecast' | 'pace' | 'sync'
-const TABS: { id: TabId; name: string; icon: Component }[] = [
-  { id: 'forecast', name: 'Forecast', icon: PresentationChartLineIcon },
-  { id: 'pace', name: 'Pace', icon: ArrowTrendingUpIcon },
-  { id: 'sync', name: 'Booking data', icon: CircleStackIcon },
-]
-const KIND_LABEL: Record<string, string> = { backfill: 'Backfill', daily: 'Daily sync', weekly: 'Full resync' }
-
-const route = useRoute()
-const router = useRouter()
-const activeTab = ref<TabId>(TABS.some(t => t.id === route.query.tab) ? route.query.tab as TabId : 'forecast')
-function selectTab(id: TabId) {
-  activeTab.value = id
-  router.replace({ query: { ...route.query, tab: id === 'forecast' ? undefined : id } })
+interface Hotel {
+  date: string;
+  roomsSold: number | null;
+  roomCount: number | null;
+  occupancy: number | null;
+  revenue: number | null;
+  adr: number | null;
+  complimentary: number | null;
+  houseUse: number | null;
 }
-
-function errorMessage(err: any, fallback: string) {
-  return err?.response?.data?.message || err?.message || fallback
+interface Segment {
+  date: string;
+  marketId: number;
+  market: string;
+  rooms: number;
+  revenue: number;
 }
-
-// ---------------------------------------------------------------- formatting
-function addDays(iso: string, n: number) {
-  const d = new Date(`${iso}T00:00:00`)
-  d.setDate(d.getDate() + n)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+interface Forecast {
+  start: string;
+  end: string;
+  hotel: Hotel[];
+  segments: Segment[];
+  roomTypes: {
+    date: string;
+    typeId: string;
+    rooms: number;
+    roomCount: number;
+  }[];
+  availability: { date: string; values: Record<string, number> }[];
+  sections: Record<
+    string,
+    {
+      loaded: boolean;
+      refreshing: boolean;
+      stale: boolean;
+      fetchedAt: string | null;
+      error: string | null;
+    }
+  >;
 }
-const formatDay = (iso: string) =>
-  new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
-const shortDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
-const shortDayYear = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
-const formatDateTime = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-const millions = (v: number | null | undefined) => (v == null ? '–' : `${(v / 1e6).toLocaleString(undefined, { maximumFractionDigits: 1 })} M`)
-const thousands = (v: number | null | undefined) => (v == null ? '–' : `${Math.round(v / 1e3).toLocaleString()} K`)
-const signed = (v: number) => (v > 0 ? `+${v}` : `${v}`)
-const signClass = (v: number) => (v > 0 ? 'text-emerald-700' : v < 0 ? 'text-rose-700' : 'text-slate-500')
-const occClass = (occ: number) =>
-  occ >= 90 ? 'bg-rose-50 text-rose-700' : occ >= 75 ? 'bg-amber-50 text-amber-800' : 'bg-slate-100 text-slate-700'
-function cellClass(rooms: number | undefined, capacity: number) {
-  if (rooms == null || !capacity) return 'text-slate-400'
-  const ratio = rooms / capacity
-  return ratio >= 1 ? 'bg-rose-50 font-semibold text-rose-700' : ratio >= 0.85 ? 'bg-amber-50 text-amber-800' : 'text-slate-600'
+interface Filters {
+  start: string;
+  end: string;
+  roomType: string;
+  marketId: string;
+  pickupDays: number;
+  comparison: string;
+  comparisonStart: string;
 }
-
-const roomLabels = ref<Record<string, string>>({})
-const roomLabel = (code: string) => roomLabels.value[code] || code
-const dims = reactive<{ roomTypes: string[]; markets: { id: number; name: string }[] }>({ roomTypes: [], markets: [] })
-
-async function loadDimensions() {
-  try {
-    const res = await axios.get('/api/rms/room-types')
-    roomLabels.value = res.data.labels
-    dims.roomTypes = res.data.roomTypes
-    dims.markets = res.data.markets
-  } catch {
-    // Filters just stay at "All"; the tables report their own errors.
+interface CurvePoint {
+  lead: number;
+  rooms: number | null;
+  quality: string;
+}
+interface Curve {
+  date: string;
+  lyDate: string;
+  todayLead: number;
+  maxLead: number;
+  current: CurvePoint[];
+  lastYear: CurvePoint[];
+}
+const today = hotelToday(),
+  route = useRoute(),
+  router = useRouter();
+const tabs = [
+  { id: "overview", label: "Overview" },
+  { id: "pace", label: "Pace" },
+  { id: "forecast", label: "PMS forecast" },
+  { id: "data", label: "Data & settings" },
+];
+const query = (k: string, f = "") =>
+  typeof route.query[k] === "string" ? String(route.query[k]) : f;
+const tab = ref(
+    tabs.some((t) => t.id === query("tab")) ? query("tab") : "overview",
+  ),
+  basis = ref<"gross" | "net">(query("basis") === "net" ? "net" : "gross");
+const filters = reactive<Filters>({
+  start: query("start", today),
+  end: query("end", addDays(today, 29)),
+  roomType: query("roomType"),
+  marketId: query("marketId"),
+  pickupDays: Number(query("pickupDays", "7")),
+  comparison: query("comparison", "weekday"),
+  comparisonStart: query("comparisonStart"),
+});
+const reportSync = ref<Sync | null>(null);
+const loaded = ref<Filters | null>(null),
+  rows = ref<PaceRow[]>([]),
+  forecast = ref<Forecast | null>(null);
+const dims = reactive<{
+  roomTypes: string[];
+  markets: { id: number; name: string }[];
+  labels: Record<string, string>;
+}>({ roomTypes: [], markets: [], labels: {} });
+const sync = ref<Sync | null>(null),
+  settings = ref<Settings | null>(null),
+  appliedSettings = ref<Settings | null>(null);
+const notes = ref<Record<string, { text: string; updatedAt: string }>>({}),
+  bar = ref<{
+    byDate: Record<string, Record<string, string>>;
+    updatedAt: string | null;
+  }>({ byDate: {}, updatedAt: null });
+const loading = ref(false),
+  error = ref(""),
+  onlyAttention = ref(true),
+  chartView = ref("monthly"),
+  settingsSaving = ref(false),
+  settingsMessage = ref(""),
+  backfillYears = ref(3);
+const selectedDate = ref(""),
+  curve = ref<Curve | null>(null),
+  curveLoading = ref(false),
+  curveError = ref(""),
+  noteDraft = ref(""),
+  noteSaving = ref(false),
+  detailElement = ref<HTMLElement | null>(null);
+let requestId = 0,
+  curveId = 0,
+  forecastTimer: ReturnType<typeof setTimeout> | undefined,
+  syncTimer: ReturnType<typeof setTimeout> | undefined,
+  disposed = false;
+const label = (code: string) => dims.labels[code] || code,
+  marketName = (id: string) =>
+    dims.markets.find((m) => String(m.id) === id)?.name || id;
+const num = (v: number | null | undefined) =>
+  v == null
+    ? "Unavailable"
+    : v.toLocaleString("en-US", { maximumFractionDigits: 1 });
+const money = (v: number | null | undefined) =>
+  v == null ? "Unavailable" : `IDR ${Math.round(v).toLocaleString("en-US")}`;
+const signed = (v: number | null) =>
+    v == null ? "Unavailable" : `${v > 0 ? "+" : ""}${num(v)}`,
+  percent = (v: number | null) =>
+    v == null ? "Unavailable" : `${v.toFixed(1)}%`;
+const timestamp = (v: string | null | undefined) =>
+  v
+    ? new Date(v).toLocaleString("en-GB", {
+        timeZone: "Asia/Makassar",
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
+    : "Unavailable";
+const dayLabel = (v: string) =>
+  new Date(`${v}T00:00:00Z`).toLocaleDateString("en-GB", {
+    timeZone: "UTC",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+const message = (e: any) =>
+  e?.response?.data?.message || e?.message || "Request failed";
+const basisLabel = computed(() =>
+  basis.value === "gross"
+    ? "Gross quoted room-rate revenue (IDR only)"
+    : "Estimated room-rate revenue net of breakfast and tax/service (IDR only)",
+);
+const revenue = (r: PaceRow) =>
+    basis.value === "gross" ? r.revenue : r.netRevenue,
+  currentRooms = (r: PaceRow) =>
+    r.currentQuality === "unavailable" ? null : r.rooms;
+const dirty = computed(
+  () =>
+    loaded.value && JSON.stringify(filters) !== JSON.stringify(loaded.value),
+);
+const comparisonLabel = computed(() =>
+  loaded.value?.comparison === "custom"
+    ? `Matched period from ${loaded.value.comparisonStart}`
+    : loaded.value?.comparison === "calendar"
+      ? "Same calendar date last year"
+      : "Same weekday last year",
+);
+const forecastBusy = computed(() =>
+  Object.values(forecast.value?.sections || {}).some((s) => s.refreshing),
+);
+function saveUrl() {
+  router.replace({
+    query: { ...(loaded.value || filters), tab: tab.value, basis: basis.value },
+  });
+}
+function selectTab(id: string) {
+  tab.value = id;
+  saveUrl();
+  if (id !== "data" && !loaded.value && !loading.value) void loadAll();
+}
+watch(basis, saveUrl);
+function thisMonth() {
+  filters.start = `${today.slice(0, 7)}-01`;
+  filters.end = addDays(
+    new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 1))
+      .toISOString()
+      .slice(0, 10),
+    -1,
+  );
+  void loadAll();
+}
+async function loadAll() {
+  if (
+    !filters.start ||
+    !filters.end ||
+    filters.end < filters.start ||
+    (Date.parse(filters.end) - Date.parse(filters.start)) / 86400000 >= 366
+  ) {
+    error.value = "Choose a valid range of at most 366 days.";
+    return;
   }
-}
-
-// ------------------------------------------------------------------ forecast
-const fc = reactive({ start: todayLocalDateString(), days: 14, loading: false, error: '' })
-const forecast = ref<Forecast | null>(null)
-
-async function loadForecast() {
-  fc.loading = true
-  fc.error = ''
+  if (filters.comparison === "custom" && !filters.comparisonStart) {
+    error.value = "Choose a comparison start date.";
+    return;
+  }
+  const id = ++requestId,
+    f = { ...filters };
+  loading.value = true;
+  error.value = "";
+  clearTimeout(forecastTimer);
   try {
-    const res = await axios.get('/api/rms/forecast', { params: { start: fc.start, days: fc.days }, timeout: 120000 })
-    forecast.value = res.data
-  } catch (err) {
-    fc.error = errorMessage(err, 'Could not load the forecast from the PMS')
+    const r = await axios.get("/api/rms/pace", { params: f, timeout: 120000 });
+    if (disposed || id !== requestId) return;
+    rows.value = r.data.rows;
+    loaded.value = f;
+    sync.value = r.data.sync;
+    reportSync.value = r.data.sync;
+    settings.value = r.data.settings;
+    appliedSettings.value = JSON.parse(JSON.stringify(r.data.settings));
+    notes.value = r.data.notes;
+    bar.value = r.data.bar;
+    closeDay();
+    forecast.value = null;
+    saveUrl();
+    void loadForecast(id, f);
+  } catch (e) {
+    if (id === requestId) error.value = message(e);
   } finally {
-    fc.loading = false
+    if (id === requestId) loading.value = false;
   }
 }
-
-const forecastTiles = computed(() => {
-  const rows = forecast.value?.hotel ?? []
-  const sold = rows.reduce((s, r) => s + (r.roomsSold || 0), 0)
-  const capacity = rows.reduce((s, r) => s + (r.roomCount || 0), 0)
-  const revenue = rows.reduce((s, r) => s + (r.revenue || 0), 0)
+async function loadForecast(id: number, f: Filters, refresh = false) {
+  clearTimeout(forecastTimer);
+  try {
+    const days = Math.min(
+      90,
+      Math.round((Date.parse(f.end) - Date.parse(f.start)) / 86400000) + 1,
+    );
+    const r = await axios.get("/api/rms/forecast", {
+      params: { start: f.start, days, refresh: refresh ? "1" : undefined },
+    });
+    if (disposed || id !== requestId) return;
+    forecast.value = r.data;
+    if (forecastBusy.value)
+      forecastTimer = setTimeout(() => loadForecast(id, f), 2000);
+  } catch (e) {
+    if (id === requestId && !disposed) error.value = message(e);
+  }
+}
+function refreshForecast() {
+  if (loaded.value) void loadForecast(requestId, loaded.value, true);
+}
+async function pollSync() {
+  try {
+    const r = await axios.get("/api/rms/sync");
+    if (disposed) return;
+    sync.value = r.data;
+  } catch (e) {
+    if (!disposed) error.value = message(e);
+  }
+  if (!disposed)
+    syncTimer = setTimeout(pollSync, sync.value?.job.running ? 2000 : 30000);
+}
+async function runSync(kind: string) {
+  try {
+    const r = await axios.post("/api/rms/sync", {
+      kind,
+      backfillDays: backfillYears.value * 365,
+    });
+    sync.value = r.data;
+    clearTimeout(syncTimer);
+    void pollSync();
+  } catch (e) {
+    error.value = message(e);
+  }
+}
+async function saveSettings() {
+  settingsSaving.value = true;
+  settingsMessage.value = "";
+  try {
+    const r = await axios.put("/api/rms/settings", settings.value);
+    settings.value = r.data.settings;
+    settingsMessage.value = "Saved. Apply the report to recalculate.";
+  } catch (e) {
+    error.value = message(e);
+  } finally {
+    settingsSaving.value = false;
+  }
+}
+function closeDay() {
+  selectedDate.value = "";
+  curve.value = null;
+  ++curveId;
+}
+async function openDay(day: string) {
+  const id = ++curveId;
+  selectedDate.value = day;
+  noteDraft.value = notes.value[day]?.text || "";
+  curve.value = null;
+  curveLoading.value = true;
+  curveError.value = "";
+  await nextTick();
+  detailElement.value?.scrollIntoView({ behavior: "smooth", block: "start" });
+  try {
+    const r = await axios.get("/api/rms/pace/curve", {
+      params: { ...loaded.value, date: day, maxLead: 180 },
+      timeout: 120000,
+    });
+    if (id === curveId && !disposed) curve.value = r.data;
+  } catch (e) {
+    if (id === curveId) curveError.value = message(e);
+  } finally {
+    if (id === curveId) curveLoading.value = false;
+  }
+}
+async function saveNote() {
+  const day = selectedDate.value,
+    text = noteDraft.value;
+  noteSaving.value = true;
+  try {
+    const r = await axios.put(`/api/rms/notes/${day}`, { text });
+    notes.value[day] = r.data.note;
+  } catch (e) {
+    error.value = message(e);
+  } finally {
+    noteSaving.value = false;
+  }
+}
+const idrCoverage = computed(() => {
+  const r = ratio(
+    rows.value.reduce((s, r) => s + r.idrRooms, 0),
+    rows.value.reduce((s, r) => s + r.rooms, 0),
+  );
+  return r == null ? null : r * 100;
+});
+const hotelMap = computed(() =>
+    Object.fromEntries((forecast.value?.hotel || []).map((r) => [r.date, r])),
+  ),
+  availabilityMap = computed(() =>
+    Object.fromEntries(
+      (forecast.value?.availability || []).map((r) => [r.date, r.values]),
+    ),
+  );
+const capacities = computed(() => {
+  const m: Record<string, number> = {};
+  if (loaded.value?.roomType) {
+    for (const r of forecast.value?.roomTypes || [])
+      if (r.typeId === loaded.value.roomType) m[r.date] = r.roomCount;
+  } else
+    for (const r of forecast.value?.hotel || [])
+      if (r.roomCount != null) m[r.date] = r.roomCount;
+  return m;
+});
+const attention = computed(() =>
+  rows.value.map((r) => {
+    const h = hotelMap.value[r.date],
+      a = availabilityMap.value[r.date],
+      otb = currentRooms(r),
+      occ = ratio(otb, capacities.value[r.date] ?? null),
+      occupancy = occ == null ? null : occ * 100,
+      gap = difference(otb, r.stlyRooms),
+      t = appliedSettings.value?.thresholds,
+      reasons: string[] = [];
+    if (otb == null) reasons.push("Booking coverage unavailable");
+    if (reportSync.value?.stale) reasons.push("Stale booking data");
+    if (reportSync.value?.lastSuccessfulSync !== sync.value?.lastSuccessfulSync)
+      reasons.push("Booking data changed — apply again");
+    if (t && occupancy != null && occupancy >= t.occupancy)
+      reasons.push("High occupancy");
+    if (
+      t &&
+      gap != null &&
+      gap <= -t.behindRooms &&
+      r.pickupRooms != null &&
+      r.pickupRooms < t.weakPickup
+    )
+      reasons.push("Behind pace; weak pickup");
+    const available = a?.[loaded.value?.roomType || "RoomAvailable"] ?? null;
+    if (available != null && available < 0)
+      reasons.push("Negative physical availability");
+    const reconciliation =
+      !loaded.value?.roomType && !loaded.value?.marketId && h
+        ? difference(otb, h.roomsSold)
+        : null;
+    if (reconciliation != null && reconciliation !== 0)
+      reasons.push("Check booking/PMS room difference");
+    if (r.comparisonQuality === "unavailable")
+      reasons.push("Comparison unavailable");
+    return {
+      ...r,
+      otb,
+      occupancy,
+      gap,
+      available,
+      reconciliation,
+      reasons,
+      bar: Object.entries(bar.value.byDate[r.date] || {})
+        .map(([k, v]) => `${k}: ${v}`)
+        .join("; "),
+    };
+  }),
+);
+const attentionRows = computed(() =>
+  attention.value.filter((r) => !onlyAttention.value || r.reasons.length),
+);
+const months = computed(() =>
+  monthlySummary(
+    rows.value,
+    basis.value,
+    appliedSettings.value?.budgets || [],
+    loaded.value?.marketId ? {} : capacities.value,
+    today,
+    !!loaded.value?.roomType || !!loaded.value?.marketId,
+  ),
+);
+const tiles = computed(() => {
+  const known =
+    rows.value.length &&
+    rows.value.every((r) => r.currentQuality !== "unavailable");
   return [
-    { label: 'Avg occupancy', value: capacity ? `${((sold / capacity) * 100).toFixed(1)}%` : '–' },
-    { label: 'Room nights', value: sold.toLocaleString() },
-    { label: 'Room revenue', value: millions(revenue) },
-    { label: 'ADR', value: sold ? thousands(revenue / sold) : '–' },
-  ]
-})
-
-const segmentTotals = computed(() => {
-  const totals = new Map<string, { market: string; rooms: number; revenue: number }>()
-  for (const s of forecast.value?.segments ?? []) {
-    const t = totals.get(s.market) ?? { market: s.market, rooms: 0, revenue: 0 }
-    t.rooms += s.rooms || 0
-    t.revenue += s.revenue || 0
-    totals.set(s.market, t)
-  }
-  const all = [...totals.values()].filter(t => t.rooms || t.revenue)
-  const sum = all.reduce((s, t) => s + t.rooms, 0)
-  return all.map(t => ({ ...t, share: sum ? (t.rooms / sum) * 100 : 0 })).sort((a, b) => b.rooms - a.rooms)
-})
-
-const roomMatrix = computed(() => {
-  const rows = forecast.value?.roomTypes ?? []
-  const dates = [...new Set(rows.map(r => r.date))].sort()
-  const types = new Map<string, { typeId: string; roomCount: number; cells: Record<string, number> }>()
-  for (const r of rows) {
-    const t = types.get(r.typeId) ?? { typeId: r.typeId, roomCount: r.roomCount, cells: {} }
-    t.cells[r.date] = r.rooms
-    types.set(r.typeId, t)
-  }
-  return { dates, types: [...types.values()].sort((a, b) => b.roomCount - a.roomCount) }
-})
-
-// ---------------------------------------------------------------------- pace
-const pc = reactive({
-  start: todayLocalDateString(), end: addDays(todayLocalDateString(), 29),
-  roomType: '', marketId: '', pickupDays: 7, loading: false, loaded: false, error: '',
-})
-const paceRows = ref<PaceRow[]>([])
-const loadedPickupDays = ref(7)
-const curve = ref<Curve | null>(null)
-
-const dateMenuOpen = ref(false)
-const dateMenuRef = ref<HTMLElement | null>(null)
-function onDateMenuClickOutside(e: MouseEvent) {
-  if (dateMenuOpen.value && dateMenuRef.value && !dateMenuRef.value.contains(e.target as Node)) dateMenuOpen.value = false
-}
-function applyDatePreset(months: number) {
-  const today = new Date(`${todayLocalDateString()}T00:00:00`)
-  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  pc.start = iso(new Date(today.getFullYear(), today.getMonth(), 1))
-  pc.end = iso(new Date(today.getFullYear(), today.getMonth() + months, 0)) // day 0 = last day of the prior month
-  dateMenuOpen.value = false
-}
-
-async function loadPace() {
-  pc.loading = true
-  pc.error = ''
-  try {
-    const res = await axios.get('/api/rms/pace', {
-      params: { start: pc.start, end: pc.end, roomType: pc.roomType || undefined, marketId: pc.marketId || undefined, pickupDays: pc.pickupDays },
-    })
-    paceRows.value = res.data.rows
-    loadedPickupDays.value = pc.pickupDays
-    sync.value = res.data.sync
-    if (curve.value) loadCurve(curve.value.date)
-  } catch (err) {
-    pc.error = errorMessage(err, 'Could not load pace')
-  } finally {
-    pc.loading = false
-    pc.loaded = true
-  }
-}
-
-async function loadCurve(date: string) {
-  try {
-    const res = await axios.get('/api/rms/pace/curve', {
-      params: { date, maxLead: 120, roomType: pc.roomType || undefined, marketId: pc.marketId || undefined },
-    })
-    curve.value = res.data
-  } catch (err) {
-    pc.error = errorMessage(err, 'Could not load the booking curve')
-  }
-}
-
-const usdBookings = computed(() => paceRows.value.some(r => r.revenueUsd))
-const paceTotals = computed(() => {
-  const rows = paceRows.value
-  const sum = (f: (r: PaceRow) => number) => rows.reduce((s, r) => s + f(r), 0)
-  const finals = rows.filter(r => r.lyFinalRooms != null)
-  return {
-    rooms: sum(r => r.rooms), revenue: sum(r => r.revenue), pickup: sum(r => r.pickupRooms), stly: sum(r => r.stlyRooms),
-    lyFinal: finals.length === rows.length ? sum(r => r.lyFinalRooms ?? 0) : null,
-  }
-})
-
-// Room nights + ADR combo chart, bucketed from the same paceRows.
-const CHART_VIEWS = ['daily', 'weekly', 'monthly'] as const
-type ChartView = (typeof CHART_VIEWS)[number]
-const chartView = ref<ChartView>('monthly')
-
-function bucketKey(date: string, view: ChartView) {
-  if (view === 'daily') return date
-  if (view === 'monthly') return date.slice(0, 7)
-  const d = new Date(`${date}T00:00:00`)
-  d.setDate(d.getDate() - ((d.getDay() + 6) % 7)) // back to that week's Monday
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-function bucketLabel(key: string, view: ChartView) {
-  if (view === 'monthly') {
-    const [y, m] = key.split('-').map(Number)
-    return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
-  }
-  return new Date(`${key}T00:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
-}
-
-const chartBuckets = computed(() => {
-  const map = new Map<string, {
-    rooms: number; idrRooms: number; revenue: number; netRevenue: number
-    stlyRooms: number; stlyIdrRooms: number; stlyRevenue: number; stlyNetRevenue: number
-  }>()
-  for (const r of paceRows.value) {
-    const key = bucketKey(r.date, chartView.value)
-    const b = map.get(key) ?? { rooms: 0, idrRooms: 0, revenue: 0, netRevenue: 0, stlyRooms: 0, stlyIdrRooms: 0, stlyRevenue: 0, stlyNetRevenue: 0 }
-    b.rooms += r.rooms
-    b.idrRooms += r.idrRooms
-    b.stlyIdrRooms += r.stlyIdrRooms
-    b.revenue += r.revenue
-    b.netRevenue += r.netRevenue
-    b.stlyRooms += r.stlyRooms
-    b.stlyRevenue += r.stlyRevenue
-    b.stlyNetRevenue += r.stlyNetRevenue
-    map.set(key, b)
-  }
-  return [...map.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, v]) => ({
-      label: bucketLabel(key, chartView.value),
-      rooms: v.rooms, stlyRooms: v.stlyRooms,
-      revenue: v.revenue, stlyRevenue: v.stlyRevenue,
-      netRevenue: v.netRevenue, stlyNetRevenue: v.stlyNetRevenue,
-      idrRooms: v.idrRooms, stlyIdrRooms: v.stlyIdrRooms,
-      // ADR = net of breakfast and tax/service, not the raw rate - revenue above stays gross.
-      // Divided by IDR-priced nights only: USD bookings add rooms but no IDR revenue.
-      adr: v.idrRooms ? v.netRevenue / v.idrRooms : 0,
-      stlyAdr: v.stlyIdrRooms ? v.stlyNetRevenue / v.stlyIdrRooms : 0,
-    }))
-})
-
-function pctDiff(cur: number, prev: number): number | null {
-  return prev ? ((cur - prev) / prev) * 100 : null
-}
-const pct = (v: number | null) => (v == null ? '–' : `${v > 0 ? '+' : ''}${v.toFixed(2)}%`)
-
-const chartTable = computed(() => {
-  const b = chartBuckets.value
-  const totalRooms = b.reduce((s, r) => s + r.rooms, 0)
-  const totalStlyRooms = b.reduce((s, r) => s + r.stlyRooms, 0)
-  const totalRevenue = b.reduce((s, r) => s + r.revenue, 0)
-  const totalStlyRevenue = b.reduce((s, r) => s + r.stlyRevenue, 0)
-  const totalNetRevenue = b.reduce((s, r) => s + r.netRevenue, 0)
-  const totalStlyNetRevenue = b.reduce((s, r) => s + r.stlyNetRevenue, 0)
-  const totalIdrRooms = b.reduce((s, r) => s + r.idrRooms, 0)
-  const totalStlyIdrRooms = b.reduce((s, r) => s + r.stlyIdrRooms, 0)
-  const totalAdr = totalIdrRooms ? totalNetRevenue / totalIdrRooms : 0
-  const totalStlyAdr = totalStlyIdrRooms ? totalStlyNetRevenue / totalStlyIdrRooms : 0
-  return {
-    buckets: b,
-    totals: {
-      rooms: totalRooms, stlyRooms: totalStlyRooms, roomsDiff: pctDiff(totalRooms, totalStlyRooms),
-      revenue: totalRevenue, stlyRevenue: totalStlyRevenue, revenueDiff: pctDiff(totalRevenue, totalStlyRevenue),
-      adr: totalAdr, stlyAdr: totalStlyAdr, adrDiff: pctDiff(totalAdr, totalStlyAdr),
+    {
+      label: "OTB room nights",
+      value: num(known ? rows.value.reduce((s, r) => s + r.rooms, 0) : null),
     },
+    {
+      label:
+        basis.value === "gross"
+          ? "Gross IDR revenue"
+          : "Estimated net IDR revenue",
+      value: money(
+        known ? rows.value.reduce((s, r) => s + revenue(r), 0) : null,
+      ),
+    },
+    {
+      label: `Net pickup (${loaded.value?.pickupDays || 7}d)`,
+      value: signed(
+        rows.value.length
+          ? sumKnown(rows.value.map((r) => r.pickupRooms))
+          : null,
+      ),
+    },
+    {
+      label: "IDR ADR coverage",
+      value: percent(known ? idrCoverage.value : null),
+    },
+  ];
+});
+const segmentTotals = computed(() => {
+  const m = new Map<
+    string,
+    { market: string; rooms: number; revenue: number }
+  >();
+  for (const s of forecast.value?.segments || []) {
+    const r = m.get(s.market) || { market: s.market, rooms: 0, revenue: 0 };
+    r.rooms += s.rooms || 0;
+    r.revenue += s.revenue || 0;
+    m.set(s.market, r);
   }
-})
-
-// Monochrome, matching the app's slate palette (tailwind.config.js) and the
-// existing booking-curve chart's convention: solid dark = this year, dashed
-// gray = last year.
-const CHART_COLORS = { bar: '#334155', barLy: '#cbd5e1', line: '#0f172a', lineLy: '#94a3b8', grid: '#e2e8f0', tick: '#64748b' }
-
+  return [...m.values()].sort((a, b) => b.rooms - a.rooms);
+});
+const matrix = computed(() => {
+  const types = new Map<
+    string,
+    { typeId: string; capacity: number; values: Record<string, number> }
+  >();
+  for (const r of forecast.value?.roomTypes || []) {
+    const t = types.get(r.typeId) || {
+      typeId: r.typeId,
+      capacity: r.roomCount,
+      values: {},
+    };
+    t.values[r.date] = r.rooms;
+    types.set(r.typeId, t);
+  }
+  return {
+    dates: [
+      ...new Set((forecast.value?.roomTypes || []).map((r) => r.date)),
+    ].sort(),
+    types: [...types.values()],
+  };
+});
+const selectedAvailability = computed(() =>
+    Object.entries(availabilityMap.value[selectedDate.value] || {})
+      .filter(([k]) => k in dims.labels || dims.roomTypes.includes(k))
+      .map(([type, rooms]) => ({ type, rooms })),
+  ),
+  selectedSegments = computed(() =>
+    (forecast.value?.segments || []).filter(
+      (r) => r.date === selectedDate.value,
+    ),
+  );
+const buckets = computed(() => {
+  const m = new Map<string, PaceRow[]>();
+  for (const r of rows.value) {
+    let key = r.date;
+    if (chartView.value === "monthly") key = key.slice(0, 7);
+    if (chartView.value === "weekly")
+      key = addDays(key, -((new Date(`${key}T00:00:00Z`).getUTCDay() + 6) % 7));
+    m.set(key, [...(m.get(key) || []), r]);
+  }
+  return [...m].map(([key, rs]) => ({
+    key,
+    rooms: sumKnown(rs.map(currentRooms)),
+    comparison: sumKnown(rs.map((r) => r.stlyRooms)),
+    adr: ratio(
+      sumKnown(rs.map((r) => (currentRooms(r) == null ? null : revenue(r)))),
+      rs.reduce((s, r) => s + r.idrRooms, 0),
+    ),
+    comparisonAdr: ratio(
+      sumKnown(
+        rs.map((r) =>
+          basis.value === "gross" ? r.stlyRevenue : r.stlyNetRevenue,
+        ),
+      ),
+      sumKnown(rs.map((r) => r.stlyIdrRooms)),
+    ),
+  }));
+});
 const chartData = computed(() => ({
-  labels: chartBuckets.value.map(b => b.label),
+  labels: buckets.value.map((b) => b.key),
   datasets: [
-    { type: 'bar' as const, label: 'Room nights', data: chartBuckets.value.map(b => b.rooms),
-      backgroundColor: CHART_COLORS.bar, yAxisID: 'rooms', order: 2 },
-    { type: 'bar' as const, label: 'Room nights (Last year)', data: chartBuckets.value.map(b => b.stlyRooms),
-      backgroundColor: CHART_COLORS.barLy, yAxisID: 'rooms', order: 2 },
-    { type: 'line' as const, label: 'Average daily rate IDR', data: chartBuckets.value.map(b => b.adr),
-      borderColor: CHART_COLORS.line, backgroundColor: CHART_COLORS.line, pointRadius: 3, tension: 0.3, yAxisID: 'adr', order: 1 },
-    { type: 'line' as const, label: 'Average daily rate IDR (Last year)', data: chartBuckets.value.map(b => b.stlyAdr),
-      borderColor: CHART_COLORS.lineLy, backgroundColor: CHART_COLORS.lineLy, borderDash: [5, 4], pointRadius: 3, tension: 0.3, yAxisID: 'adr', order: 1 },
+    {
+      type: "bar" as const,
+      label: "OTB room nights",
+      data: buckets.value.map((b) => b.rooms),
+      backgroundColor: "#334155",
+      yAxisID: "rooms",
+      order: 2,
+    },
+    {
+      type: "bar" as const,
+      label: "Comparison nights",
+      data: buckets.value.map((b) => b.comparison),
+      backgroundColor: "#cbd5e1",
+      yAxisID: "rooms",
+      order: 2,
+    },
+    {
+      type: "line" as const,
+      label: "IDR ADR",
+      data: buckets.value.map((b) => b.adr),
+      borderColor: "#0f766e",
+      yAxisID: "adr",
+      order: 1,
+    },
+    {
+      type: "line" as const,
+      label: "Comparison ADR",
+      data: buckets.value.map((b) => b.comparisonAdr),
+      borderColor: "#64748b",
+      borderDash: [4, 4],
+      yAxisID: "adr",
+      order: 1,
+    },
   ],
-}))
-
+}));
 const chartOptions: ChartOptions<keyof ChartTypeRegistry> = {
   responsive: true,
   maintainAspectRatio: false,
-  interaction: { mode: 'index' as const, intersect: false },
-  plugins: {
-    legend: { position: 'top' as const, labels: { usePointStyle: true, boxWidth: 8, font: { size: 11 }, color: CHART_COLORS.tick } },
-    tooltip: {
-      backgroundColor: '#0f172a', padding: 8, titleFont: { size: 11 }, bodyFont: { size: 11 },
-      callbacks: {
-        label: (ctx: any) =>
-          ` ${ctx.dataset.label}: ${ctx.dataset.yAxisID === 'adr' ? Math.round(ctx.parsed.y).toLocaleString() : ctx.parsed.y.toLocaleString()}`,
-      },
+  interaction: { mode: "index", intersect: false },
+  scales: {
+    rooms: {
+      position: "left",
+      beginAtZero: true,
+      title: { display: true, text: "Room nights" },
+    },
+    adr: {
+      position: "right",
+      grid: { drawOnChartArea: false },
+      title: { display: true, text: "ADR (IDR)" },
     },
   },
-  scales: {
-    x: { grid: { display: false }, ticks: { color: CHART_COLORS.tick, font: { size: 10 } } },
-    rooms: { type: 'linear' as const, position: 'left' as const, beginAtZero: true,
-      title: { display: true, text: 'Room nights', font: { size: 11 }, color: CHART_COLORS.tick },
-      grid: { color: CHART_COLORS.grid }, ticks: { color: CHART_COLORS.tick, font: { size: 10 } } },
-    adr: { type: 'linear' as const, position: 'right' as const, beginAtZero: false,
-      title: { display: true, text: 'Average daily rate in IDR', font: { size: 11 }, color: CHART_COLORS.tick },
-      grid: { drawOnChartArea: false }, ticks: { color: CHART_COLORS.tick, font: { size: 10 }, callback: (v: string | number) => v.toLocaleString() } },
+};
+const curveData = computed(() => {
+  const c = curve.value,
+    leads = Array.from(
+      { length: (c?.maxLead || 180) + 1 },
+      (_, i) => (c?.maxLead || 180) - i,
+    ),
+    point = (pts: CurvePoint[], lead: number) =>
+      pts.find((p) => p.lead === lead)?.rooms ?? null;
+  return {
+    labels: leads.map((l) => (l === c?.todayLead ? `${l} · Today` : String(l))),
+    datasets: [
+      {
+        label: "Current observed / reconstructed",
+        data: leads.map((l) => point(c?.current || [], l)),
+        borderColor: "#0f766e",
+        pointRadius: 0,
+        spanGaps: false,
+      },
+      {
+        label: "Comparison observed / reconstructed",
+        data: leads.map((l) => point(c?.lastYear || [], l)),
+        borderColor: "#94a3b8",
+        borderDash: [4, 4],
+        pointRadius: 0,
+        spanGaps: false,
+      },
+    ],
+  };
+});
+const todayMarker = {
+  id: "rms-today",
+  afterDraw(chart: ChartJS) {
+    const c = curve.value;
+    if (!c || c.todayLead < 0 || c.todayLead > c.maxLead) return;
+    const x = chart.scales.x.getPixelForValue(c.maxLead - c.todayLead);
+    const { ctx, chartArea } = chart;
+    ctx.save();
+    ctx.strokeStyle = "#0f766e";
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(x, chartArea.top);
+    ctx.lineTo(x, chartArea.bottom);
+    ctx.stroke();
+    ctx.fillStyle = "#0f766e";
+    ctx.textAlign = x > chartArea.right - 50 ? "right" : "left";
+    ctx.fillText("Today", x, chartArea.top + 12);
+    ctx.restore();
   },
+};
+const curveOptions: ChartOptions<keyof ChartTypeRegistry> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  interaction: { mode: "index", intersect: false },
+  scales: {
+    x: {
+      title: { display: true, text: "Days before stay date" },
+      ticks: { maxTicksLimit: 10 },
+    },
+    y: { beginAtZero: true, title: { display: true, text: "Room nights" } },
+  },
+};
+function exportCsv() {
+  const out: unknown[][] = [
+    [
+      "Stay date",
+      "Comparison date",
+      "Room type",
+      "Market",
+      "Revenue basis",
+      "OTB rooms",
+      "IDR revenue",
+      "IDR ADR",
+      "New rooms",
+      "Cancelled rooms",
+      "Amended rooms",
+      "Net pickup",
+      "Comparison rooms",
+      "Current quality",
+      "Comparison quality",
+      "Pickup quality",
+      "Last successful sync",
+      "Note",
+    ],
+  ];
+  for (const r of rows.value)
+    out.push([
+      r.date,
+      r.lyDate,
+      loaded.value?.roomType || "All",
+      loaded.value?.marketId || "All",
+      basisLabel.value,
+      currentRooms(r),
+      currentRooms(r) == null ? null : revenue(r),
+      currentRooms(r) == null ? null : ratio(revenue(r), r.idrRooms),
+      r.newRooms,
+      r.cancelledRooms,
+      r.amendedRooms,
+      r.pickupRooms,
+      r.stlyRooms,
+      r.currentQuality,
+      r.comparisonQuality,
+      r.pickupQuality,
+      reportSync.value?.lastSuccessfulSync,
+      notes.value[r.date]?.text || "",
+    ]);
+  const url = URL.createObjectURL(
+      new Blob([csvText(out)], { type: "text/csv;charset=utf-8" }),
+    ),
+    a = document.createElement("a");
+  a.href = url;
+  a.download = `rms-${loaded.value?.start}-${loaded.value?.end}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-
-const CW = 480, CH = 240, PAD_L = 36, PAD_R = 8, PAD_T = 8, PAD_B = 22
-const curveChart = computed(() => {
-  const c = curve.value
-  if (!c) return { cur: '', ly: '', yTicks: [], xTicks: [] }
-  const maxLead = Math.max(...c.current.map(p => p.lead))
-  const maxRooms = Math.max(1, ...c.current.map(p => p.rooms), ...c.lastYear.map(p => p.rooms))
-  const step = Math.max(1, Math.ceil(maxRooms / 4 / 10) * 10)
-  const top = Math.ceil(maxRooms / step) * step
-  const x = (lead: number) => PAD_L + ((maxLead - lead) / maxLead) * (CW - PAD_L - PAD_R)
-  const y = (v: number) => PAD_T + (1 - v / top) * (CH - PAD_T - PAD_B)
-  const line = (pts: CurvePoint[]) => pts.map(p => `${x(p.lead).toFixed(1)},${y(p.rooms).toFixed(1)}`).join(' ')
-  const yTicks = Array.from({ length: Math.floor(top / step) + 1 }, (_, i) => ({ v: i * step, y: y(i * step) }))
-  const xTicks = [maxLead, 90, 60, 30, 14, 0].filter(l => l <= maxLead).map(l => ({ v: l, x: x(l) }))
-  return { cur: line(c.current), ly: line(c.lastYear), yTicks, xTicks }
-})
-
-// ---------------------------------------------------------------------- sync
-const sync = ref<SyncStatus | null>(null)
-const backfillYears = ref(3)
-let syncTimer: ReturnType<typeof setTimeout> | undefined
-
-async function loadSync() {
-  clearTimeout(syncTimer)
+onMounted(async () => {
+  void pollSync();
   try {
-    const res = await axios.get('/api/rms/sync')
-    const wasRunning = sync.value?.job.running
-    sync.value = res.data
-    if (wasRunning && !res.data.job.running) loadDimensions()
-  } catch {
-    // Keep the last status; it's re-polled below.
+    const [d, s] = await Promise.all([
+      axios.get("/api/rms/room-types"),
+      axios.get("/api/rms/settings"),
+    ]);
+    if (disposed) return;
+    Object.assign(dims, d.data);
+    settings.value = s.data.settings;
+    appliedSettings.value = JSON.parse(JSON.stringify(s.data.settings));
+  } catch (e) {
+    error.value = message(e);
   }
-  syncTimer = setTimeout(loadSync, sync.value?.job.running ? 2000 : 30000)
-}
-
-async function runSync(kind: 'backfill' | 'daily' | 'weekly') {
-  try {
-    const res = await axios.post('/api/rms/sync', { kind, backfillDays: backfillYears.value * 365 })
-    sync.value = res.data
-  } catch (err) {
-    alertDialog({ title: 'Sync not started', message: errorMessage(err, 'Could not start the sync'), tone: 'danger' })
-  }
-  loadSync()
-}
-
-onMounted(() => {
-  loadDimensions()
-  loadSync()
-  loadPace()
-  document.addEventListener('mousedown', onDateMenuClickOutside)
-})
+  if (!disposed && tab.value !== "data") void loadAll();
+});
 onBeforeUnmount(() => {
-  clearTimeout(syncTimer)
-  document.removeEventListener('mousedown', onDateMenuClickOutside)
-})
+  disposed = true;
+  ++requestId;
+  ++curveId;
+  clearTimeout(forecastTimer);
+  clearTimeout(syncTimer);
+});
 </script>
