@@ -126,6 +126,8 @@ def test_first_cancel_date_is_kept_when_a_cancelled_booking_is_edited_later():
 
 
 def test_pace_table_pickup_and_same_time_last_year():
+    with be._db() as conn:
+        be._set_meta(conn, "backfillFrom", "2023-01-01")
     be.upsert([
         api_row(1, "2026-09-01", "2026-10-20", "2026-10-21"),
         api_row(2, "2026-10-06", "2026-10-20", "2026-10-21"),           # within last 7 days: pickup
@@ -143,11 +145,14 @@ def test_pace_table_pickup_and_same_time_last_year():
 
 
 def test_pace_curve_counts_on_the_books_by_lead_time():
+    with be._db() as conn:
+        be._set_meta(conn, "backfillFrom", "2023-01-01")
     be.upsert([api_row(1, "2026-10-10", "2026-10-20", "2026-10-21"),
                api_row(2, "2026-10-18", "2026-10-20", "2026-10-21")])
     curve = be.pace_curve("2026-10-20", max_lead=12)
     by_lead = {p["lead"]: p["rooms"] for p in curve["current"]}
-    assert (by_lead[12], by_lead[10], by_lead[2], by_lead[0]) == (0, 1, 2, 2)
+    assert (by_lead[12], by_lead[10], by_lead[9]) == (0, 1, 1)
+    assert 2 not in by_lead and 0 not in by_lead  # future observations must not be drawn
 
 
 def test_sync_plans_cover_their_windows_in_30_day_chunks():

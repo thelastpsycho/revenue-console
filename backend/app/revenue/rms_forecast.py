@@ -1,4 +1,4 @@
-"""Live PMS forecast for the RMS page - pure pass-through, nothing stored.
+"""PMS forecast sections with a persistent stale-while-refresh cache.
 
 Endpoint behaviour confirmed by live probes (2026-10-11):
 - ReportForecastOccupancy always returns 7 days whatever `Days` says, but
@@ -19,7 +19,6 @@ Endpoint behaviour confirmed by live probes (2026-10-11):
 Room revenue only - no F&B/outlet fields are returned.
 """
 
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
 from ..integrations.pms.api_client import PMSApiClient
@@ -32,7 +31,6 @@ ROOM_CHUNK = 30
 # ~100 s Cloudflare tunnel request timeout.
 SEGMENT_CHUNK = 14
 MAX_DAYS = 90
-WORKERS = 8
 
 
 def _starts(start, days, chunk=CHUNK):
@@ -47,7 +45,7 @@ def _post(client, name, trx_date, days=CHUNK):
 def _post_room_types(client, trx_date):
     # Always ask for the full 30-day window - the overhang beyond `days`
     # (from the last chunk, or Mode's own 7-day floor) is trimmed by
-    # fetch_forecast's within() filter, same as the other endpoints' chunks.
+    # fetch_section's date filter, same as the other endpoints' chunks.
     return client._api_post("ReportExpectedRoomOccupied", {"TrxDate": trx_date.isoformat(), "Mode": str(ROOM_CHUNK),
                                                             "HotelId": client.hotel_id, "UserId": client.user_id})
 
@@ -95,27 +93,95 @@ def _room_types(rows):
     return out
 
 
-def fetch_forecast(start, days, client_factory=PMSApiClient):
-    """Hotel-wide, market-segment and room-type forecast for `days` days from
-    `start` (date). Rows outside the window (chunk overhang) are dropped."""
-    days = max(1, min(int(days), MAX_DAYS))
-    end = start + timedelta(days=days - 1)
+# Section cache: persistent across worker restarts, with database-backed leases.
+# All endpoints remain read-only towards the PMS.
+import json
+import sqlite3
+import threading
+import time
+from contextlib import contextmanager
+from ..infrastructure.paths import get_data_path
+
+CACHE_TTL = 300
+LEASE_SECONDS = 1800
+SECTIONS = ("hotel", "segments", "roomTypes", "availability")
+
+
+@contextmanager
+def _cache_db():
+    conn = sqlite3.connect(get_data_path("rms_forecast_cache.db"), timeout=30)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS forecast_cache (
+            key TEXT PRIMARY KEY, payload TEXT, fetched REAL, started REAL, error TEXT)""")
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
+
+def fetch_section(start, days, section, client_factory=PMSApiClient):
+    """Independent sections prevent a slow segment report blocking hotel totals."""
     client = client_factory().login()
-    starts = _starts(start, days)
-    room_starts = _starts(start, days, ROOM_CHUNK)
-    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-        room_job = pool.submit(lambda: [r for s in room_starts for r in _post_room_types(client, s)])
-        segment_jobs = [pool.submit(_post, client, "ReportForecastOccupancyMarketSegment", s,
-                                    min(SEGMENT_CHUNK, (end - s).days + 1))
-                        for s in _starts(start, days, SEGMENT_CHUNK)]
-        hotel_jobs = [pool.submit(_post, client, "ReportForecastOccupancy", s) for s in starts]
-        hotel = _hotel([r for j in hotel_jobs for r in j.result()])
-        rooms = _room_types(room_job.result())
-        segments = _segments([r for j in segment_jobs for r in j.result()])
+    end = start + timedelta(days=days - 1)
+    if section == "roomTypes":
+        # The PMS temp table collides even across different requests/processes.
+        import fcntl
+        with open(get_data_path("rms_room_report.lock"), "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            rows = _room_types([r for s in _starts(start, days, ROOM_CHUNK) for r in _post_room_types(client, s)])
+    elif section == "availability":
+        rows = [{"date": r["Date"][:10] if "Date" in r else r["TrxDate"][:10], "values": {
+            k: v for k, v in r.items() if isinstance(v, (int, float)) and k not in ("HotelId", "ROW_ID")}}
+            for r in client.get_available_room_inventory(start.isoformat(), days)]
+    else:
+        chunk = CHUNK if section == "hotel" else SEGMENT_CHUNK
+        name = "ReportForecastOccupancy" if section == "hotel" else "ReportForecastOccupancyMarketSegment"
+        # A single session stays on its owning thread; sections run concurrently.
+        raw = [r for s in _starts(start, days, chunk)
+               for r in _post(client, name, s, min(chunk, (end - s).days + 1))]
+        rows = (_hotel if section == "hotel" else _segments)(raw)
+    return sorted((r for r in rows if start.isoformat() <= r["date"] <= end.isoformat()), key=lambda r: r["date"])
 
-    def within(rows):
-        return sorted((r for r in rows if start.isoformat() <= r["date"] <= end.isoformat()),
-                      key=lambda r: r["date"])
 
-    return {"start": start.isoformat(), "end": end.isoformat(),
-            "hotel": within(hotel), "segments": within(segments), "roomTypes": within(rooms)}
+def _refresh(key, start, days, section, lease):
+    try:
+        payload = json.dumps(fetch_section(start, days, section))
+        with _cache_db() as conn:
+            conn.execute("UPDATE forecast_cache SET payload=?, fetched=?, started=NULL, error=NULL WHERE key=? AND started=?",
+                         (payload, time.time(), key, lease))
+    except Exception:
+        # Provider errors may contain internal response details. Keep the UI actionable and generic.
+        import logging
+        logging.getLogger(__name__).exception("RMS forecast section failed: %s", section)
+        with _cache_db() as conn:
+            conn.execute("UPDATE forecast_cache SET started=NULL, error=? WHERE key=? AND started=?",
+                         ("PMS report unavailable. Retry refresh; the last successful result is retained.", key, lease))
+
+
+def cached_forecast(start, days, force=False):
+    from datetime import datetime, timezone
+    now = time.time()
+    result = {"start": start.isoformat(), "end": (start + timedelta(days=days - 1)).isoformat(), "sections": {}}
+    jobs = []
+    with _cache_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        for section in SECTIONS:
+            key = f"{start}:{days}:{section}"
+            row = conn.execute("SELECT * FROM forecast_cache WHERE key=?", (key,)).fetchone()
+            stale = not row or not row["fetched"] or now - row["fetched"] > CACHE_TTL
+            running = bool(row and row["started"] and now - row["started"] < LEASE_SECONDS)
+            # Failed sections retry only on explicit refresh, avoiding a polling retry storm.
+            if not running and (force or (stale and not (row and row["error"]))):
+                conn.execute("INSERT INTO forecast_cache(key, started) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET started=excluded.started, error=NULL", (key, now))
+                jobs.append((key, start, days, section, now))
+                running = True
+            result[section] = json.loads(row["payload"]) if row and row["payload"] else []
+            result["sections"][section] = {
+                "loaded": bool(row and row["payload"] is not None), "refreshing": running, "stale": stale,
+                "fetchedAt": datetime.fromtimestamp(row["fetched"], timezone.utc).isoformat() if row and row["fetched"] else None,
+                "error": None if running else row["error"] if row else None,
+            }
+    for args in jobs:
+        threading.Thread(target=_refresh, args=args, daemon=True, name="rms-forecast").start()
+    return result

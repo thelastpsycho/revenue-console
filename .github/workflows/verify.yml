@@ -34,6 +34,9 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
+      - name: Test RMS calculations
+        working-directory: frontend
+        run: npm test
       - name: Typecheck and build
         working-directory: frontend
         run: npm run build
