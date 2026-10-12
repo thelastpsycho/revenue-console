@@ -702,6 +702,7 @@ const chartOptions: ChartOptions<keyof ChartTypeRegistry> = {
     },
     adr: {
       position: "right",
+      min: 1000000,
       grid: { drawOnChartArea: false },
       title: { display: true, text: "ADR (IDR)" },
     },

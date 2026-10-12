@@ -239,6 +239,8 @@ export const pctDiff = (cur: number | null, prev: number | null) =>
   cur == null || prev == null || !prev ? null : ((cur - prev) / prev) * 100;
 export const pctLabel = (v: number | null) =>
   v == null ? "Unavailable" : `${v > 0 ? "+" : ""}${v.toFixed(1)}%`;
+export const signClass = (v: number | null) =>
+  v == null ? "" : v > 0 ? "text-emerald-700" : v < 0 ? "text-rose-700" : "";
 export const currentRooms = (r: PaceRow) =>
   r.currentQuality === "unavailable" ? null : r.rooms;
 export const revenueFor = (r: PaceRow, basis: "gross" | "net") =>

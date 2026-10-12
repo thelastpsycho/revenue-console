@@ -2,15 +2,25 @@
   <div class="neu-card p-4">
     <div class="flex justify-between">
       <h2 class="font-semibold">Room nights & ADR</h2>
-      <select
-        v-model="chartView"
-        aria-label="Chart grouping"
-        class="neu-input text-xs"
-      >
-        <option value="daily">Daily</option>
-        <option value="weekly">Weekly</option>
-        <option value="monthly">Monthly</option>
-      </select>
+      <nav class="flex gap-1" aria-label="Chart grouping">
+        <button
+          v-for="v in [
+            { id: 'daily', label: 'Daily' },
+            { id: 'weekly', label: 'Weekly' },
+            { id: 'monthly', label: 'Monthly' },
+          ]"
+          :key="v.id"
+          type="button"
+          :class="[
+            'rounded-lg px-2.5 py-1 text-xs',
+            chartView === v.id ? 'bg-slate-800 text-white' : 'bg-slate-100',
+          ]"
+          :aria-current="chartView === v.id ? 'page' : undefined"
+          @click="chartView = v.id"
+        >
+          {{ v.label }}
+        </button>
+      </nav>
     </div>
     <p class="my-2 text-xs text-slate-500">
       {{ basisLabel }}. IDR ADR coverage: {{ percent(idrCoverage) }} of room
@@ -72,11 +82,21 @@
             <td
               v-for="b in chartTable.buckets"
               :key="b.key"
-              class="p-2 text-right tabular-nums"
+              :class="[
+                'p-2 text-right tabular-nums',
+                signClass(pctDiff(b.rooms, b.comparison)),
+              ]"
             >
               {{ pctLabel(pctDiff(b.rooms, b.comparison)) }}
             </td>
-            <td class="p-2 text-right tabular-nums font-semibold">
+            <td
+              :class="[
+                'p-2 text-right tabular-nums font-semibold',
+                signClass(
+                  pctDiff(chartTable.totals.rooms, chartTable.totals.comparison),
+                ),
+              ]"
+            >
               {{
                 pctLabel(
                   pctDiff(chartTable.totals.rooms, chartTable.totals.comparison),
@@ -121,11 +141,24 @@
             <td
               v-for="b in chartTable.buckets"
               :key="b.key"
-              class="p-2 text-right tabular-nums"
+              :class="[
+                'p-2 text-right tabular-nums',
+                signClass(pctDiff(b.revenue, b.comparisonRevenue)),
+              ]"
             >
               {{ pctLabel(pctDiff(b.revenue, b.comparisonRevenue)) }}
             </td>
-            <td class="p-2 text-right tabular-nums font-semibold">
+            <td
+              :class="[
+                'p-2 text-right tabular-nums font-semibold',
+                signClass(
+                  pctDiff(
+                    chartTable.totals.revenue,
+                    chartTable.totals.comparisonRevenue,
+                  ),
+                ),
+              ]"
+            >
               {{
                 pctLabel(
                   pctDiff(
@@ -173,11 +206,21 @@
             <td
               v-for="b in chartTable.buckets"
               :key="b.key"
-              class="p-2 text-right tabular-nums"
+              :class="[
+                'p-2 text-right tabular-nums',
+                signClass(pctDiff(b.adr, b.comparisonAdr)),
+              ]"
             >
               {{ pctLabel(pctDiff(b.adr, b.comparisonAdr)) }}
             </td>
-            <td class="p-2 text-right tabular-nums font-semibold">
+            <td
+              :class="[
+                'p-2 text-right tabular-nums font-semibold',
+                signClass(
+                  pctDiff(chartTable.totals.adr, chartTable.totals.comparisonAdr),
+                ),
+              ]"
+            >
               {{
                 pctLabel(
                   pctDiff(chartTable.totals.adr, chartTable.totals.comparisonAdr),
@@ -333,6 +376,7 @@ import {
   ratio,
   pctDiff,
   pctLabel,
+  signClass,
   currentRooms,
   revenueFor,
   breakdownRevenue,
