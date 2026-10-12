@@ -138,7 +138,11 @@ Then `ssh console2-ssh`. Key-based auth is set up; password login may still be e
 
 Working fix: a Windows Scheduled Task with **"Run whether user is logged on or not"**, which does have DPAPI access. The task runs `scripts/deploy.cmd` (`docker compose build && docker compose up -d`, both steps logged with start/finish timestamps and exit code to `deploy.log` in the repo root, gitignored by `*.log`).
 
-**Status (2026-10-12):** `revenue-console-deploy` is registered (runs as `The Anvaya Bali`, logon mode Interactive/Background) and that account has been granted read/run on it. Not yet test-run - the first deploy through it is the end-to-end check.
+**Status (2026-10-12):** `revenue-console-deploy` is registered (runs as `The Anvaya Bali`, logon mode Interactive/Background) and that account has been granted read/run on it. First end-to-end test over SSH **failed silently**: `schtasks /run /tn revenue-console-deploy` reports `SUCCESS: Attempted to run...`, but `Last Result` stays at `267011` (`SCHED_S_TASK_HAS_NOT_RUN`), `Last Run Time` never updates, and `deploy.log` is never created - the task is never actually launched, even on repeated attempts a few seconds apart.
+
+Diagnosis is blocked from this SSH session: `The Anvaya Bali` is a standard account, and both Event Viewer (`wevtutil qe Microsoft-Windows-TaskScheduler/Operational`) and PowerShell's CIM-backed cmdlets (`Get-ScheduledTaskInfo`, `Start-ScheduledTask`) return `Access is denied` for it - `schtasks` uses the older COM API so its "attempted" response gets through, but there's no visibility into why the actual launch never happens. Suspect the `(A;;GRGX;;;$sid)` ACE from `register-deploy-task.ps1` (generic read+execute) grants enough to query/request a run but not the specific right Task Scheduler needs to launch a stored-password task.
+
+Next step needs an admin account locally (RDP or physical access, not SSH): open Task Scheduler → `revenue-console-deploy` → History tab (turn on "Enable All Tasks History" in the Actions pane if empty) and read the actual failure reason for the run attempts made on 2026-10-12.
 
 Setup (already done; repeat only if the task is lost, or after changing the Windows password - the task keeps the old one and will fail to start). Run locally at the machine, not over SSH:
 
