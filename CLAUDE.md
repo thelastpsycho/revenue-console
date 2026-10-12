@@ -111,3 +111,39 @@ The shared axios instance uses a relative base URL and Vite proxies `/api` to th
 `APP_ACCESS_PIN` (a 6-digit PIN) and `APP_SESSION_SECRET` must be configured on the backend before authenticated API endpoints become available. The UI is gated by `AuthGate.vue` and the axios client attaches CSRF tokens on writes. Never introduce provider credentials via `VITE_*` frontend variables. BAR partial-run recovery is implemented in `integrations/dedge/bar_checkpoint.py`.
 
 The DeepSeek-backed chat/assistant page (`InventoryAssistantView.vue`) and its `routes/assistant_routes.py` server-side proxy were removed - the feature called DeepSeek with a hardcoded API key. Both the DeepSeek key and the D-EDGE password were previously embedded in public frontend history: rotate/revoke them immediately; see `SECURITY.md`. Removing the source file does not do that.
+
+## Production server access
+
+The production deployment runs on a Windows laptop reachable via SSH over a Cloudflare tunnel (not the public hotel Wi-Fi, which is firewalled off). From a machine with `cloudflared` installed, add to `~/.ssh/config`:
+
+```
+Host console2-ssh
+  HostName ssh-console2.krisnatha.com
+  User "The Anvaya Bali"
+  ProxyCommand cloudflared access ssh --hostname %h
+```
+
+Then `ssh console2-ssh`. Key-based auth is set up; password login may still be enabled server-side.
+
+- Log in as the **`The Anvaya Bali`** Windows account, not `User` - the repo checkout, git install, and Docker Desktop all belong to that account. Logging in as `User` hits a git "dubious ownership" error and can't find `git` on PATH.
+- Remote shell is `cmd.exe` (Windows OpenSSH default) - use Windows path syntax (`C:\...`, `&&`/`&` separators, double-quoted paths with spaces), not bash.
+- Project path: `C:\Users\The Anvaya Bali\Documents\revenue-console`
+- `git.exe` isn't on PATH over SSH; use the full path: `C:\Users\The Anvaya Bali\AppData\Local\Programs\Git\cmd\git.exe`
+- The server checkout tracks `origin/main` (not `docker-production`) and deploys via `docker compose`. `docker ps` shows four containers: `revenue-console-frontend`, `revenue-console-backend`, `revenue-console-scheduler`, and `revenue-console-cloudflared` (the tunnel exposing the app itself, separate from the SSH tunnel above).
+- This is a live system serving real traffic - treat rebuilds/restarts as having real downtime, and confirm with the user before running them.
+
+### Docker builds over SSH
+
+`docker compose build` fails over this SSH session with `error getting credentials` / `A specified logon session does not exist`. Cause: SSH key-based (pubkey) logins get a Windows logon type that never sees the account password, so Docker Desktop's credential helper can't unlock DPAPI-protected secrets - this happens even for pulling fully public images (node, python, nginx base images), and isn't fixable by editing `~/.docker/config.json` (tried: removing `credsStore`, disabling BuildKit, switching Docker context - none bypass it, since Desktop forwards credentials at the engine level, not the CLI config level).
+
+Working fix: a Windows Scheduled Task with **"Run whether user is logged on or not"** (`taskschd.msc`, not `schtasks /create` with an `/rp` password argument - that would put the password in shell history/process logs). This logon type does have DPAPI access. One-time setup, done locally at the machine (not over SSH):
+
+1. Task Scheduler → Create Task → name it e.g. `revenue-console-deploy`.
+2. General tab → Security options → **"Run whether user is logged on or not"** → enter the account password in the dialog when prompted.
+3. Actions tab → New → Program: `cmd.exe`, Arguments:
+   ```
+   /c cd /d "C:\Users\The Anvaya Bali\Documents\revenue-console" && docker compose build && docker compose up -d > deploy_log.txt 2>&1
+   ```
+4. Triggers tab: none needed - start it manually.
+
+Once created, trigger it over SSH with `schtasks /run /tn revenue-console-deploy` and check `deploy_log.txt` for the result, instead of running `docker compose build` directly over SSH.
