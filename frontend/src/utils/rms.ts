@@ -200,16 +200,27 @@ export function monthlySummary(
     };
   });
 }
+// Missing values render as an em dash; "About this data" explains it.
+export const EMPTY = "—";
 export const num = (v: number | null | undefined) =>
   v == null
-    ? "Unavailable"
+    ? EMPTY
     : v.toLocaleString("en-US", { maximumFractionDigits: 1 });
 export const money = (v: number | null | undefined) =>
-  v == null ? "Unavailable" : `IDR ${Math.round(v).toLocaleString("en-US")}`;
+  v == null ? EMPTY : `IDR ${Math.round(v).toLocaleString("en-US")}`;
+// Compact IDR for dense tables (6.3B, 2.17M, 850K); pair with money() as a title.
+export const moneyShort = (v: number | null | undefined) => {
+  if (v == null) return EMPTY;
+  const a = Math.abs(v);
+  if (a >= 1e9) return `${(v / 1e9).toFixed(a >= 1e10 ? 1 : 2)}B`;
+  if (a >= 1e6) return `${(v / 1e6).toFixed(a >= 1e7 ? 1 : 2)}M`;
+  if (a >= 1e3) return `${Math.round(v / 1e3)}K`;
+  return String(Math.round(v));
+};
 export const signed = (v: number | null) =>
-  v == null ? "Unavailable" : `${v > 0 ? "+" : ""}${num(v)}`;
+  v == null ? EMPTY : `${v > 0 ? "+" : ""}${num(v)}`;
 export const percent = (v: number | null) =>
-  v == null ? "Unavailable" : `${v.toFixed(1)}%`;
+  v == null ? EMPTY : `${v.toFixed(1)}%`;
 export const timestamp = (v: string | null | undefined) =>
   v
     ? new Date(v).toLocaleString("en-GB", {
@@ -238,7 +249,7 @@ export const shortDayYear = (v: string) =>
 export const pctDiff = (cur: number | null, prev: number | null) =>
   cur == null || prev == null || !prev ? null : ((cur - prev) / prev) * 100;
 export const pctLabel = (v: number | null) =>
-  v == null ? "Unavailable" : `${v > 0 ? "+" : ""}${v.toFixed(1)}%`;
+  v == null ? EMPTY : `${v > 0 ? "+" : ""}${v.toFixed(1)}%`;
 export const signClass = (v: number | null) =>
   v == null ? "" : v > 0 ? "text-emerald-700" : v < 0 ? "text-rose-700" : "";
 export const currentRooms = (r: PaceRow) =>

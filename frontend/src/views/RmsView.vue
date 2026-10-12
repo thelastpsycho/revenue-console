@@ -1,53 +1,39 @@
 <template>
   <div class="mx-auto w-full max-w-screen-2xl space-y-4 p-4 sm:p-6">
-    <div class="flex flex-wrap justify-between gap-3">
-      <div>
-        <h1 class="text-xl font-semibold">Revenue management</h1>
-        <p class="text-xs text-slate-500">
-          Daily decisions · {{ today }} · Bali time
-        </p>
-      </div>
-      <nav class="flex flex-wrap gap-1" aria-label="RMS sections">
+    <PageHeader
+      title="Revenue management"
+      :subtitle="`Daily decisions · ${dayLabel(today)} · Bali time`"
+    >
+      <template #actions>
         <button
-          v-for="t in tabs"
-          :key="t.id"
-          :class="[
-            'rounded-lg px-3 py-2 text-sm',
-            tab === t.id ? 'bg-slate-800 text-white' : 'bg-slate-100',
-          ]"
-          :aria-current="tab === t.id ? 'page' : undefined"
-          @click="selectTab(t.id)"
+          type="button"
+          class="btn-flat"
+          :disabled="!rows.length"
+          title="Export the loaded stay dates as CSV"
+          @click="exportCsv"
         >
-          {{ t.label }}
+          <ArrowDownTrayIcon class="h-4 w-4" /> Export CSV
         </button>
-      </nav>
-    </div>
-    <p
-      v-if="error"
-      role="alert"
-      class="rounded bg-rose-50 p-3 text-sm text-rose-800"
-    >
-      {{ error }}
-    </p>
-    <div
-      v-if="sync"
-      :class="[
-        'rounded-lg border p-3 text-xs',
-        sync.stale ? 'border-amber-200 bg-amber-50' : 'border-slate-200',
-      ]"
-    >
-      <strong>{{
-        sync.stale ? "Booking data needs refresh." : "Booking data updated."
-      }}</strong>
-      Last successful sync: {{ timestamp(sync.lastSuccessfulSync) }}.
-      Booking-date coverage:
-      {{ sync.coverageFrom || "Unavailable — run backfill" }}.
-      <p class="mt-1">
-        Observed history records what each sync saw. Earlier history is
-        reconstructed and estimated; missing coverage is unavailable. No
-        currency conversion is applied.
-      </p>
-    </div>
+      </template>
+    </PageHeader>
+
+    <nav class="seg !flex w-full" role="tablist" aria-label="RMS sections">
+      <button
+        v-for="t in tabs"
+        :key="t.id"
+        type="button"
+        role="tab"
+        :class="['seg-btn', t.id === 'data' && 'ml-auto']"
+        :aria-selected="tab === t.id"
+        @click="selectTab(t.id)"
+      >
+        <component :is="t.icon" class="h-4 w-4" />
+        {{ t.label }}
+      </button>
+    </nav>
+
+    <p v-if="error" role="alert" class="alert-error">{{ error }}</p>
+
     <template v-if="tab !== 'data'">
       <RmsFilterBar
         :filters="filters"
@@ -60,17 +46,16 @@
         :forecast-busy="forecastBusy"
         :report-sync="reportSync"
         :sync="sync"
-        :rows-length="rows.length"
         :today="today"
         v-model:basis="basis"
         @submit="loadAll"
-        @export-csv="exportCsv"
         @refresh-forecast="refreshForecast"
       />
       <RmsOverviewTab
         v-if="tab === 'overview'"
         :tiles="tiles"
         :attention-rows="attentionRows"
+        :flagged-count="flaggedCount"
         v-model:only-attention="onlyAttention"
         :rows-length="rows.length"
         :notes="notes"
@@ -88,66 +73,68 @@
         :chart-table="chartTable"
         :basis-label="basisLabel"
         :idr-coverage="idrCoverage"
-        :breakdown="breakdown"
         :basis="basis"
-        :label="label"
+        :pickup-days="loaded?.pickupDays || filters.pickupDays"
         @open-day="openDay"
-      />
-      <RmsGroupedReports
-        v-if="
-          loaded && ['behaviour', 'business', 'rooms', 'forecast'].includes(tab)
-        "
-        :group="tab === 'forecast' ? 'performance' : tab"
-        :filters="loaded"
-        :basis="basis"
-        :labels="dims.labels"
-        :forecast="forecast"
-        @drilldown="drilldownGroup"
       />
       <RmsForecastTab
         v-if="tab === 'forecast'"
-        :months="months"
-        :basis-label="basisLabel"
         :forecast="forecast"
         :forecast-busy="forecastBusy"
         :segment-totals="segmentTotals"
-        :matrix="matrix"
+      />
+      <RmsGroupedReports
+        v-if="loaded && (tab === 'behaviour' || tab === 'business')"
+        :group="tab"
+        :filters="loaded"
+        :basis="basis"
+        :labels="dims.labels"
+        @drilldown="drilldownGroup"
+      />
+      <RmsRateBreakdown
+        v-if="tab === 'business'"
+        :breakdown="breakdown"
+        :basis="basis"
+        :basis-label="basisLabel"
         :label="label"
       />
-      <section
-        v-if="selectedDate"
-        ref="detailElement"
-        class="neu-card space-y-3 p-4"
-        aria-label="Stay date detail"
-      >
-        <RmsDayDetail
-          :selected-date="selectedDate"
-          :curve="curve"
-          :curve-loading="curveLoading"
-          :curve-error="curveError"
-          :curve-data="curveData"
-          :curve-options="curveOptions"
-          :today-marker="todayMarker"
-          :selected-availability="selectedAvailability"
-          :selected-segments="selectedSegments"
-          :saved-note="notes[selectedDate]"
-          :note-saving="noteSaving"
-          :label="label"
-          v-model:note-draft="noteDraft"
-          @close="closeDay"
-          @save-note="saveNote"
-        />
-      </section>
+      <RmsInventoryTab
+        v-if="tab === 'rooms'"
+        :forecast="forecast"
+        :forecast-busy="forecastBusy"
+        :room-type="loaded?.roomType || ''"
+        :label="label"
+        @open-day="openDay"
+      />
+      <RmsDayDetail
+        :selected-date="selectedDate"
+        :curve="curve"
+        :curve-loading="curveLoading"
+        :curve-error="curveError"
+        :curve-data="curveData"
+        :curve-options="curveOptions"
+        :today-marker="todayMarker"
+        :selected-availability="selectedAvailability"
+        :selected-segments="selectedSegments"
+        :saved-note="notes[selectedDate]"
+        :note-saving="noteSaving"
+        :label="label"
+        v-model:note-draft="noteDraft"
+        @close="closeDay"
+        @save-note="saveNote"
+      />
     </template>
-    <template v-else>
-      <RmsDataSettingsTab :today="today" v-model:sync="sync" @synced="onSynced" />
-    </template>
+    <RmsDataSettingsTab
+      v-else
+      :today="today"
+      v-model:sync="sync"
+      @synced="onSynced"
+    />
   </div>
 </template>
 <script setup lang="ts">
 import {
   computed,
-  nextTick,
   onBeforeUnmount,
   onMounted,
   reactive,
@@ -155,6 +142,16 @@ import {
   watch,
 } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import {
+  ArrowDownTrayIcon,
+  ArrowTrendingUpIcon,
+  ChartPieIcon,
+  Cog6ToothIcon,
+  PresentationChartLineIcon,
+  Squares2X2Icon,
+  TableCellsIcon,
+  UserGroupIcon,
+} from "@heroicons/vue/24/outline";
 import {
   Chart as ChartJS,
   BarController,
@@ -170,7 +167,10 @@ import {
   type ChartTypeRegistry,
 } from "chart.js";
 import axios from "../plugins/axios";
+import PageHeader from "../components/PageHeader.vue";
 import RmsGroupedReports from "../components/RmsGroupedReports.vue";
+import RmsRateBreakdown from "../components/RmsRateBreakdown.vue";
+import RmsInventoryTab from "../components/RmsInventoryTab.vue";
 import RmsFilterBar from "../components/RmsFilterBar.vue";
 import RmsOverviewTab from "../components/RmsOverviewTab.vue";
 import RmsPaceTab from "../components/RmsPaceTab.vue";
@@ -187,9 +187,13 @@ import {
   csvText,
   num,
   money,
+  moneyShort,
   signed,
   percent,
-  timestamp,
+  pctDiff,
+  pctLabel,
+  signClass,
+  dayLabel,
   currentRooms,
   revenueFor,
   type PaceRow,
@@ -215,14 +219,15 @@ ChartJS.register(
 const today = hotelToday(),
   route = useRoute(),
   router = useRouter();
+// Tab ids are kept from the earlier layout so saved ?tab= links still work.
 const tabs = [
-  { id: "overview", label: "Overview" },
-  { id: "pace", label: "Pace & Pickup" },
-  { id: "forecast", label: "Performance & Forecast" },
-  { id: "behaviour", label: "Booking Behaviour" },
-  { id: "business", label: "Business Production" },
-  { id: "rooms", label: "Room Type & Inventory" },
-  { id: "data", label: "Data & settings" },
+  { id: "overview", label: "Overview", icon: Squares2X2Icon },
+  { id: "pace", label: "Pace & pickup", icon: ArrowTrendingUpIcon },
+  { id: "forecast", label: "Forecast", icon: PresentationChartLineIcon },
+  { id: "behaviour", label: "Booking behaviour", icon: UserGroupIcon },
+  { id: "business", label: "Production", icon: ChartPieIcon },
+  { id: "rooms", label: "Inventory", icon: TableCellsIcon },
+  { id: "data", label: "Data & settings", icon: Cog6ToothIcon },
 ];
 const query = (k: string, f = "") =>
   typeof route.query[k] === "string" ? String(route.query[k]) : f;
@@ -265,8 +270,7 @@ const selectedDate = ref(""),
   curveLoading = ref(false),
   curveError = ref(""),
   noteDraft = ref(""),
-  noteSaving = ref(false),
-  detailElement = ref<HTMLElement | null>(null);
+  noteSaving = ref(false);
 let requestId = 0,
   curveId = 0,
   forecastTimer: ReturnType<typeof setTimeout> | undefined,
@@ -413,8 +417,6 @@ async function openDay(day: string) {
   curve.value = null;
   curveLoading.value = true;
   curveError.value = "";
-  await nextTick();
-  detailElement.value?.scrollIntoView({ behavior: "smooth", block: "start" });
   try {
     const r = await axios.get("/api/rms/pace/curve", {
       params: { ...loaded.value, date: day, maxLead: 180 },
@@ -515,8 +517,11 @@ const attention = computed(() =>
   }),
 );
 const attentionRows = computed(() =>
-  attention.value.filter((r) => !onlyAttention.value || r.reasons.length),
-);
+    attention.value.filter((r) => !onlyAttention.value || r.reasons.length),
+  ),
+  flaggedCount = computed(
+    () => attention.value.filter((r) => r.reasons.length).length,
+  );
 const months = computed(() =>
   monthlySummary(
     rows.value,
@@ -527,23 +532,56 @@ const months = computed(() =>
     !!loaded.value?.roomType || !!loaded.value?.marketId,
   ),
 );
+// Each tile shows the loaded total with its comparison underneath.
+const vsLy = (cur: number | null, ly: number | null, fmt: (v: number | null) => string) => {
+  const d = pctDiff(cur, ly);
+  if (cur == null) return { text: "vs LY —" };
+  return {
+    text: `${pctLabel(d)} vs LY (${fmt(ly)})`,
+    tone: signClass(d) || undefined,
+  };
+};
 const tiles = computed(() => {
   const known =
-    rows.value.length &&
-    rows.value.every((r) => r.currentQuality !== "unavailable");
+      rows.value.length &&
+      rows.value.every((r) => r.currentQuality !== "unavailable"),
+    t = chartTable.value.totals,
+    rooms = known ? t.rooms : null,
+    rev = known ? t.revenue : null,
+    budgets = months.value.map((m) => m.budget),
+    target =
+      budgets.length && budgets.every((b) => b != null)
+        ? sumKnown(budgets)
+        : null,
+    targetShare = ratio(rev, target);
   return [
     {
       label: "OTB room nights",
-      value: num(known ? rows.value.reduce((s, r) => s + r.rooms, 0) : null),
+      value: num(rooms),
+      subs: [vsLy(rooms, t.comparison, num)],
     },
     {
-      label:
-        basis.value === "gross"
-          ? "Gross IDR revenue"
-          : "Estimated net IDR revenue",
-      value: money(
-        known ? rows.value.reduce((s, r) => s + revenue(r), 0) : null,
-      ),
+      label: basis.value === "gross" ? "Room revenue" : "Est. net revenue",
+      value: moneyShort(rev),
+      title: money(rev),
+      subs: [
+        vsLy(rev, t.comparisonRevenue, moneyShort),
+        {
+          text:
+            targetShare == null
+              ? "No target for this range"
+              : `${(targetShare * 100).toFixed(0)}% of target (${moneyShort(target)})`,
+        },
+      ],
+    },
+    {
+      label: "IDR ADR",
+      value: moneyShort(known ? t.adr : null),
+      title: money(known ? t.adr : null),
+      subs: [
+        vsLy(known ? t.adr : null, t.comparisonAdr, moneyShort),
+        { text: `IDR coverage ${percent(known ? idrCoverage.value : null)}` },
+      ],
     },
     {
       label: `Net pickup (${loaded.value?.pickupDays || 7}d)`,
@@ -552,10 +590,7 @@ const tiles = computed(() => {
           ? sumKnown(rows.value.map((r) => r.pickupRooms))
           : null,
       ),
-    },
-    {
-      label: "IDR ADR coverage",
-      value: percent(known ? idrCoverage.value : null),
+      subs: [{ text: "room nights" }],
     },
   ];
 });
@@ -571,27 +606,6 @@ const segmentTotals = computed(() => {
     m.set(s.market, r);
   }
   return [...m.values()].sort((a, b) => b.rooms - a.rooms);
-});
-const matrix = computed(() => {
-  const types = new Map<
-    string,
-    { typeId: string; capacity: number; values: Record<string, number> }
-  >();
-  for (const r of forecast.value?.roomTypes || []) {
-    const t = types.get(r.typeId) || {
-      typeId: r.typeId,
-      capacity: r.roomCount,
-      values: {},
-    };
-    t.values[r.date] = r.rooms;
-    types.set(r.typeId, t);
-  }
-  return {
-    dates: [
-      ...new Set((forecast.value?.roomTypes || []).map((r) => r.date)),
-    ].sort(),
-    types: [...types.values()],
-  };
 });
 const selectedAvailability = computed(() =>
     Object.entries(availabilityMap.value[selectedDate.value] || {})

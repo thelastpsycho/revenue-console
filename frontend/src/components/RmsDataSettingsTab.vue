@@ -1,202 +1,258 @@
 <template>
-  <div class="neu-card space-y-3 p-4">
-    <h2 class="font-semibold">Booking history</h2>
-    <p class="text-xs text-slate-500">
-      Daily refresh includes new bookings, arrivals in the next year and known
-      in-house stays. Weekly refresh also revisits 90 days of booking
-      creation. Versions cannot recover amendments before first observation.
-    </p>
-    <p class="text-sm">
-      {{ num(sync?.bookings) }} bookings · Last daily:
-      {{ sync?.lastDaily || "Unavailable" }} · Last weekly:
-      {{ sync?.lastWeekly || "Unavailable" }}
-    </p>
-    <div class="flex flex-wrap items-center gap-3">
-      <label class="text-xs"
-        >Backfill years
+  <RmsCard
+    title="Booking history"
+    description="Daily refresh covers new bookings, arrivals in the next year and known in-house stays. Weekly refresh also revisits 90 days of booking creation. Versions can't recover amendments made before first observation."
+    padded
+  >
+    <dl class="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+      <div>
+        <dt class="field-label">Bookings</dt>
+        <dd class="text-sm font-semibold tabular-nums">{{ num(sync?.bookings) }}</dd>
+      </div>
+      <div>
+        <dt class="field-label">Coverage from</dt>
+        <dd class="text-sm font-semibold">{{ sync?.coverageFrom || "—" }}</dd>
+      </div>
+      <div>
+        <dt class="field-label">Last daily</dt>
+        <dd class="text-sm font-semibold">{{ sync?.lastDaily || "—" }}</dd>
+      </div>
+      <div>
+        <dt class="field-label">Last weekly</dt>
+        <dd class="text-sm font-semibold">{{ sync?.lastWeekly || "—" }}</dd>
+      </div>
+    </dl>
+    <div class="mt-4 flex flex-wrap items-end gap-2 border-t border-slate-100 pt-4">
+      <label>
+        <span class="field-label">Backfill years</span>
         <select v-model.number="backfillYears" class="neu-input">
           <option v-for="n in [1, 2, 3, 4, 5]" :key="n" :value="n">
             {{ n }}
           </option>
-        </select></label
-      ><button
+        </select>
+      </label>
+      <button
         v-for="kind in ['backfill', 'daily', 'weekly']"
         :key="kind"
-        class="btn-flat px-3 py-2 text-xs"
+        type="button"
+        class="btn-flat capitalize"
         :disabled="sync?.job.running"
         @click="runSync(kind)"
       >
         Run {{ kind }}
       </button>
+      <span v-if="sync?.job.running" class="pill pill-muted">
+        {{ sync.job.kind }}: {{ sync.job.done }} / {{ sync.job.total }} windows ·
+        {{ sync.job.rows }} rows
+      </span>
     </div>
-    <p v-if="sync?.job.running" class="text-xs">
-      {{ sync.job.kind }}: {{ sync.job.done }} /
-      {{ sync.job.total }} windows · {{ sync.job.rows }} rows
-    </p>
-    <p v-if="sync?.job.error" class="text-xs text-rose-700">
-      {{ sync.job.error }}
-    </p>
-  </div>
-  <form v-if="settings" class="neu-card space-y-4 p-4" @submit.prevent="save">
-    <h2 class="font-semibold">Review thresholds</h2>
-    <div class="flex flex-wrap gap-4 text-xs">
-      <label
-        >High occupancy %<input
-          v-model.number="settings.thresholds.occupancy"
-          type="number"
-          min="0"
-          max="100"
-          required
-          class="neu-input mt-1 block" /></label
-      ><label
-        >Weak pickup below<input
-          v-model.number="settings.thresholds.weakPickup"
-          type="number"
-          min="0"
-          required
-          class="neu-input mt-1 block" /></label
-      ><label
-        >Behind comparison by (rooms)<input
-          v-model.number="settings.thresholds.behindRooms"
-          type="number"
-          min="0"
-          required
-          class="neu-input mt-1 block"
-      /></label>
-    </div>
-    <h2 class="font-semibold">Estimated net revenue rules</h2>
-    <p class="text-xs text-slate-500">
-      Net = max(gross rate − breakfast, 0) / (1 + tax/service). A specific PMS
-      RateType overrides *; an optional package RateId overrides the type
-      rule. Rules apply by stay date. Keep a * rule covering all report dates.
-      0.21 means 21%. Changing rules restates estimated net figures; gross
-      booking history is retained.
-    </p>
+    <p v-if="sync?.job.error" class="alert-error mt-3">{{ sync.job.error }}</p>
+  </RmsCard>
+
+  <form v-if="settings" class="space-y-4" @submit.prevent="save">
+    <RmsCard
+      title="Review thresholds"
+      description="When a stay date is flagged on Overview."
+      padded
+    >
+      <div class="flex flex-wrap gap-3">
+        <label>
+          <span class="field-label">High occupancy %</span>
+          <input
+            v-model.number="settings.thresholds.occupancy"
+            type="number"
+            min="0"
+            max="100"
+            required
+            class="neu-input w-36"
+          />
+        </label>
+        <label>
+          <span class="field-label">Weak pickup below</span>
+          <input
+            v-model.number="settings.thresholds.weakPickup"
+            type="number"
+            min="0"
+            required
+            class="neu-input w-36"
+          />
+        </label>
+        <label>
+          <span class="field-label">Behind LY by (rooms)</span>
+          <input
+            v-model.number="settings.thresholds.behindRooms"
+            type="number"
+            min="0"
+            required
+            class="neu-input w-36"
+          />
+        </label>
+      </div>
+    </RmsCard>
+
+    <RmsCard
+      title="Estimated net revenue rules"
+      description="Net = max(gross rate − breakfast, 0) / (1 + tax/service). A specific RateType overrides *; a package RateId overrides its type rule. Rules apply by stay date — keep a * rule covering all dates. 0.21 means 21%."
+      padded
+    >
+      <template #actions>
+        <button
+          type="button"
+          class="btn-flat px-2.5 py-1 text-xs"
+          @click="
+            settings.revenueRules.push({
+              rateType: '',
+              rateId: '',
+              from: today,
+              to: '2099-12-31',
+              breakfast: 0,
+              taxService: 0.21,
+            })
+          "
+        >
+          <PlusIcon class="h-3.5 w-3.5" /> Add rule
+        </button>
+      </template>
+      <div class="space-y-3">
+        <div
+          v-for="(r, i) in settings.revenueRules"
+          :key="i"
+          class="flex flex-wrap items-end gap-2"
+        >
+          <label>
+            <span class="field-label">RateType</span>
+            <input v-model="r.rateType" required maxlength="40" class="neu-input w-24" />
+          </label>
+          <label>
+            <span class="field-label">Package RateId</span>
+            <input
+              v-model="r.rateId"
+              maxlength="80"
+              placeholder="Optional"
+              class="neu-input w-36"
+            />
+          </label>
+          <label>
+            <span class="field-label">From</span>
+            <input v-model="r.from" type="date" required class="neu-input" />
+          </label>
+          <label>
+            <span class="field-label">Through</span>
+            <input v-model="r.to" type="date" required class="neu-input" />
+          </label>
+          <label>
+            <span class="field-label">Breakfast IDR</span>
+            <input
+              v-model.number="r.breakfast"
+              type="number"
+              min="0"
+              required
+              class="neu-input w-32"
+            />
+          </label>
+          <label>
+            <span class="field-label">Tax/service</span>
+            <input
+              v-model.number="r.taxService"
+              type="number"
+              min="0"
+              max="1"
+              step=".001"
+              required
+              class="neu-input w-24"
+            />
+          </label>
+          <button
+            type="button"
+            class="btn-icon"
+            aria-label="Remove rule"
+            title="Remove rule"
+            @click="settings.revenueRules.splice(i, 1)"
+          >
+            <TrashIcon class="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    </RmsCard>
+
+    <RmsCard
+      title="Monthly IDR revenue targets"
+      description="Enter targets on the same basis as the report. Foreign revenue is excluded. PMS budget figures aren't imported because their units are unverified."
+      padded
+    >
+      <template #actions>
+        <button
+          type="button"
+          class="btn-flat px-2.5 py-1 text-xs"
+          @click="
+            settings.budgets.push({
+              month: today.slice(0, 7),
+              basis: 'gross',
+              revenue: 0,
+            })
+          "
+        >
+          <PlusIcon class="h-3.5 w-3.5" /> Add target
+        </button>
+      </template>
+      <div class="space-y-3">
+        <div
+          v-for="(b, i) in settings.budgets"
+          :key="i"
+          class="flex flex-wrap items-end gap-2"
+        >
+          <label>
+            <span class="field-label">Month</span>
+            <input v-model="b.month" type="month" required class="neu-input" />
+          </label>
+          <label>
+            <span class="field-label">Basis</span>
+            <select v-model="b.basis" class="neu-input">
+              <option value="gross">Gross IDR</option>
+              <option value="net">Estimated net IDR</option>
+            </select>
+          </label>
+          <label>
+            <span class="field-label">Target IDR</span>
+            <input
+              v-model.number="b.revenue"
+              type="number"
+              min="0"
+              required
+              class="neu-input w-44"
+            />
+          </label>
+          <button
+            type="button"
+            class="btn-icon"
+            aria-label="Remove target"
+            title="Remove target"
+            @click="settings.budgets.splice(i, 1)"
+          >
+            <TrashIcon class="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    </RmsCard>
+
     <div
-      v-for="(r, i) in settings.revenueRules"
-      :key="i"
-      class="flex flex-wrap items-end gap-2 text-xs"
+      class="neu-card sticky bottom-4 flex items-center gap-3 px-4 py-3 shadow-lg"
     >
-      <label
-        >RateType<input
-          v-model="r.rateType"
-          required
-          maxlength="40"
-          class="neu-input mt-1 block w-24" /></label
-      ><label
-        >Package RateId (optional)<input
-          v-model="r.rateId"
-          maxlength="80"
-          class="neu-input mt-1 block w-36" /></label
-      ><label
-        >From<input
-          v-model="r.from"
-          type="date"
-          required
-          class="neu-input mt-1 block" /></label
-      ><label
-        >Through<input
-          v-model="r.to"
-          type="date"
-          required
-          class="neu-input mt-1 block" /></label
-      ><label
-        >Breakfast IDR<input
-          v-model.number="r.breakfast"
-          type="number"
-          min="0"
-          required
-          class="neu-input mt-1 block w-36" /></label
-      ><label
-        >Tax/service<input
-          v-model.number="r.taxService"
-          type="number"
-          min="0"
-          max="1"
-          step=".001"
-          required
-          class="neu-input mt-1 block w-28" /></label
-      ><button
-        type="button"
-        class="p-2 underline"
-        @click="settings.revenueRules.splice(i, 1)"
-      >
-        Remove
+      <button class="btn-primary" :disabled="settingsSaving">
+        {{ settingsSaving ? "Saving…" : "Save settings" }}
       </button>
+      <span class="text-xs text-slate-600" role="status">{{
+        settingsMessage
+      }}</span>
     </div>
-    <button
-      type="button"
-      class="text-xs underline"
-      @click="
-        settings.revenueRules.push({
-          rateType: '',
-          rateId: '',
-          from: today,
-          to: '2099-12-31',
-          breakfast: 0,
-          taxService: 0.21,
-        })
-      "
-    >
-      Add rate-type rule
-    </button>
-    <h2 class="font-semibold">Monthly IDR booking revenue targets</h2>
-    <p class="text-xs text-slate-500">
-      Enter targets on the same basis as the report. Foreign revenue is
-      excluded. PMS budget figures are not imported because their units are
-      unverified.
-    </p>
-    <div
-      v-for="(b, i) in settings.budgets"
-      :key="i"
-      class="flex flex-wrap items-end gap-2 text-xs"
-    >
-      <label
-        >Month<input
-          v-model="b.month"
-          type="month"
-          required
-          class="neu-input mt-1 block" /></label
-      ><label
-        >Basis<select v-model="b.basis" class="neu-input mt-1 block">
-          <option value="gross">Gross IDR</option>
-          <option value="net">Estimated net IDR</option>
-        </select></label
-      ><label
-        >Target IDR<input
-          v-model.number="b.revenue"
-          type="number"
-          min="0"
-          required
-          class="neu-input mt-1 block" /></label
-      ><button
-        type="button"
-        class="p-2 underline"
-        @click="settings.budgets.splice(i, 1)"
-      >
-        Remove
-      </button>
-    </div>
-    <button
-      type="button"
-      class="block text-xs underline"
-      @click="
-        settings.budgets.push({
-          month: today.slice(0, 7),
-          basis: 'gross',
-          revenue: 0,
-        })
-      "
-    >
-      Add monthly target</button
-    ><button class="btn-primary px-3 py-2 text-xs" :disabled="settingsSaving">
-      {{ settingsSaving ? "Saving…" : "Save settings" }}</button
-    ><span class="ml-3 text-xs" role="status">{{ settingsMessage }}</span>
   </form>
+  <p v-else-if="settingsMessage" class="alert-error">{{ settingsMessage }}</p>
 </template>
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import { PlusIcon, TrashIcon } from "@heroicons/vue/24/outline";
 import axios from "../plugins/axios";
+import RmsCard from "./RmsCard.vue";
 import { num, type Settings, type Sync } from "../utils/rms";
 
 defineProps<{ today: string }>();

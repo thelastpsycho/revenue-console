@@ -1,6 +1,7 @@
 # RMS decision workspace
 
-The `/rms` page now provides Overview, Pace, PMS forecast, and Data & settings.
+The `/rms` page provides Overview, Pace & pickup, Forecast, Booking behaviour,
+Production, Inventory, and Data & settings.
 No RMS action changes prices or inventory in the PMS or D-EDGE.
 
 ## Operator workflow
@@ -10,8 +11,9 @@ No RMS action changes prices or inventory in the PMS or D-EDGE.
 2. Choose stay dates, room type, market, pickup window, and comparison; press
    **Apply**. The URL retains applied filters. Unapplied controls do not change
    displayed results, date drilldowns, or exports.
-3. Review **Dates requiring attention**. Thresholds are configurable. Click a date
-   for its curve, physical room availability, market segments and shared meeting note.
+3. Review **Dates to review** on Overview. Thresholds are configurable. Click a
+   date to open a side drawer with its curve, physical room availability, market
+   segments and shared meeting note.
 4. Select gross IDR or estimated net IDR revenue. Export the filtered pace table
    as CSV; notes, revenue basis, data-quality labels and source sync timestamp are
    included. Exported string fields are protected against spreadsheet formulas.
@@ -114,9 +116,13 @@ partial-month targets and CSV formula protection. No test uses live PMS data.
 
 ## Grouped reports
 
-RMS navigation groups reports into Performance & Forecast, Pace & Pickup,
-Booking Behaviour, Business Production, and Room Type & Inventory, alongside
-Overview and Data & Settings. Existing forecast/data deep links retain their IDs.
+RMS navigation groups reports into Overview, Pace & pickup, Forecast, Booking
+behaviour, Production (`?tab=business`), Inventory (`?tab=rooms`) and Data &
+settings. Tab IDs are unchanged, so existing deep links still work. Production
+groups by market, rate plan or room type and also holds the room/rate breakdown;
+Inventory is a room type × date heatmap of PMS expected occupancy and physical
+availability. Report caveats live in the filter bar's "About this data" popover;
+a dash (—) means a figure is unavailable.
 
 `GET /api/rms/reports` reads existing booking versions. Production is grouped by
 market ID, room-type code and RateId (falling back to RateType), with OTB nights,

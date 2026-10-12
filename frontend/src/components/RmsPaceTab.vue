@@ -1,387 +1,144 @@
 <template>
-  <div class="neu-card p-4">
-    <div class="flex justify-between">
-      <h2 class="font-semibold">Room nights & ADR</h2>
-      <nav class="flex gap-1" aria-label="Chart grouping">
+  <RmsCard
+    title="Pace vs last year"
+    :description="`Room nights and ADR · ${basisLabel}. IDR ADR coverage ${percent(idrCoverage)} of room nights.`"
+  >
+    <template #actions>
+      <div class="seg" role="group" aria-label="Chart grouping">
         <button
-          v-for="v in [
-            { id: 'daily', label: 'Daily' },
-            { id: 'weekly', label: 'Weekly' },
-            { id: 'monthly', label: 'Monthly' },
-          ]"
+          v-for="v in views"
           :key="v.id"
           type="button"
-          :class="[
-            'rounded-lg px-2.5 py-1 text-xs',
-            chartView === v.id ? 'bg-slate-800 text-white' : 'bg-slate-100',
-          ]"
-          :aria-current="chartView === v.id ? 'page' : undefined"
+          class="seg-btn"
+          :aria-pressed="chartView === v.id"
           @click="chartView = v.id"
         >
           {{ v.label }}
         </button>
-      </nav>
-    </div>
-    <p class="my-2 text-xs text-slate-500">
-      {{ basisLabel }}. IDR ADR coverage: {{ percent(idrCoverage) }} of room
-      nights. Comparison history may be estimated.
-    </p>
-    <div class="h-72">
+      </div>
+    </template>
+    <div class="h-72 p-4">
       <Chart type="bar" :data="chartData" :options="chartOptions" />
     </div>
-    <div class="overflow-x-auto border-t border-slate-200 pt-3">
-      <table class="min-w-full text-xs">
+    <div
+      v-if="chartTable.buckets.length"
+      class="overflow-x-auto border-t border-slate-200"
+    >
+      <table class="data-table">
         <thead>
           <tr>
-            <th class="sticky left-0 bg-white p-2 text-left">&nbsp;</th>
-            <th
-              v-for="b in chartTable.buckets"
-              :key="b.key"
-              class="whitespace-nowrap p-2 text-right font-bold text-slate-500"
-            >
+            <th class="sticky-col">&nbsp;</th>
+            <th v-for="b in chartTable.buckets" :key="b.key" class="num">
               {{ b.key }}
             </th>
-            <th class="whitespace-nowrap p-2 text-right font-bold">Total</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-slate-100">
-          <tr>
-            <td class="sticky left-0 bg-white p-2 font-semibold">
-              Room nights
-            </td>
-            <td
-              v-for="b in chartTable.buckets"
-              :key="b.key"
-              class="p-2 text-right tabular-nums"
-            >
-              {{ num(b.rooms) }}
-            </td>
-            <td class="p-2 text-right tabular-nums font-semibold">
-              {{ num(chartTable.totals.rooms) }}
-            </td>
-          </tr>
-          <tr>
-            <td class="sticky left-0 bg-white p-2 text-slate-500">
-              Room nights (Last year)
-            </td>
-            <td
-              v-for="b in chartTable.buckets"
-              :key="b.key"
-              class="p-2 text-right tabular-nums text-slate-500"
-            >
-              {{ num(b.comparison) }}
-            </td>
-            <td class="p-2 text-right tabular-nums font-semibold text-slate-500">
-              {{ num(chartTable.totals.comparison) }}
-            </td>
-          </tr>
-          <tr>
-            <td class="sticky left-0 bg-white p-2 text-slate-500">
-              % difference
-            </td>
-            <td
-              v-for="b in chartTable.buckets"
-              :key="b.key"
-              :class="[
-                'p-2 text-right tabular-nums',
-                signClass(pctDiff(b.rooms, b.comparison)),
-              ]"
-            >
-              {{ pctLabel(pctDiff(b.rooms, b.comparison)) }}
-            </td>
-            <td
-              :class="[
-                'p-2 text-right tabular-nums font-semibold',
-                signClass(
-                  pctDiff(chartTable.totals.rooms, chartTable.totals.comparison),
-                ),
-              ]"
-            >
-              {{
-                pctLabel(
-                  pctDiff(chartTable.totals.rooms, chartTable.totals.comparison),
-                )
-              }}
-            </td>
-          </tr>
-          <tr>
-            <td class="sticky left-0 bg-white p-2 pt-3 font-semibold">
-              Revenue
-            </td>
-            <td
-              v-for="b in chartTable.buckets"
-              :key="b.key"
-              class="p-2 pt-3 text-right tabular-nums"
-            >
-              {{ money(b.revenue) }}
-            </td>
-            <td class="p-2 pt-3 text-right tabular-nums font-semibold">
-              {{ money(chartTable.totals.revenue) }}
-            </td>
-          </tr>
-          <tr>
-            <td class="sticky left-0 bg-white p-2 text-slate-500">
-              Revenue (Last year)
-            </td>
-            <td
-              v-for="b in chartTable.buckets"
-              :key="b.key"
-              class="p-2 text-right tabular-nums text-slate-500"
-            >
-              {{ money(b.comparisonRevenue) }}
-            </td>
-            <td class="p-2 text-right tabular-nums font-semibold text-slate-500">
-              {{ money(chartTable.totals.comparisonRevenue) }}
-            </td>
-          </tr>
-          <tr>
-            <td class="sticky left-0 bg-white p-2 text-slate-500">
-              % difference
-            </td>
-            <td
-              v-for="b in chartTable.buckets"
-              :key="b.key"
-              :class="[
-                'p-2 text-right tabular-nums',
-                signClass(pctDiff(b.revenue, b.comparisonRevenue)),
-              ]"
-            >
-              {{ pctLabel(pctDiff(b.revenue, b.comparisonRevenue)) }}
-            </td>
-            <td
-              :class="[
-                'p-2 text-right tabular-nums font-semibold',
-                signClass(
-                  pctDiff(
-                    chartTable.totals.revenue,
-                    chartTable.totals.comparisonRevenue,
-                  ),
-                ),
-              ]"
-            >
-              {{
-                pctLabel(
-                  pctDiff(
-                    chartTable.totals.revenue,
-                    chartTable.totals.comparisonRevenue,
-                  ),
-                )
-              }}
-            </td>
-          </tr>
-          <tr>
-            <td class="sticky left-0 bg-white p-2 pt-3 font-semibold">
-              Average daily rate
-            </td>
-            <td
-              v-for="b in chartTable.buckets"
-              :key="b.key"
-              class="p-2 pt-3 text-right tabular-nums"
-            >
-              {{ money(b.adr) }}
-            </td>
-            <td class="p-2 pt-3 text-right tabular-nums font-semibold">
-              {{ money(chartTable.totals.adr) }}
-            </td>
-          </tr>
-          <tr>
-            <td class="sticky left-0 bg-white p-2 text-slate-500">
-              Average daily rate (Last year)
-            </td>
-            <td
-              v-for="b in chartTable.buckets"
-              :key="b.key"
-              class="p-2 text-right tabular-nums text-slate-500"
-            >
-              {{ money(b.comparisonAdr) }}
-            </td>
-            <td class="p-2 text-right tabular-nums font-semibold text-slate-500">
-              {{ money(chartTable.totals.comparisonAdr) }}
-            </td>
-          </tr>
-          <tr>
-            <td class="sticky left-0 bg-white p-2 text-slate-500">
-              % difference
-            </td>
-            <td
-              v-for="b in chartTable.buckets"
-              :key="b.key"
-              :class="[
-                'p-2 text-right tabular-nums',
-                signClass(pctDiff(b.adr, b.comparisonAdr)),
-              ]"
-            >
-              {{ pctLabel(pctDiff(b.adr, b.comparisonAdr)) }}
-            </td>
-            <td
-              :class="[
-                'p-2 text-right tabular-nums font-semibold',
-                signClass(
-                  pctDiff(chartTable.totals.adr, chartTable.totals.comparisonAdr),
-                ),
-              ]"
-            >
-              {{
-                pctLabel(
-                  pctDiff(chartTable.totals.adr, chartTable.totals.comparisonAdr),
-                )
-              }}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-  <div class="neu-card overflow-hidden">
-    <h2 class="p-4 font-semibold">Pickup by stay date</h2>
-    <p class="px-4 pb-3 text-xs text-slate-500">
-      New − cancellations + net amendments = net pickup, in room nights.
-      Amendments include date/segment moves and reinstatements.
-      Pre-observation breakdowns are estimates.
-    </p>
-    <div class="max-h-[60vh] overflow-auto">
-      <table class="min-w-full text-xs">
-        <thead class="sticky top-0 bg-white">
-          <tr>
-            <th
-              v-for="h in [
-                'Date',
-                'OTB',
-                'Revenue',
-                'New',
-                'Cancelled',
-                'Amendments',
-                'Net pickup',
-                'Comparison',
-                'Gap',
-                'LY / matched final',
-                'Quality',
-              ]"
-              :key="h"
-              class="whitespace-nowrap p-3 text-left"
-            >
-              {{ h }}
-            </th>
+            <th class="num text-slate-900">Total</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="r in rows" :key="r.date" class="border-t border-slate-100">
-            <td class="whitespace-nowrap p-3">
-              <button class="underline" @click="$emit('openDay', r.date)">
-                {{ dayLabel(r.date) }}
-              </button>
+          <tr v-for="m in metrics" :key="m.label">
+            <td class="sticky-col whitespace-nowrap font-semibold text-slate-900">
+              {{ m.label }}
             </td>
-            <td class="p-3">{{ num(currentRooms(r)) }}</td>
-            <td class="p-3">
-              {{
-                money(currentRooms(r) == null ? null : revenueFor(r, basis))
-              }}
-            </td>
-            <td class="p-3">{{ num(r.newRooms) }}</td>
-            <td class="p-3">{{ num(r.cancelledRooms) }}</td>
-            <td class="p-3">{{ signed(r.amendedRooms) }}</td>
-            <td class="p-3">{{ signed(r.pickupRooms) }}</td>
-            <td class="p-3">{{ num(r.stlyRooms) }}</td>
-            <td class="p-3">
-              {{ signed(difference(currentRooms(r), r.stlyRooms)) }}
-            </td>
-            <td class="p-3">{{ num(r.lyFinalRooms) }}</td>
-            <td class="p-3">
-              Comparison: {{ r.comparisonQuality }}<br />Pickup:
-              {{ r.pickupQuality }}
+            <td
+              v-for="b in [...chartTable.buckets, totalBucket]"
+              :key="b.key"
+              :class="['num whitespace-nowrap', b.key === 'Total' && 'font-semibold text-slate-900']"
+              :title="m.money ? `${money(m.cur(b))} · LY ${money(m.ly(b))}` : undefined"
+            >
+              {{ m.fmt(m.cur(b)) }}
+              <span class="sub">
+                LY {{ m.fmt(m.ly(b)) }} ·
+                <span :class="signClass(pctDiff(m.cur(b), m.ly(b)))">{{
+                  pctLabel(pctDiff(m.cur(b), m.ly(b)))
+                }}</span>
+              </span>
             </td>
           </tr>
         </tbody>
       </table>
     </div>
-  </div>
-  <div class="neu-card overflow-hidden">
-    <h2 class="p-4 font-semibold">Breakdown by room and rate</h2>
-    <p class="px-4 pb-3 text-xs text-slate-500">
-      {{ basisLabel }}. Current on-the-books nights and revenue for the
-      selected stay dates, by room type and rate plan. Rate plan is the PMS
-      rate code, not a channel-specific plan name.
-    </p>
-    <div class="max-h-[60vh] overflow-auto">
-      <table class="min-w-full text-xs">
-        <thead class="sticky top-0 bg-white">
-          <tr>
-            <th
-              v-for="h in ['Room / rate plan', 'Room nights', 'Revenue', 'ADR']"
-              :key="h"
-              class="whitespace-nowrap p-3 text-left"
+  </RmsCard>
+
+  <RmsCard
+    title="Pickup by stay date"
+    :description="`Net pickup over the last ${pickupDays} days = new − cancelled + amendments, in room nights. Select a date for its booking curve.`"
+    scroll
+  >
+    <template #actions>
+      <label class="flex items-center gap-1.5 text-xs text-slate-600">
+        <input v-model="behindOnly" type="checkbox" class="accent-slate-900" />
+        Behind LY only
+      </label>
+    </template>
+    <table v-if="pickupRows.length" class="data-table">
+      <thead>
+        <tr>
+          <th>Stay date</th>
+          <th class="num">OTB</th>
+          <th class="num" title="On the books minus the comparison date's position at the same lead time">
+            vs LY
+          </th>
+          <th class="num">Net pickup</th>
+          <th class="num">Revenue</th>
+          <th class="num" title="Final room nights on the last-year / matched date">
+            LY final
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="r in pickupRows" :key="r.date">
+          <td class="whitespace-nowrap">
+            <button class="row-link" @click="$emit('openDay', r.date)">
+              {{ dayLabel(r.date) }}
+            </button>
+            <span
+              v-if="estimated(r)"
+              class="ml-1 text-[11px] font-semibold text-amber-700"
+              :title="`Comparison: ${r.comparisonQuality} · Pickup: ${r.pickupQuality}`"
+              >est.</span
             >
-              {{ h }}
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <template v-for="rt in breakdown?.roomTypes || []" :key="rt.id">
-            <tr class="border-t border-slate-200 bg-slate-50 font-semibold">
-              <td class="p-3">{{ label(rt.id) }}</td>
-              <td class="p-3">{{ num(rt.rooms) }}</td>
-              <td class="p-3">{{ money(breakdownRevenue(rt, basis)) }}</td>
-              <td class="p-3">
-                {{ money(ratio(breakdownRevenue(rt, basis), rt.idrRooms)) }}
-              </td>
-            </tr>
-            <tr
-              v-for="p in rt.ratePlans"
-              :key="rt.id + ':' + p.id"
-              class="border-t border-slate-100"
-            >
-              <td class="p-3 pl-8 text-slate-600">{{ p.id }}</td>
-              <td class="p-3">{{ num(p.rooms) }}</td>
-              <td class="p-3">{{ money(breakdownRevenue(p, basis)) }}</td>
-              <td class="p-3">
-                {{ money(ratio(breakdownRevenue(p, basis), p.idrRooms)) }}
-              </td>
-            </tr>
-          </template>
-        </tbody>
-        <tfoot
-          v-if="breakdown?.roomTypes.length"
-          class="sticky bottom-0 bg-slate-100 font-semibold"
-        >
-          <tr>
-            <td class="p-3">Total</td>
-            <td class="p-3">{{ num(breakdown.total.rooms) }}</td>
-            <td class="p-3">{{ money(breakdownRevenue(breakdown.total, basis)) }}</td>
-            <td class="p-3">
-              {{
-                money(
-                  ratio(breakdownRevenue(breakdown.total, basis), breakdown.total.idrRooms),
-                )
-              }}
-            </td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-    <p v-if="!breakdown?.roomTypes.length" class="p-4 text-sm text-slate-500">
-      Apply a range to load data.
-    </p>
-  </div>
+          </td>
+          <td class="num">{{ num(currentRooms(r)) }}</td>
+          <td :class="['num', signClass(gap(r))]">{{ signed(gap(r)) }}</td>
+          <td class="num whitespace-nowrap">
+            {{ signed(r.pickupRooms) }}
+            <span class="sub">{{ pickupParts(r) }}</span>
+          </td>
+          <td class="num" :title="money(rowRevenue(r))">
+            {{ moneyShort(rowRevenue(r)) }}
+          </td>
+          <td class="num">{{ num(r.lyFinalRooms) }}</td>
+        </tr>
+      </tbody>
+    </table>
+    <template v-if="!pickupRows.length" #empty>
+      {{
+        rows.length
+          ? "No dates are behind last year."
+          : "Apply a range to load data."
+      }}
+    </template>
+  </RmsCard>
 </template>
 <script setup lang="ts">
+import { computed, ref } from "vue";
 import { Chart } from "vue-chartjs";
 import type { ChartOptions, ChartTypeRegistry } from "chart.js";
+import RmsCard from "./RmsCard.vue";
 import {
   num,
   money,
+  moneyShort,
   signed,
   percent,
   dayLabel,
   difference,
-  ratio,
   pctDiff,
   pctLabel,
   signClass,
   currentRooms,
   revenueFor,
-  breakdownRevenue,
   type PaceRow,
-  type Breakdown,
 } from "../utils/rms";
 interface Bucket {
   key: string;
@@ -392,17 +149,49 @@ interface Bucket {
   adr: number | null;
   comparisonAdr: number | null;
 }
-defineProps<{
+const props = defineProps<{
   rows: PaceRow[];
   chartData: any;
   chartOptions: ChartOptions<keyof ChartTypeRegistry>;
   chartTable: { buckets: Bucket[]; totals: Omit<Bucket, "key"> };
   basisLabel: string;
   idrCoverage: number | null;
-  breakdown: Breakdown | null;
   basis: "gross" | "net";
-  label: (code: string) => string;
+  pickupDays: number;
 }>();
 defineEmits<{ openDay: [date: string] }>();
 const chartView = defineModel<string>("chartView", { required: true });
+const behindOnly = ref(false);
+
+const views = [
+  { id: "daily", label: "Daily" },
+  { id: "weekly", label: "Weekly" },
+  { id: "monthly", label: "Monthly" },
+];
+// Each summary row shows the current value with LY and % change underneath.
+const metrics = [
+  { label: "Room nights", cur: (b: Bucket) => b.rooms, ly: (b: Bucket) => b.comparison, fmt: num, money: false },
+  { label: "Revenue", cur: (b: Bucket) => b.revenue, ly: (b: Bucket) => b.comparisonRevenue, fmt: moneyShort, money: true },
+  { label: "ADR", cur: (b: Bucket) => b.adr, ly: (b: Bucket) => b.comparisonAdr, fmt: moneyShort, money: true },
+];
+const totalBucket = computed<Bucket>(() => ({
+  key: "Total",
+  ...props.chartTable.totals,
+}));
+
+const gap = (r: PaceRow) => difference(currentRooms(r), r.stlyRooms);
+const rowRevenue = (r: PaceRow) =>
+  currentRooms(r) == null ? null : revenueFor(r, props.basis);
+const estimated = (r: PaceRow) =>
+  [r.comparisonQuality, r.pickupQuality].includes("estimated");
+function pickupParts(r: PaceRow) {
+  const parts = [`${num(r.newRooms)} new`, `${num(r.cancelledRooms)} cxl`];
+  if (r.amendedRooms) parts.push(`${signed(r.amendedRooms)} amd`);
+  return parts.join(" · ");
+}
+const pickupRows = computed(() =>
+  behindOnly.value
+    ? props.rows.filter((r) => (gap(r) ?? 0) < 0)
+    : props.rows,
+);
 </script>

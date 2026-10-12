@@ -1,70 +1,171 @@
 <template>
-  <div class="flex justify-between">
-    <h2 class="font-semibold">
-      {{ dayLabel(selectedDate) }} — booking curve & review
-    </h2>
-    <button class="text-xs underline" @click="$emit('close')">Close</button>
-  </div>
-  <p v-if="curveLoading" class="text-xs">Loading booking curve…</p>
-  <p v-if="curveError" role="alert" class="text-xs text-rose-700">
-    {{ curveError }}
-  </p>
-  <p class="text-xs text-slate-500">
-    Current curve stops at today. Earlier reconstructed history is estimated;
-    gaps mean unavailable. Comparison: {{ curve?.lyDate }}.
-  </p>
-  <div class="h-60">
-    <Chart type="line" :data="curveData" :options="curveOptions" :plugins="[todayMarker]" />
-  </div>
-  <div class="grid gap-4 md:grid-cols-2">
-    <div>
-      <h3 class="text-sm font-semibold">Physical availability</h3>
-      <p v-if="!selectedAvailability.length" class="text-xs">
-        Unavailable for this date.
-      </p>
-      <div class="mt-2 flex flex-wrap gap-2">
-        <span
-          v-for="r in selectedAvailability"
-          :key="r.type"
-          class="rounded bg-slate-50 p-2 text-xs"
-          >{{ label(r.type) }}: {{ num(r.rooms) }}</span
+  <Teleport to="body">
+    <transition
+      enter-active-class="transition duration-150 ease-out"
+      enter-from-class="opacity-0"
+      leave-active-class="transition duration-100 ease-in"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="selectedDate"
+        class="fixed inset-0 z-40 flex justify-end bg-slate-900/30"
+        @mousedown.self="$emit('close')"
+      >
+        <aside
+          ref="panel"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="rms-day-title"
+          tabindex="-1"
+          class="flex h-full w-full max-w-2xl flex-col overflow-hidden border-l border-slate-200 bg-white shadow-xl outline-none"
+          @keydown.esc.prevent="$emit('close')"
+          @keydown.tab="trapFocus"
         >
+          <header
+            class="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4"
+          >
+            <div>
+              <p class="field-label !mb-0">Stay date</p>
+              <h2 id="rms-day-title" class="text-base font-semibold text-slate-900">
+                {{ dayLabel(selectedDate) }}
+              </h2>
+              <p class="text-[11px] text-slate-500">
+                Compared with {{ curve?.lyDate ? dayLabel(curve.lyDate) : "—" }}
+              </p>
+            </div>
+            <button
+              type="button"
+              class="btn-icon"
+              aria-label="Close"
+              @click="$emit('close')"
+            >
+              <XMarkIcon class="h-4 w-4" />
+            </button>
+          </header>
+
+          <div class="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+            <section>
+              <h3 class="text-sm font-semibold text-slate-900">Booking curve</h3>
+              <p class="mt-0.5 text-[11px] text-slate-500">
+                Current curve stops at today. Earlier reconstructed history is
+                estimated; gaps mean unavailable.
+              </p>
+              <p v-if="curveLoading" class="mt-2 text-xs text-slate-500">
+                Loading booking curve…
+              </p>
+              <p v-if="curveError" role="alert" class="alert-error mt-2">
+                {{ curveError }}
+              </p>
+              <div class="mt-2 h-60">
+                <Chart
+                  type="line"
+                  :data="curveData"
+                  :options="curveOptions"
+                  :plugins="[todayMarker]"
+                />
+              </div>
+            </section>
+
+            <section>
+              <h3 class="text-sm font-semibold text-slate-900">
+                Physical availability
+              </h3>
+              <p
+                v-if="!selectedAvailability.length"
+                class="mt-1 text-xs text-slate-500"
+              >
+                Unavailable for this date.
+              </p>
+              <dl v-else class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <div
+                  v-for="r in selectedAvailability"
+                  :key="r.type"
+                  class="rounded-lg border border-slate-200 px-3 py-2"
+                >
+                  <dt class="truncate text-[11px] text-slate-500">
+                    {{ label(r.type) }}
+                  </dt>
+                  <dd
+                    :class="[
+                      'text-sm font-semibold tabular-nums',
+                      r.rooms < 0 ? 'text-rose-700' : 'text-slate-900',
+                    ]"
+                  >
+                    {{ num(r.rooms) }}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+
+            <section>
+              <h3 class="text-sm font-semibold text-slate-900">
+                PMS segment breakdown
+              </h3>
+              <p
+                v-if="!selectedSegments.length"
+                class="mt-1 text-xs text-slate-500"
+              >
+                Unavailable for this date.
+              </p>
+              <table v-else class="data-table mt-1">
+                <thead>
+                  <tr>
+                    <th>Segment</th>
+                    <th class="num">Nights</th>
+                    <th class="num">Revenue</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="s in selectedSegments" :key="s.marketId">
+                    <td>{{ s.market }}</td>
+                    <td class="num">{{ num(s.rooms) }}</td>
+                    <td class="num" :title="money(s.revenue)">
+                      {{ moneyShort(s.revenue) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+          </div>
+
+          <footer class="space-y-2 border-t border-slate-200 bg-slate-50 px-5 py-4">
+            <label class="block">
+              <span class="field-label">Meeting note — no guest details</span>
+              <textarea
+                v-model="noteDraft"
+                maxlength="2000"
+                rows="3"
+                class="neu-input"
+              />
+            </label>
+            <div class="flex items-center gap-3">
+              <button
+                type="button"
+                class="btn-primary"
+                :disabled="noteSaving"
+                @click="$emit('saveNote')"
+              >
+                {{ noteSaving ? "Saving…" : "Save note" }}
+              </button>
+              <span v-if="savedNote" class="text-[11px] text-slate-500"
+                >Saved {{ timestamp(savedNote.updatedAt) }}</span
+              >
+            </div>
+          </footer>
+        </aside>
       </div>
-    </div>
-    <div>
-      <h3 class="text-sm font-semibold">PMS segment breakdown</h3>
-      <p v-if="!selectedSegments.length" class="text-xs">
-        Unavailable for this date.
-      </p>
-      <p v-for="s in selectedSegments" :key="s.marketId" class="mt-1 text-xs">
-        {{ s.market }}: {{ num(s.rooms) }} nights · {{ money(s.revenue) }}
-      </p>
-    </div>
-  </div>
-  <label class="block text-xs font-semibold"
-    >Meeting note — do not enter guest details<textarea
-      v-model="noteDraft"
-      maxlength="2000"
-      rows="3"
-      class="neu-input mt-1 w-full"
-    /></label
-  ><button
-    class="btn-primary px-3 py-2 text-xs"
-    :disabled="noteSaving"
-    @click="$emit('saveNote')"
-  >
-    {{ noteSaving ? "Saving…" : "Save note" }}</button
-  ><span v-if="savedNote" class="ml-3 text-xs"
-    >Saved {{ timestamp(savedNote.updatedAt) }}</span
-  >
+    </transition>
+  </Teleport>
 </template>
 <script setup lang="ts">
+import { nextTick, ref, watch } from "vue";
 import { Chart } from "vue-chartjs";
 import type { ChartOptions, ChartTypeRegistry } from "chart.js";
-import { num, money, timestamp, dayLabel } from "../utils/rms";
+import { XMarkIcon } from "@heroicons/vue/24/outline";
+import { num, money, moneyShort, timestamp, dayLabel } from "../utils/rms";
 import type { Curve } from "../utils/rms";
 
-defineProps<{
+const props = defineProps<{
   selectedDate: string;
   curve: Curve | null;
   curveLoading: boolean;
@@ -80,4 +181,45 @@ defineProps<{
 }>();
 defineEmits<{ close: []; saveNote: [] }>();
 const noteDraft = defineModel<string>("noteDraft", { required: true });
+
+// Focus the drawer when it opens so Esc closes it straight away, give focus
+// back to whatever had it when the drawer closes, and trap Tab inside it
+// while open - matching AppDialog.vue's pattern, generalised since this
+// panel has many focusable children instead of a fixed button pair.
+const panel = ref<HTMLElement | null>(null);
+let returnFocus: HTMLElement | null = null;
+watch(
+  () => props.selectedDate,
+  async (d) => {
+    if (d) {
+      returnFocus = document.activeElement as HTMLElement | null;
+      await nextTick();
+      panel.value?.focus();
+    } else {
+      returnFocus?.focus?.();
+      returnFocus = null;
+    }
+  },
+);
+
+function trapFocus(event: KeyboardEvent) {
+  const focusable = panel.value?.querySelectorAll<HTMLElement>(
+    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  );
+  if (!focusable || focusable.length === 0) {
+    event.preventDefault();
+    return;
+  }
+  const elements = Array.from(focusable);
+  const index = elements.indexOf(document.activeElement as HTMLElement);
+  const next = event.shiftKey
+    ? index <= 0
+      ? elements.length - 1
+      : index - 1
+    : index === -1 || index === elements.length - 1
+      ? 0
+      : index + 1;
+  event.preventDefault();
+  elements[next].focus();
+}
 </script>

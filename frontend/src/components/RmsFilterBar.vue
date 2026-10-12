@@ -1,165 +1,209 @@
 <template>
-  <form
-    class="neu-card flex flex-wrap items-end gap-3 p-4 text-xs"
-    @submit.prevent="$emit('submit')"
-  >
-    <div ref="dateMenuRef" class="relative space-y-1">
-      <span class="block font-semibold text-slate-600">Stay dates</span>
-      <button
-        type="button"
-        class="neu-input flex items-center gap-2 py-1.5 text-xs"
-        @click="dateMenuOpen = !dateMenuOpen"
-      >
-        {{ shortDayYear(filters.start) }} – {{ shortDayYear(filters.end) }}
-      </button>
-      <div
-        v-if="dateMenuOpen"
-        class="neu-card absolute left-0 top-full z-20 mt-1 w-72 space-y-3 p-3 shadow-neu-sm"
-      >
-        <div class="flex gap-1.5">
-          <button
-            type="button"
-            class="btn-flat flex-1 px-2 py-1 text-xs"
-            @click="applyDatePreset(3)"
-          >
-            Next 3 months
-          </button>
-          <button
-            type="button"
-            class="btn-flat flex-1 px-2 py-1 text-xs"
-            @click="applyDatePreset(5)"
-          >
-            Next 5 months
-          </button>
-        </div>
-        <div class="border-t border-slate-200 pt-3">
-          <p class="mb-1.5 font-semibold text-slate-600">Custom range</p>
-          <DateRangeCalendar
-            v-model:start="filters.start"
-            v-model:end="filters.end"
-          />
-          <div class="mt-2 flex justify-end">
+  <form class="neu-card relative p-4" @submit.prevent="$emit('submit')">
+    <div class="flex flex-wrap items-end gap-3">
+      <div ref="dateMenuRef" class="relative">
+        <span class="field-label">Stay dates</span>
+        <button
+          type="button"
+          class="neu-input flex items-center gap-2 whitespace-nowrap"
+          :aria-expanded="dateMenuOpen"
+          @click="dateMenuOpen = !dateMenuOpen"
+        >
+          <CalendarDaysIcon class="h-4 w-4 text-slate-400" />
+          {{ shortDayYear(filters.start) }} – {{ shortDayYear(filters.end) }}
+        </button>
+        <div
+          v-if="dateMenuOpen"
+          class="neu-card absolute left-0 top-full z-30 mt-1 w-72 space-y-3 p-3 shadow-lg"
+        >
+          <div class="grid grid-cols-3 gap-1.5">
             <button
               type="button"
-              class="btn-primary px-3 py-1 text-xs"
-              :disabled="!filters.start || !filters.end"
-              @click="dateMenuOpen = false"
+              class="btn-flat px-2 py-1 text-xs"
+              @click="thisMonth"
             >
-              Done
+              This month
             </button>
+            <button
+              type="button"
+              class="btn-flat px-2 py-1 text-xs"
+              @click="applyDatePreset(3)"
+            >
+              3 months
+            </button>
+            <button
+              type="button"
+              class="btn-flat px-2 py-1 text-xs"
+              @click="applyDatePreset(5)"
+            >
+              5 months
+            </button>
+          </div>
+          <div class="border-t border-slate-200 pt-3">
+            <span class="field-label">Custom range</span>
+            <DateRangeCalendar
+              v-model:start="filters.start"
+              v-model:end="filters.end"
+            />
+            <div class="mt-2 flex justify-end">
+              <button
+                type="button"
+                class="btn-primary px-3 py-1 text-xs"
+                :disabled="!filters.start || !filters.end"
+                @click="dateMenuOpen = false"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       </div>
+      <label>
+        <span class="field-label">Room type</span>
+        <select v-model="filters.roomType" class="neu-input">
+          <option value="">All room types</option>
+          <option v-for="r in dims.roomTypes" :key="r" :value="r">
+            {{ dims.labels[r] || r }}
+          </option>
+        </select>
+      </label>
+      <label>
+        <span class="field-label">Market</span>
+        <select v-model="filters.marketId" class="neu-input">
+          <option value="">All markets</option>
+          <option v-for="m in dims.markets" :key="m.id" :value="String(m.id)">
+            {{ m.name }}
+          </option>
+        </select>
+      </label>
+      <label>
+        <span class="field-label">Compare with</span>
+        <select v-model="filters.comparison" class="neu-input">
+          <option value="weekday">Same weekday last year</option>
+          <option value="calendar">Same date last year</option>
+          <option value="custom">Matched event / holiday</option>
+        </select>
+      </label>
+      <label v-if="filters.comparison === 'custom'">
+        <span class="field-label">Comparison begins</span>
+        <input
+          v-model="filters.comparisonStart"
+          type="date"
+          required
+          class="neu-input"
+        />
+      </label>
+      <label>
+        <span class="field-label">Pickup window</span>
+        <select v-model.number="filters.pickupDays" class="neu-input">
+          <option v-for="d in [1, 3, 7, 14, 30]" :key="d" :value="d">
+            {{ d }} {{ d === 1 ? "day" : "days" }}
+          </option>
+        </select>
+      </label>
+      <label>
+        <span class="field-label">Revenue basis</span>
+        <select v-model="basis" class="neu-input">
+          <option value="gross">Gross IDR</option>
+          <option value="net">Estimated net IDR</option>
+        </select>
+      </label>
+      <button
+        :class="['btn-primary', dirty && 'ring-2 ring-amber-300']"
+        :disabled="loading"
+      >
+        <ArrowPathIcon v-if="loading" class="h-4 w-4 animate-spin" />
+        {{ loading ? "Loading…" : dirty ? "Apply changes" : "Apply" }}
+      </button>
     </div>
-    <label
-      >Room type<select v-model="filters.roomType" class="neu-input mt-1 block">
-        <option value="">All</option>
-        <option v-for="r in dims.roomTypes" :key="r" :value="r">
-          {{ dims.labels[r] || r }}
-        </option>
-      </select></label
+
+    <div
+      class="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3"
     >
-    <label
-      >Market<select v-model="filters.marketId" class="neu-input mt-1 block">
-        <option value="">All</option>
-        <option v-for="m in dims.markets" :key="m.id" :value="String(m.id)">
-          {{ m.name }}
-        </option>
-      </select></label
-    >
-    <label
-      >Pickup<select
-        v-model.number="filters.pickupDays"
-        class="neu-input mt-1 block"
+      <span v-if="dirty" class="pill pill-warn">
+        Filters changed — figures still show the previous selection
+      </span>
+      <span v-if="sync" :class="['pill', syncPill.tone]" :title="syncPill.title">
+        {{ syncPill.text }}
+      </span>
+      <span v-if="newDataAvailable" class="pill pill-warn">
+        New booking data — press Apply
+      </span>
+      <span
+        v-if="forecast"
+        :class="['pill', pmsPill.tone]"
+        :title="pmsPill.title"
       >
-        <option v-for="d in [1, 3, 7, 14, 30]" :key="d" :value="d">
-          {{ d }} days
-        </option>
-      </select></label
-    >
-    <label
-      >Compare with<select
-        v-model="filters.comparison"
-        class="neu-input mt-1 block"
+        {{ pmsPill.text }}
+      </span>
+      <button
+        v-if="forecast"
+        type="button"
+        class="pill pill-muted cursor-pointer hover:border-slate-300"
+        :disabled="forecastBusy"
+        @click="$emit('refreshForecast')"
       >
-        <option value="weekday">Same weekday last year</option>
-        <option value="calendar">Same calendar date last year</option>
-        <option value="custom">Matched event / holiday</option>
-      </select></label
-    >
-    <label v-if="filters.comparison === 'custom'"
-      >Comparison begins<input
-        v-model="filters.comparisonStart"
-        type="date"
-        required
-        class="neu-input mt-1 block"
-    /></label>
-    <label
-      >Revenue basis<select v-model="basis" class="neu-input mt-1 block">
-        <option value="gross">Gross IDR rate</option>
-        <option value="net">Estimated net IDR rate</option>
-      </select></label
-    >
-    <button class="btn-primary px-3 py-2" :disabled="loading">
-      {{ loading ? "Loading…" : "Apply" }}</button
-    ><button type="button" class="btn-flat px-3 py-2" @click="thisMonth">
-      This month</button
-    ><button
-      type="button"
-      class="btn-flat px-3 py-2"
-      :disabled="!rowsLength"
-      @click="$emit('exportCsv')"
-    >
-      Export CSV
-    </button>
+        <ArrowPathIcon :class="['h-3 w-3', forecastBusy && 'animate-spin']" />
+        Refresh PMS reports
+      </button>
+      <details class="group ml-auto text-xs text-slate-500">
+        <summary
+          class="flex cursor-pointer list-none items-center gap-1 font-semibold hover:text-slate-900"
+        >
+          <InformationCircleIcon class="h-4 w-4" />
+          About this data
+        </summary>
+        <div
+          class="neu-card absolute right-4 z-30 mt-2 max-w-lg space-y-2 p-4 text-xs leading-relaxed text-slate-600 shadow-lg sm:right-6"
+        >
+          <p v-if="loaded">
+            <strong>Showing:</strong> {{ loaded.start }} – {{ loaded.end }} ·
+            {{ loaded.roomType ? dims.labels[loaded.roomType] || loaded.roomType : "all room types" }}
+            · {{ loaded.marketId ? marketName(loaded.marketId) : "all markets" }}
+            · {{ comparisonLabel }} · {{ loaded.pickupDays }}-day pickup.
+          </p>
+          <p>
+            <strong>Booking data:</strong> last successful sync
+            {{ timestamp(sync?.lastSuccessfulSync) }}; figures shown are from
+            the sync of {{ timestamp(reportSync?.lastSuccessfulSync) }}.
+            Booking-date coverage from
+            {{ sync?.coverageFrom || "— (run backfill in Data & settings)" }}.
+          </p>
+          <p>
+            Observed history records what each sync saw. Earlier history is
+            reconstructed and marked <em>est.</em> A dash (—) means the figure
+            is unavailable. No currency conversion is applied: revenue and ADR
+            cover IDR-priced room nights only.
+          </p>
+          <p>
+            PMS reports cover the first 90 selected days; pace covers up to
+            366. PMS forecast revenue uses the PMS definition and is not
+            combined with booking-rate revenue.
+          </p>
+          <ul v-if="forecast" class="space-y-0.5">
+            <li v-for="(s, k) in forecast.sections" :key="k">
+              <strong>{{ k }}</strong>: {{ sectionState(s) }} ·
+              {{ timestamp(s.fetchedAt) }}
+              <span v-if="s.error" class="text-rose-700">— {{ s.error }}</span>
+            </li>
+          </ul>
+        </div>
+      </details>
+    </div>
   </form>
-  <p v-if="dirty" class="text-xs text-amber-800">
-    Filters changed. Press Apply. Displayed data and exports still use the
-    previous selection.
-  </p>
-  <p v-if="loaded" class="text-xs text-slate-500">
-    Showing {{ loaded.start }}–{{ loaded.end }} ·
-    {{ loaded.roomType ? dims.labels[loaded.roomType] || loaded.roomType : "All room types" }} ·
-    {{ loaded.marketId ? marketName(loaded.marketId) : "All markets" }} ·
-    {{ comparisonLabel }} · {{ loaded.pickupDays }}-day pickup.
-  </p>
-  <div v-if="forecast" class="flex flex-wrap gap-3 text-xs text-slate-500">
-    <span v-for="(s, k) in forecast.sections" :key="k"
-      >{{ k }}:
-      {{
-        s.refreshing
-          ? "refreshing…"
-          : s.error
-            ? "failed"
-            : s.stale
-              ? "stale"
-              : "ready"
-      }}
-      · {{ timestamp(s.fetchedAt)
-      }}<span v-if="s.error" class="text-rose-700"> {{ s.error }}</span></span
-    ><button class="underline" :disabled="forecastBusy" @click="$emit('refreshForecast')">
-      Refresh PMS reports
-    </button>
-  </div>
-  <p v-if="loaded" class="text-xs text-slate-500">
-    Displayed booking data from sync: {{ timestamp(reportSync?.lastSuccessfulSync) }}.
-    {{
-      reportSync?.lastSuccessfulSync !== sync?.lastSuccessfulSync
-        ? "New data is available — press Apply."
-        : ""
-    }}
-  </p>
-  <p class="text-xs text-slate-500">
-    PMS reports cover the first 90 selected days; pace covers up to 366. PMS
-    forecast revenue uses the PMS definition and is not combined with
-    booking-rate revenue.
-  </p>
 </template>
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from "vue";
+import { computed, ref, onMounted, onBeforeUnmount } from "vue";
+import {
+  ArrowPathIcon,
+  CalendarDaysIcon,
+  InformationCircleIcon,
+} from "@heroicons/vue/24/outline";
 import DateRangeCalendar from "./DateRangeCalendar.vue";
 import { addDays, shortDayYear, timestamp } from "../utils/rms";
 import type { Filters, Forecast, Sync } from "../utils/rms";
+
+type Section = Forecast["sections"][string];
 
 const props = defineProps<{
   filters: Filters;
@@ -176,18 +220,63 @@ const props = defineProps<{
   forecastBusy: boolean;
   reportSync: Sync | null;
   sync: Sync | null;
-  rowsLength: number;
   today: string;
 }>();
 const emit = defineEmits<{
   submit: [];
-  exportCsv: [];
   refreshForecast: [];
 }>();
 const basis = defineModel<"gross" | "net">("basis", { required: true });
 
 const marketName = (id: string) =>
   props.dims.markets.find((m) => String(m.id) === id)?.name || id;
+
+const sectionState = (s: Section) =>
+  s.refreshing ? "refreshing…" : s.error ? "failed" : s.stale ? "stale" : "ready";
+
+const newDataAvailable = computed(
+  () =>
+    !!props.loaded &&
+    !!props.sync &&
+    props.reportSync?.lastSuccessfulSync !== props.sync.lastSuccessfulSync,
+);
+
+const syncPill = computed(() => {
+  const s = props.sync;
+  const title = `Last successful sync: ${timestamp(s?.lastSuccessfulSync)}`;
+  if (s?.job.running)
+    return {
+      tone: "pill-muted",
+      text: `Syncing bookings ${s.job.done}/${s.job.total}`,
+      title,
+    };
+  if (s?.stale)
+    return { tone: "pill-warn", text: "Booking data needs refresh", title };
+  return {
+    tone: "pill-ok",
+    text: `Bookings synced ${timestamp(s?.lastSuccessfulSync)}`,
+    title,
+  };
+});
+
+const pmsPill = computed(() => {
+  const sections = Object.entries(props.forecast?.sections || {});
+  const title = sections
+    .map(([k, s]) => `${k}: ${sectionState(s)}${s.error ? ` — ${s.error}` : ""}`)
+    .join("\n");
+  const failed = sections.filter(([, s]) => s.error).length;
+  if (sections.some(([, s]) => s.refreshing))
+    return { tone: "pill-muted", text: "PMS reports refreshing…", title };
+  if (failed)
+    return {
+      tone: "pill-bad",
+      text: `${failed} PMS report${failed > 1 ? "s" : ""} failed`,
+      title,
+    };
+  if (sections.some(([, s]) => s.stale))
+    return { tone: "pill-warn", text: "PMS reports stale", title };
+  return { tone: "pill-ok", text: "PMS reports ready", title };
+});
 
 const dateMenuOpen = ref(false),
   dateMenuRef = ref<HTMLElement | null>(null);
@@ -215,6 +304,7 @@ function thisMonth() {
       .slice(0, 10),
     -1,
   );
+  dateMenuOpen.value = false;
   emit("submit");
 }
 onMounted(() => document.addEventListener("mousedown", onDateMenuClickOutside));
