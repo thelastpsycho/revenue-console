@@ -65,6 +65,23 @@ LABEL_BY_CHECKBOX_VALUE = {
     config["checkbox_value"]: config["label"] for config in FULL_ROOM_TYPE_CONFIG.values()
 }
 
+# Bed-configuration variant -> the representative checkbox value sold as a single
+# online room type, matching pms_processor.py's physical-inventory grouping (its
+# source-of-truth comment: DLK+DLT -> Deluxe, DLKP+DLTP -> Deluxe Pool Access,
+# PRKG+PRKP+PRTG+PRTP -> Premiere, PRKL+PRTL -> Premiere Room Lagoon Access).
+# Bookings carry the variant PMS used for that stay (e.g. "PRTG" for a twin-bed
+# Premiere), not the representative code allotment pushes to - without this,
+# RMS room-type filtering/labelling fragments one sellable room type across
+# several unlabelled codes (PRTG alone is a third of PRKG's booking volume).
+TYPE_ID_ALIASES = {
+    "DLK": "DLT",
+    "DLKP": "DLTP",
+    "PRKP": "PRKG",
+    "PRTG": "PRKG",
+    "PRTP": "PRKG",
+    "PRTL": "PRKL",
+}
+
 
 def _to_pms_date(iso_date):
     """'YYYY-MM-DD' -> 'YYYY/MM/DD', matching convertDateInputToDateDB() in

@@ -51,6 +51,24 @@ def test_ingest_keeps_master_folio_and_drops_pii(data_dir):
     assert conn.execute("SELECT COUNT(*) FROM booking_nights WHERE reservation_id = 1").fetchone()[0] == 1
 
 
+def test_ingest_canonicalizes_bed_configuration_variants_to_the_sellable_room_type(data_dir):
+    """PMS TypeId distinguishes bed configuration (e.g. PRTG = Premiere Twin
+    Garden) within one sellable online room type - RMS must group/filter by
+    the representative code (PRKG), matching pms_processor.py's physical-
+    inventory grouping, or it silently drops a large share of bookings when
+    filtered by room type."""
+    be.upsert([
+        api_row(1, "2026-10-01", "2026-10-20", "2026-10-21", type_id="PRTG"),
+        api_row(2, "2026-10-01", "2026-10-20", "2026-10-21", type_id="PRKP"),
+        api_row(3, "2026-10-01", "2026-10-20", "2026-10-21", type_id="PRKG"),
+    ])
+    conn = sqlite3.connect(data_dir / be.DB_FILE)
+    rows = conn.execute("SELECT type_id FROM bookings ORDER BY reservation_id").fetchall()
+    assert [r[0] for r in rows] == ["PRKG", "PRKG", "PRKG"]
+    otb = be.on_the_books("2026-10-20", "2026-10-21", "2026-10-11", room_type="PRKG")
+    assert otb["2026-10-20"]["rooms"] == 3
+
+
 def test_on_the_books_respects_booking_and_cancel_dates():
     be.upsert([
         api_row(1, "2026-10-01", "2026-10-20", "2026-10-22"),

@@ -38,6 +38,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from ..infrastructure.paths import get_data_path
 from ..integrations.pms.api_client import PMSApiClient, PMSApiError
+from ..integrations.pms.fast_allotment_updater import TYPE_ID_ALIASES
 
 DB_FILE = "booking_events.db"
 STATUSES = "D,T,Q,I,O,L,N"
@@ -191,7 +192,7 @@ def _normalize(row):
         "departure_date": _day(row["DepartureDate"]),
         "nights": int(row.get("Nights") or 0),
         "status": row.get("ReservationStatus") or "",
-        "type_id": row.get("TypeId"),
+        "type_id": TYPE_ID_ALIASES.get(row.get("TypeId"), row.get("TypeId")),
         "rate_type": row.get("RateType"),
         "rate_id": row.get("RateId"),
         "market_id": row.get("MarketId"),
