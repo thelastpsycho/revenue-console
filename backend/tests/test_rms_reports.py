@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 
 from app.revenue import booking_events as be
-from app.revenue.rms_reports import build_reports
+from app.revenue.rms_reports import build_reports, room_rate_breakdown
 from test_rms import api_row, client
 
 
@@ -77,3 +77,45 @@ def test_custom_period_and_idr_rates_use_existing_rules():
     r = build_reports('2026-12-01', '2026-12-01', comparison='custom', comparison_start='2025-11-01')['production']['market'][0]
     assert r['netRevenue'] == pytest.approx(1000000)
     assert r['comparison']['rooms'] == 1 and r['comparisonQuality'] == 'estimated'
+
+
+def test_breakdown_nests_rate_plans_under_room_type_and_reconciles_totals():
+    be.upsert([
+        api_row(1, '2026-09-01', '2026-12-01', '2026-12-03', type_id='DLT', rate=1000000),
+        {**api_row(2, '2026-09-01', '2026-12-01', '2026-12-03', type_id='DLT', rate=2000000), 'RateId': 'PROMO'},
+        api_row(3, '2026-09-01', '2026-12-01', '2026-12-02', type_id='PRKG', rate=1500000),
+    ])
+    result = room_rate_breakdown('2026-12-01', '2026-12-01')
+    dlt = next(rt for rt in result['roomTypes'] if rt['id'] == 'DLT')
+    assert dlt['rooms'] == 2 and dlt['revenue'] == 3000000
+    assert dlt['rooms'] == sum(p['rooms'] for p in dlt['ratePlans'])
+    assert {p['id'] for p in dlt['ratePlans']} == {'BAR', 'PROMO'}
+    assert result['total']['rooms'] == 3 and result['total']['revenue'] == 4500000
+
+
+def test_breakdown_excludes_non_idr_revenue_but_counts_rooms():
+    be.upsert([api_row(1, '2026-09-01', '2026-12-01', '2026-12-02', currency='EUR', rate=100)])
+    rt = room_rate_breakdown('2026-12-01', '2026-12-01')['roomTypes'][0]
+    assert (rt['rooms'], rt['idrRooms'], rt['revenue']) == (1, 0, 0)
+
+
+def test_breakdown_honours_room_type_and_market_filters():
+    be.upsert([api_row(1, '2026-09-01', '2026-12-01', '2026-12-02', type_id='DLT', market_id=8),
+               api_row(2, '2026-09-01', '2026-12-01', '2026-12-02', type_id='PRKG', market_id=9)])
+    assert [rt['id'] for rt in room_rate_breakdown('2026-12-01', '2026-12-01', room_type='DLT')['roomTypes']] == ['DLT']
+    assert [rt['id'] for rt in room_rate_breakdown('2026-12-01', '2026-12-01', market_id=9)['roomTypes']] == ['PRKG']
+
+
+def test_breakdown_excludes_cancelled_bookings(monkeypatch):
+    row = api_row(1, '2026-09-01', '2026-12-01', '2026-12-02')
+    be.upsert([row])
+    monkeypatch.setattr(be, '_today', lambda: date(2026, 10, 2))
+    be.upsert([{**row, 'ReservationStatus': 'L', 'UpdatedDate': '2026-10-02T01:00:00+00:00'}])
+    assert room_rate_breakdown('2026-12-01', '2026-12-01')['total']['rooms'] == 0
+
+
+def test_breakdown_route_validates_and_returns_totals(client):
+    be.upsert([api_row(1, '2026-09-01', '2026-12-01', '2026-12-02')])
+    r = client.get('/api/rms/pace/breakdown?start=2026-12-01&end=2026-12-01')
+    assert r.status_code == 200 and r.get_json()['total']['rooms'] == 1
+    assert client.get('/api/rms/pace/breakdown?start=2026-12-01&end=2026-12-01&marketId=bad').status_code == 400

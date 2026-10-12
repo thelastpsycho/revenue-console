@@ -164,3 +164,21 @@ def reports():
     except (ValueError, TypeError) as exc:
         return _error(str(exc), 400)
     return jsonify({'status': 'success', **result})
+
+
+@bp.route('/api/rms/pace/breakdown', methods=['GET'])
+def pace_breakdown():
+    from ..revenue.rms_reports import room_rate_breakdown
+    try:
+        start = _date_arg('start', booking_events._today())
+        end = _date_arg('end', start + timedelta(days=29))
+        if end < start or (end - start).days >= MAX_PACE_DAYS:
+            raise ValueError('Choose a valid range of at most 366 days')
+        market = request.args.get('marketId')
+        if market:
+            market = int(market)
+        result = room_rate_breakdown(start.isoformat(), end.isoformat(),
+                                     room_type=request.args.get('roomType') or None, market_id=market)
+    except (ValueError, TypeError) as exc:
+        return _error(str(exc), 400)
+    return jsonify({'status': 'success', **result})

@@ -48,6 +48,40 @@ def _group(states, start, end, as_of, dimension, room_type, market_id, rules):
     return dict(result)
 
 
+def room_rate_breakdown(start, end, room_type=None, market_id=None):
+    """Current on-the-books nights/revenue by room type, nested by rate plan -
+    the Booking.com-style 'breakdown by room and rate' table."""
+    today = be._today().isoformat()
+    states = be.state_as_of(be.version_history([(start, end)]), today)
+    rules = get_settings()['revenueRules']
+    totals = defaultdict(_blank)
+    for r in states.values():
+        if not be._active(r, today) or not be._matches(r, room_type, market_id):
+            continue
+        nights = _nights(r, start, end)
+        if not nights:
+            continue
+        key = (r.get('type_id') or 'unassigned', r.get('rate_id') or r.get('rate_type') or 'unassigned')
+        b = totals[key]
+        b['rooms'] += len(nights)
+        if r['currency'] == 'IDR':
+            b['idrRooms'] += len(nights)
+            b['revenue'] += r['room_rate'] * len(nights)
+            b['netRevenue'] += sum(net_rate(r['room_rate'], r.get('rate_type'), day, rules, r.get('rate_id')) for day in nights)
+    room_types = {}
+    for (type_id, rate_id), metrics in totals.items():
+        rt = room_types.setdefault(type_id, {'id': type_id, 'ratePlans': [], **_blank()})
+        for k in metrics:
+            rt[k] += metrics[k]
+        rt['ratePlans'].append({'id': rate_id, **metrics})
+    grand = _blank()
+    for rt in room_types.values():
+        for k in grand:
+            grand[k] += rt[k]
+        rt['ratePlans'].sort(key=lambda r: -r['rooms'])
+    return {'roomTypes': sorted(room_types.values(), key=lambda r: -r['rooms']), 'total': grand}
+
+
 def build_reports(start, end, room_type=None, market_id=None, comparison='weekday',
                   comparison_start=None, pickup_days=7, date_basis='stay'):
     today = be._today().isoformat()
