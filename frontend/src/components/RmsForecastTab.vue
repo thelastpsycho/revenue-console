@@ -1,153 +1,105 @@
 <template>
-  <RmsMonthlyTargetsTable :months="months" :basis-label="basisLabel" />
-  <div class="neu-card overflow-hidden">
-    <h2 class="p-4 font-semibold">PMS hotel forecast — whole hotel</h2>
-    <p class="px-4 pb-3 text-xs text-slate-500">
-      RoomUsed and revenue are reported by PMS. Room-type/market filters apply
-      to pace; this table remains hotel-wide.
-    </p>
-    <div class="max-h-[60vh] overflow-auto">
-      <table class="min-w-full text-xs">
-        <thead class="sticky top-0 bg-white">
-          <tr>
-            <th
-              v-for="h in [
-                'Date',
-                'Occupancy',
-                'RoomUsed / capacity',
-                'PMS revenue',
-                'PMS ADR',
-                'Comp / house use',
-              ]"
-              :key="h"
-              class="p-3 text-left"
-            >
-              {{ h }}
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="r in forecast?.hotel || []"
-            :key="r.date"
-            class="border-t border-slate-100"
-          >
-            <td class="p-3">{{ dayLabel(r.date) }}</td>
-            <td class="p-3">{{ percent(r.occupancy) }}</td>
-            <td class="p-3">{{ num(r.roomsSold) }} / {{ num(r.roomCount) }}</td>
-            <td class="p-3">{{ money(r.revenue) }}</td>
-            <td class="p-3">{{ money(r.adr) }}</td>
-            <td class="p-3">
-              {{ num(r.complimentary) }} / {{ num(r.houseUse) }}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <p v-if="!forecast?.hotel.length" class="p-4 text-sm">
+  <RmsCard
+    title="PMS hotel forecast"
+    description="Whole hotel, as reported by the PMS. Room type and market filters don't apply here."
+    scroll
+  >
+    <table v-if="forecast?.hotel.length" class="data-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th class="num">Occupancy</th>
+          <th class="num">Rooms used / capacity</th>
+          <th class="num">PMS revenue</th>
+          <th class="num">PMS ADR</th>
+          <th class="num">Comp / house use</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="r in forecast.hotel" :key="r.date">
+          <td class="whitespace-nowrap font-semibold text-slate-900">
+            {{ dayLabel(r.date) }}
+          </td>
+          <td class="num">{{ percent(r.occupancy) }}</td>
+          <td class="num">{{ num(r.roomsSold) }} / {{ num(r.roomCount) }}</td>
+          <td class="num" :title="money(r.revenue)">
+            {{ moneyShort(r.revenue) }}
+          </td>
+          <td class="num" :title="money(r.adr)">{{ moneyShort(r.adr) }}</td>
+          <td class="num">
+            {{ num(r.complimentary) }} / {{ num(r.houseUse) }}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <template v-if="!forecast?.hotel.length" #empty>
       {{
         forecastBusy
-          ? "Hotel totals are loading independently…"
+          ? "Hotel totals are loading…"
           : "No hotel forecast available."
       }}
-    </p>
-  </div>
-  <div class="neu-card overflow-hidden">
-    <h2 class="p-4 font-semibold">Market segments — whole forecast window</h2>
+    </template>
+  </RmsCard>
+
+  <RmsCard
+    title="Market segments"
+    description="PMS forecast for the whole window, largest segment first."
+  >
     <div class="overflow-x-auto">
-      <table class="min-w-full text-xs">
+      <table v-if="segmentTotals.length" class="data-table">
         <thead>
           <tr>
-            <th
-              v-for="h in [
-                'Segment',
-                'Room nights',
-                'PMS revenue',
-                'PMS revenue / night',
-              ]"
-              :key="h"
-              class="p-3 text-left"
-            >
-              {{ h }}
-            </th>
+            <th>Segment</th>
+            <th class="num">Room nights</th>
+            <th class="num">Share</th>
+            <th class="num">PMS revenue</th>
+            <th class="num">Revenue / night</th>
           </tr>
         </thead>
         <tbody>
-          <tr
-            v-for="s in segmentTotals"
-            :key="s.market"
-            class="border-t border-slate-100"
-          >
-            <td class="p-3">{{ s.market }}</td>
-            <td class="p-3">{{ num(s.rooms) }}</td>
-            <td class="p-3">{{ money(s.revenue) }}</td>
-            <td class="p-3">{{ money(ratio(s.revenue, s.rooms)) }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-  <div class="neu-card overflow-hidden">
-    <h2 class="p-4 font-semibold">Expected occupied by room type</h2>
-    <div class="max-h-[50vh] overflow-auto">
-      <table class="min-w-full text-xs">
-        <thead class="sticky top-0 bg-white">
-          <tr>
-            <th class="sticky left-0 bg-white p-3 text-left">Room type</th>
-            <th
-              v-for="d in matrix.dates"
-              :key="d"
-              class="whitespace-nowrap p-2"
-            >
-              {{ d.slice(5) }}
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="r in matrix.types"
-            :key="r.typeId"
-            class="border-t border-slate-100"
-          >
-            <td class="sticky left-0 whitespace-nowrap bg-white p-3">
-              {{ label(r.typeId) }}
+          <tr v-for="s in segmentTotals" :key="s.market">
+            <td class="font-semibold text-slate-900">{{ s.market }}</td>
+            <td class="num">{{ num(s.rooms) }}</td>
+            <td class="num">
+              {{ percent(shareOf(s.rooms)) }}
             </td>
-            <td
-              v-for="d in matrix.dates"
-              :key="d"
-              :class="[
-                'p-2 text-right',
-                r.capacity && r.values[d] >= r.capacity * 0.9
-                  ? 'bg-amber-50'
-                  : '',
-              ]"
-            >
-              {{ num(r.values[d]) }}
+            <td class="num" :title="money(s.revenue)">
+              {{ moneyShort(s.revenue) }}
+            </td>
+            <td class="num" :title="money(ratio(s.revenue, s.rooms))">
+              {{ moneyShort(ratio(s.revenue, s.rooms)) }}
             </td>
           </tr>
         </tbody>
       </table>
     </div>
-  </div>
+    <template v-if="!segmentTotals.length" #empty>
+      {{ forecastBusy ? "Segments are loading…" : "No segment forecast available." }}
+    </template>
+  </RmsCard>
 </template>
 <script setup lang="ts">
-import { num, money, percent, ratio, dayLabel } from "../utils/rms";
-import type { Forecast, MonthSummary } from "../utils/rms";
-import RmsMonthlyTargetsTable from "./RmsMonthlyTargetsTable.vue";
-defineProps<{
-  months: MonthSummary[];
-  basisLabel: string;
+import { computed } from "vue";
+import RmsCard from "./RmsCard.vue";
+import {
+  num,
+  money,
+  moneyShort,
+  percent,
+  ratio,
+  dayLabel,
+} from "../utils/rms";
+import type { Forecast } from "../utils/rms";
+const props = defineProps<{
   forecast: Forecast | null;
   forecastBusy: boolean;
   segmentTotals: { market: string; rooms: number; revenue: number }[];
-  matrix: {
-    dates: string[];
-    types: {
-      typeId: string;
-      capacity: number;
-      values: Record<string, number>;
-    }[];
-  };
-  label: (code: string) => string;
 }>();
+const totalRooms = computed(() =>
+  props.segmentTotals.reduce((s, r) => s + r.rooms, 0),
+);
+const shareOf = (rooms: number) => {
+  const r = ratio(rooms, totalRooms.value);
+  return r == null ? null : r * 100;
+};
 </script>

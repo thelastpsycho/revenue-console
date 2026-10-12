@@ -1,62 +1,67 @@
 <template>
-  <div class="neu-card overflow-hidden">
-    <h2 class="p-4 font-semibold">Monthly booking position & targets</h2>
-    <p class="px-4 pb-3 text-xs text-slate-500">
-      {{ basisLabel }}. ADR uses IDR nights only. RevPAR is the IDR revenue
-      component / room capacity. Targets require complete, unfiltered months
-      on the same basis. These are booking positions, not audited actuals.
-    </p>
+  <RmsCard
+    title="Monthly position and targets"
+    :description="`${basisLabel}. Booking positions, not audited actuals. Targets need complete, unfiltered months on the same basis.`"
+  >
     <div class="overflow-x-auto">
-      <table class="min-w-full text-xs">
+      <table class="data-table">
         <thead>
           <tr>
-            <th
-              v-for="h in [
-                'Month',
-                'Room nights',
-                'Room revenue',
-                'ADR',
-                'RevPAR (IDR component)',
-                'Target',
-                'Target gap',
-                'Required revenue / remaining day',
-              ]"
-              :key="h"
-              class="p-3 text-left"
-            >
-              {{ h }}
+            <th>Month</th>
+            <th class="num">Room nights</th>
+            <th class="num">Revenue</th>
+            <th class="num">ADR</th>
+            <th class="num" title="IDR revenue component / room capacity">
+              RevPAR
             </th>
+            <th class="num">Target</th>
+            <th class="num">Gap to target</th>
+            <th class="num">Needed / remaining day</th>
           </tr>
         </thead>
         <tbody>
-          <tr
-            v-for="m in months"
-            :key="m.month"
-            class="border-t border-slate-100"
-          >
-            <td class="p-3">
-              {{ m.month
-              }}<span v-if="!m.fullMonth" class="block text-amber-800"
+          <tr v-for="m in months" :key="m.month">
+            <td class="whitespace-nowrap font-semibold text-slate-900">
+              {{ m.month }}
+              <span v-if="!m.fullMonth" class="sub text-amber-700"
                 >Partial month</span
-              ><span v-if="m.hasForeign" class="block text-slate-500"
+              ><span v-if="m.hasForeign" class="sub"
                 >Foreign revenue excluded</span
               >
             </td>
-            <td class="p-3">{{ num(m.roomNights) }}</td>
-            <td class="p-3">{{ money(m.revenue) }}</td>
-            <td class="p-3">{{ money(m.adr) }}</td>
-            <td class="p-3">{{ money(m.revpar) }}</td>
-            <td class="p-3">{{ money(m.budget) }}</td>
-            <td class="p-3">{{ money(m.gap) }}</td>
-            <td class="p-3">{{ money(m.required) }}</td>
+            <td class="num">{{ num(m.roomNights) }}</td>
+            <td class="num" :title="money(m.revenue)">
+              {{ moneyShort(m.revenue) }}
+            </td>
+            <td class="num" :title="money(m.adr)">{{ moneyShort(m.adr) }}</td>
+            <td class="num" :title="money(m.revpar)">
+              {{ moneyShort(m.revpar) }}
+            </td>
+            <td class="num" :title="money(m.budget)">
+              {{ moneyShort(m.budget) }}
+            </td>
+            <td :class="['num', signClass(m.gap)]" :title="money(m.gap)">
+              {{ moneyShort(m.gap) }}
+            </td>
+            <td class="num" :title="money(m.required)">
+              {{ moneyShort(m.required) }}
+            </td>
           </tr>
         </tbody>
       </table>
     </div>
-  </div>
+    <template v-if="!months.length" #empty>Apply a range to load data.</template>
+  </RmsCard>
 </template>
 <script setup lang="ts">
-import { num, money, type MonthSummary } from "../utils/rms";
+import RmsCard from "./RmsCard.vue";
+import {
+  num,
+  money,
+  moneyShort,
+  signClass,
+  type MonthSummary,
+} from "../utils/rms";
 defineProps<{
   months: MonthSummary[];
   basisLabel: string;

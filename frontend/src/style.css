@@ -54,6 +54,89 @@ body {
   .btn-icon {
     @apply inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white p-2 text-slate-500 transition-colors duration-200 hover:border-slate-300 hover:text-slate-900 cursor-pointer;
   }
+
+  /* Small-caps field label used by report toolbars */
+  .field-label {
+    @apply mb-1 block text-[11px] font-bold uppercase tracking-wider text-slate-500;
+  }
+
+  /* Segmented control: tabs and view toggles */
+  .seg {
+    @apply inline-flex max-w-full gap-1 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-1;
+  }
+  .seg-btn {
+    @apply flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-semibold text-slate-500 transition-colors hover:text-slate-900;
+  }
+  .seg-btn[aria-selected="true"],
+  .seg-btn[aria-pressed="true"] {
+    @apply bg-white text-slate-900 shadow-xs ring-1 ring-slate-200;
+  }
+
+  /* Status pills and reason chips */
+  .pill {
+    @apply inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-semibold;
+  }
+  .pill-ok { @apply border-emerald-200 bg-emerald-50 text-emerald-800; }
+  .pill-warn { @apply border-amber-200 bg-amber-50 text-amber-800; }
+  .pill-bad { @apply border-rose-200 bg-rose-50 text-rose-800; }
+  .pill-muted { @apply border-slate-200 bg-white text-slate-600; }
+
+  /* KPI tile */
+  .stat-tile {
+    @apply rounded-xl border border-slate-200 bg-white p-4;
+  }
+  .stat-tile dt {
+    @apply text-[11px] font-bold uppercase tracking-wider text-slate-500;
+  }
+  .stat-tile dd {
+    @apply mt-1 text-xl font-semibold tabular-nums text-slate-900;
+  }
+
+  /* Report table: one look for every RMS table */
+  /* Cells inherit the color so text-* utilities (gains/losses) can win */
+  .data-table {
+    @apply min-w-full text-xs text-slate-700;
+  }
+  .data-table thead th {
+    @apply sticky top-0 z-10 whitespace-nowrap bg-white px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500 shadow-[0_1px_0_rgb(226_232_240)];
+  }
+  .data-table tbody td {
+    @apply border-t border-slate-100 px-3 py-2 align-top;
+  }
+  .data-table tbody tr:first-child td {
+    @apply border-t-0;
+  }
+  .data-table tbody tr:hover td {
+    @apply bg-slate-50;
+  }
+  .data-table tfoot td {
+    @apply sticky bottom-0 border-t border-slate-200 bg-slate-50 px-3 py-2 font-semibold;
+  }
+  .data-table .num {
+    @apply text-right tabular-nums;
+  }
+  .data-table th.num {
+    @apply text-right;
+  }
+  .data-table .sticky-col {
+    @apply sticky left-0 z-[5] bg-white;
+  }
+  .data-table thead .sticky-col {
+    @apply z-20;
+  }
+  .data-table .sub {
+    @apply block text-[11px] font-normal text-slate-500;
+  }
+  .row-link {
+    @apply cursor-pointer text-left font-semibold text-slate-900 underline decoration-slate-300 underline-offset-2 hover:decoration-slate-900;
+  }
+
+  .alert-error {
+    @apply rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-800;
+  }
+  .alert-warn {
+    @apply rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900;
+  }
 }
 
 /* Thin, neutral scrollbars */
