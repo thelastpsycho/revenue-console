@@ -128,6 +128,18 @@ def reserve_shortages(shortages, capacity, routes):
     virtual reserve to accommodate another category with only one destination.
     Counts are augmented in batches, including arbitrarily large negative input.
     """
+    reserved, unresolved, _ = _reserve_with_blocked(shortages, capacity, routes)
+    return reserved, unresolved
+
+
+def _reserve_with_blocked(shortages, capacity, routes):
+    """reserve_shortages plus the rooms an unresolved shortage touches.
+
+    After max flow, every shortage category still reachable from the source in
+    the residual graph could be the one left uncovered (flow is not unique), so
+    it and all of its upgrade destinations are blocked. Categories outside that
+    set cannot help the uncovered guests and stay sellable.
+    """
     graph = {}
     def edge(a, b, count):
         graph.setdefault(a, {})[b] = count
@@ -165,7 +177,14 @@ def reserve_shortages(shortages, capacity, routes):
             node = previous
         covered += amount
     reserved = {room: count - graph[('supply', room)]['sink'] for room, count in capacity.items()}
-    return reserved, total - covered
+    unresolved = total - covered
+    blocked = set()
+    if unresolved:
+        for node in parents:
+            if isinstance(node, tuple) and node[0] == 'demand':
+                blocked.add(node[1])
+                blocked.update(destinations_for(node[1], routes))
+    return reserved, unresolved, blocked
 
 
 def prepare_capacity(remaining, policy, day, room_scope=None):
@@ -194,9 +213,9 @@ def prepare_capacity(remaining, policy, day, room_scope=None):
                 online_caps[room] = min(online_caps.get(room, hold['max_online']), hold['max_online'])
     capacity = {room: max(0, value - protected[room]) for room, value in remaining.items()}
     shortages = {room: -value for room, value in remaining.items() if value < 0}
-    reserved, unresolved = reserve_shortages(shortages, capacity, scoped_policy['routes'])
+    reserved, unresolved, blocked = _reserve_with_blocked(shortages, capacity, scoped_policy['routes'])
     safe = {room: capacity[room] - reserved[room] for room in remaining}
-    return safe, reserved, protected, online_caps, unresolved
+    return safe, reserved, protected, online_caps, unresolved, blocked
 
 
 def reserve_offer(source, amount, safe, routes, override_reserves):

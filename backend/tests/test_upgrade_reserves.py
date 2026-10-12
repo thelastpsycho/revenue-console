@@ -5,7 +5,8 @@ import pandas as pd
 import pytest
 
 from app.revenue import yield_engine as engine
-from app.revenue.upgrade_reserves import load_policy, prepare_capacity, reserve_shortages
+from app.revenue.upgrade_reserves import (
+    _reserve_with_blocked, load_policy, prepare_capacity, reserve_shortages)
 
 D = 'Deluxe Room'
 P = 'Premiere Room'
@@ -88,12 +89,48 @@ def test_configured_destination_order_is_used_when_capacity_allows():
     assert row[f'{S} Upgrade Reserve'] == 1
 
 
-@pytest.mark.parametrize('values,policy', [({P: -2, S: 8}, {'routes': {P: []}}), ({P: -1000000, S: 8}, POLICY)])
-def test_uncovered_demand_is_visible_and_prevents_new_sales(values, policy):
-    row = calculate(values, policy=policy)
+@pytest.mark.parametrize('values,policy,closed', [
+    ({P: -2, S: 8}, {'routes': {P: []}}, [P]),
+    ({P: -1000000, S: 8}, POLICY, [P, L, S]),
+])
+def test_uncovered_demand_is_visible_and_prevents_new_sales(values, policy, closed):
+    row = calculate({D: 20, **values}, policy=policy, include_simple_rooms=True)
     assert row['Unresolved Upgrade Rooms'] > 0
     assert row['Allocation Status'].startswith('Blocked:')
-    assert all(row[col] == 0 for col in row.index if col.endswith('Online Inventory'))
+    for room in closed:
+        prefix = {D: 'Deluxe', P: 'Premiere'}.get(room, room)
+        assert row[f'{prefix} Online Inventory'] == 0
+    assert row['Deluxe Online Inventory'] > 0  # cannot help the uncovered guests
+
+
+def test_uncovered_suite_shortage_does_not_close_deluxe_or_premiere():
+    # 2026-10-14: Whirlpool oversold by one with every higher category full.
+    row = calculate({D: 36, P: 42, L: 1, S: 4, 'Family Premiere Room': 1,
+                     'The Anvaya Suite No Pool': 3, 'The Anvaya Suite Whirpool': -1},
+                    occupancy=82.48, policy={}, include_simple_rooms=True)
+    assert row['Unresolved Upgrade Rooms'] == 1
+    assert row['Allocation Status'].startswith('Blocked:')
+    assert 'The Anvaya Suite Whirpool' in row['Allocation Status']
+    assert row['Deluxe Online Inventory'] > 0
+    assert row['Premiere Online Inventory'] > 0
+    assert row[f'{S} Online Inventory'] > 0
+    assert row['The Anvaya Suite No Pool Online Inventory'] > 0
+    for room in ('The Anvaya Suite Whirpool', 'Beach Front Private Suite Room',
+                 'The Anvaya Suite With Pool', 'The Anvaya Residence', 'The Anvaya Villa'):
+        assert row[f'{room} Online Inventory'] == 0
+
+
+@pytest.mark.parametrize('shortages,routes,expected', [
+    # A is always covered via Y; only B (X only) can be the short guest.
+    ({'A': 1, 'B': 2}, {'A': ['X', 'Y'], 'B': ['X']}, {'B', 'X'}),
+    # Either A or B can be left short by rerouting, so both stay closed.
+    ({'A': 2, 'B': 1}, {'A': ['X', 'Y'], 'B': ['Y']}, {'A', 'B', 'X', 'Y'}),
+])
+def test_blocked_rooms_are_every_category_that_could_be_uncovered(shortages, routes, expected):
+    _, unresolved, blocked = _reserve_with_blocked(
+        shortages, {'X': 1, 'Y': 1, 'Z': 5}, {**routes, 'C': ['Z']})
+    assert unresolved == 1
+    assert blocked == expected
 
 
 def test_buffers_manual_holds_and_zero_online_lock():
@@ -166,7 +203,8 @@ def test_custom_yield_persists_explanations_and_respects_room_scope(tmp_path, mo
         assert saved.loc[0, f'{S} Safe Inventory'] == 3
     else:
         assert saved.loc[0, f'{S} Upgrade Reserve'] == 0
-    assert saved.loc[0, 'Allocation Status'] == ('Ready' if all_rooms else 'Blocked: upgrade capacity or routes insufficient')
+    assert saved.loc[0, 'Allocation Status'] == (
+        'Ready' if all_rooms else 'Blocked: upgrade capacity or routes insufficient (Premiere Room)')
     assert (f'{S} Online Inventory' in result.columns) == all_rooms
     if all_rooms:
         assert saved.loc[0, f'{S} Online Inventory'] == 2

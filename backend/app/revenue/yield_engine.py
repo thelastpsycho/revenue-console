@@ -384,54 +384,62 @@ def apply_yield_matrix(data, very_low_threshold_pct=None, low_threshold_pct=None
         # Rebuild capacity from the current snapshot. PMS assignments have
         # already restored the booked type and deducted the physical destination.
         remaining_by_room = {room: row[room] for room in allocation_scope}
-        safe, reserved, protected, online_caps, unresolved = prepare_capacity(
+        safe, reserved, protected, online_caps, unresolved, blocked = prepare_capacity(
             remaining_by_room, policy, row['Date'].strftime('%Y-%m-%d'), room_scope=allocation_scope)
         override_reserves = dict.fromkeys(ROOM_CAPS, 0)
         allocations = dict.fromkeys(ROOM_CAPS, 0)
-        if not unresolved:
-            # New borrowed sales consume the same capacity as direct sales.
-            # Preserve Deluxe's existing override trigger, but reserve its backing
-            # BEFORE calculating Premiere's direct release.
-            if should_override_deluxe(row['Occupancy'], premiere_remaining, deluxe_remaining,
-                                      deluxe_override_occupancy, deluxe_override_premiere):
-                amount = min(deluxe_override_amount, online_caps.get('Deluxe Room', deluxe_override_amount))
-                # Deluxe overrides retain their existing Premiere-only backing.
-                # Higher rooms cover existing guests; this does not introduce
-                # additional deliberate Premiere overselling.
-                allocations['Deluxe Room'] = reserve_offer(
-                    'Deluxe Room', amount, safe,
-                    {'Deluxe Room': ['Premiere Room']} if 'Premiere Room' in policy['routes']['Deluxe Room'] else {},
-                    override_reserves)
-            else:
-                allocations['Deluxe Room'] = get_online_allotment(safe['Deluxe Room'], room_caps['Deluxe Room'])
-
-            if include_simple_rooms:
-                if remaining_by_room['Deluxe Suite Room'] <= 0 and safe['Premiere Suite Room'] > 3:
-                    allocations['Deluxe Suite Room'] = reserve_offer(
-                        'Deluxe Suite Room', min(1, online_caps.get('Deluxe Suite Room', 1)),
-                        safe, policy['routes'], override_reserves)
-                for room_type in SIMPLE_ROOM_TYPES:
-                    remaining = safe[room_type]
-                    if room_type in ('Deluxe Pool Access', 'Premiere Room Lagoon Access', 'Premiere Suite Room'):
-                        allocations[room_type] = get_online_allotment(remaining, room_caps[room_type])
-                    elif room_type == 'Deluxe Suite Room':
-                        if remaining_by_room[room_type] > 0:
-                            allocations[room_type] = allot_deluxe_suite(remaining, 0)
-                    elif room_type == 'Beach Front Private Suite Room':
-                        allocations[room_type] = allot_minus_one_except_one(remaining)
-                    elif room_type in ('Family Premiere Room', 'The Anvaya Suite Whirpool', 'The Anvaya Suite No Pool'):
-                        allocations[room_type] = allot_minus_one(remaining)
-                    else:
-                        allocations[room_type] = allot_as_remaining(remaining)
-            allocations['Premiere Room'] = get_online_allotment(safe['Premiere Room'], room_caps['Premiere Room'])
+        # An uncovered shortage closes only the categories it touches (the
+        # short rooms and their upgrade destinations); the rest still sell.
+        # Blocked rooms get zero sellable capacity, so overrides can't borrow
+        # from them either; their real residual is still reported below.
+        sellable = {room: 0 if room in blocked else count for room, count in safe.items()}
+        # New borrowed sales consume the same capacity as direct sales.
+        # Preserve Deluxe's existing override trigger, but reserve its backing
+        # BEFORE calculating Premiere's direct release.
+        if should_override_deluxe(row['Occupancy'], premiere_remaining, deluxe_remaining,
+                                  deluxe_override_occupancy, deluxe_override_premiere):
+            amount = min(deluxe_override_amount, online_caps.get('Deluxe Room', deluxe_override_amount))
+            # Deluxe overrides retain their existing Premiere-only backing.
+            # Higher rooms cover existing guests; this does not introduce
+            # additional deliberate Premiere overselling.
+            allocations['Deluxe Room'] = reserve_offer(
+                'Deluxe Room', amount, sellable,
+                {'Deluxe Room': ['Premiere Room']} if 'Premiere Room' in policy['routes']['Deluxe Room'] else {},
+                override_reserves)
         else:
-            data.at[idx, 'Allocation Status'] = 'Blocked: upgrade capacity or routes insufficient'
+            allocations['Deluxe Room'] = get_online_allotment(sellable['Deluxe Room'], room_caps['Deluxe Room'])
+
+        if include_simple_rooms:
+            if remaining_by_room['Deluxe Suite Room'] <= 0 and sellable['Premiere Suite Room'] > 3:
+                allocations['Deluxe Suite Room'] = reserve_offer(
+                    'Deluxe Suite Room', min(1, online_caps.get('Deluxe Suite Room', 1)),
+                    sellable, policy['routes'], override_reserves)
+            for room_type in SIMPLE_ROOM_TYPES:
+                remaining = sellable[room_type]
+                if room_type in ('Deluxe Pool Access', 'Premiere Room Lagoon Access', 'Premiere Suite Room'):
+                    allocations[room_type] = get_online_allotment(remaining, room_caps[room_type])
+                elif room_type == 'Deluxe Suite Room':
+                    if remaining_by_room[room_type] > 0:
+                        allocations[room_type] = allot_deluxe_suite(remaining, 0)
+                elif room_type == 'Beach Front Private Suite Room':
+                    allocations[room_type] = allot_minus_one_except_one(remaining)
+                elif room_type in ('Family Premiere Room', 'The Anvaya Suite Whirpool', 'The Anvaya Suite No Pool'):
+                    allocations[room_type] = allot_minus_one(remaining)
+                else:
+                    allocations[room_type] = allot_as_remaining(remaining)
+        allocations['Premiere Room'] = get_online_allotment(sellable['Premiere Room'], room_caps['Premiere Room'])
+        for room_type in blocked:
+            allocations[room_type] = 0
+        if unresolved:
+            closed = ', '.join(room for room in ROOM_CAPS if room in blocked)
+            data.at[idx, 'Allocation Status'] = f'Blocked: upgrade capacity or routes insufficient ({closed})'
         data.at[idx, 'Unresolved Upgrade Rooms'] = unresolved
         for room_type in ROOM_CAPS:
             data.at[idx, f'{room_type} Upgrade Reserve'] = reserved.get(room_type, 0)
             data.at[idx, f'{room_type} Override Reserve'] = override_reserves.get(room_type, 0)
             data.at[idx, f'{room_type} Operational Hold'] = protected.get(room_type, 0)
-            data.at[idx, f'{room_type} Safe Inventory'] = safe.get(room_type, 0)
+            data.at[idx, f'{room_type} Safe Inventory'] = (
+                safe if room_type in blocked else sellable).get(room_type, 0)
             prefix = {'Deluxe Room': 'Deluxe', 'Premiere Room': 'Premiere'}.get(room_type, room_type)
             if room_type in ('Deluxe Room', 'Premiere Room') or include_simple_rooms:
                 data.at[idx, f'{prefix} Online Inventory'] = min(

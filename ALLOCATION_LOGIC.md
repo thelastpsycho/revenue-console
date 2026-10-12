@@ -38,8 +38,12 @@ For each in-scope date:
    order is the preference; rerouting is allowed to accommodate a more
    constrained source. These are virtual capacity reserves, not room assignments.
 5. If any shortage cannot be covered, mark the date blocked, show the unresolved
-   count, and propose zero online rooms for every category included in the run.
-   This can mean missing upgrade routes, insufficient inventory, or held capacity.
+   count, and propose zero online rooms for the categories that shortage touches:
+   every short category that could be the uncovered one (after rerouting) and all
+   of its upgrade destinations. The status lists them. Other categories cannot
+   help those guests (upgrades only go up), so they still allocate normally - an
+   oversold suite does not close Deluxe or Premiere. A blocked date can mean
+   missing upgrade routes, insufficient inventory, or held capacity.
 6. Reserve destination capacity for new override sales before direct sales.
 7. Apply the release rules to residual capacity, then clamp to manual online caps.
 
@@ -140,9 +144,8 @@ Deluxe Suite oversells are accommodated first.
 Each room has Remaining Inventory, Upgrade Reserve, Override Reserve, Operational
 Hold and Safe Inventory columns. Upgrade Reserve covers existing negative
 balances; Override Reserve covers proposed new borrowed sales. Safe Inventory is
-the residual before release rules and online caps. A blocked date can still show
-positive residual inventory in an ineligible category; its proposed sales remain
-zero. Global Allocation Status and Unresolved Upgrade Rooms explain blocked dates.
+the residual before release rules and online caps. A blocked category can still show
+positive residual inventory; its proposed sales remain zero. Global Allocation Status and Unresolved Upgrade Rooms explain blocked dates.
 
 The Yield management category selector displays these explanations. Exports
 include all result columns. Select **Calculate allocations for all room
