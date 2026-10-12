@@ -19,6 +19,7 @@
           tabindex="-1"
           class="flex h-full w-full max-w-2xl flex-col overflow-hidden border-l border-slate-200 bg-white shadow-xl outline-none"
           @keydown.esc.prevent="$emit('close')"
+          @keydown.tab="trapFocus"
         >
           <header
             class="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4"
@@ -181,14 +182,44 @@ const props = defineProps<{
 defineEmits<{ close: []; saveNote: [] }>();
 const noteDraft = defineModel<string>("noteDraft", { required: true });
 
-// Focus the drawer when it opens so Esc closes it straight away.
+// Focus the drawer when it opens so Esc closes it straight away, give focus
+// back to whatever had it when the drawer closes, and trap Tab inside it
+// while open - matching AppDialog.vue's pattern, generalised since this
+// panel has many focusable children instead of a fixed button pair.
 const panel = ref<HTMLElement | null>(null);
+let returnFocus: HTMLElement | null = null;
 watch(
   () => props.selectedDate,
   async (d) => {
-    if (!d) return;
-    await nextTick();
-    panel.value?.focus();
+    if (d) {
+      returnFocus = document.activeElement as HTMLElement | null;
+      await nextTick();
+      panel.value?.focus();
+    } else {
+      returnFocus?.focus?.();
+      returnFocus = null;
+    }
   },
 );
+
+function trapFocus(event: KeyboardEvent) {
+  const focusable = panel.value?.querySelectorAll<HTMLElement>(
+    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  );
+  if (!focusable || focusable.length === 0) {
+    event.preventDefault();
+    return;
+  }
+  const elements = Array.from(focusable);
+  const index = elements.indexOf(document.activeElement as HTMLElement);
+  const next = event.shiftKey
+    ? index <= 0
+      ? elements.length - 1
+      : index - 1
+    : index === -1 || index === elements.length - 1
+      ? 0
+      : index + 1;
+  event.preventDefault();
+  elements[next].focus();
+}
 </script>
