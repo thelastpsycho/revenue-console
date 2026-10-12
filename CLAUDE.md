@@ -136,14 +136,27 @@ Then `ssh console2-ssh`. Key-based auth is set up; password login may still be e
 
 `docker compose build` fails over this SSH session with `error getting credentials` / `A specified logon session does not exist`. Cause: SSH key-based (pubkey) logins get a Windows logon type that never sees the account password, so Docker Desktop's credential helper can't unlock DPAPI-protected secrets - this happens even for pulling fully public images (node, python, nginx base images), and isn't fixable by editing `~/.docker/config.json` (tried: removing `credsStore`, disabling BuildKit, switching Docker context - none bypass it, since Desktop forwards credentials at the engine level, not the CLI config level).
 
-Working fix: a Windows Scheduled Task with **"Run whether user is logged on or not"** (`taskschd.msc`, not `schtasks /create` with an `/rp` password argument - that would put the password in shell history/process logs). This logon type does have DPAPI access. One-time setup, done locally at the machine (not over SSH):
+Working fix: a Windows Scheduled Task with **"Run whether user is logged on or not"**, which does have DPAPI access. The task runs `scripts/deploy.cmd` (`docker compose build && docker compose up -d`, both steps logged with start/finish timestamps and exit code to `deploy.log` in the repo root, gitignored by `*.log`).
 
-1. Task Scheduler → Create Task → name it e.g. `revenue-console-deploy`.
-2. General tab → Security options → **"Run whether user is logged on or not"** → enter the account password in the dialog when prompted.
-3. Actions tab → New → Program: `cmd.exe`, Arguments:
-   ```
-   /c cd /d "C:\Users\The Anvaya Bali\Documents\revenue-console" && docker compose build && docker compose up -d > deploy_log.txt 2>&1
-   ```
-4. Triggers tab: none needed - start it manually.
+**Status (2026-10-12):** `revenue-console-deploy` is registered (runs as `The Anvaya Bali`, logon mode Interactive/Background) and that account has been granted read/run on it. Not yet test-run - the first deploy through it is the end-to-end check.
 
-Once created, trigger it over SSH with `schtasks /run /tn revenue-console-deploy` and check `deploy_log.txt` for the result, instead of running `docker compose build` directly over SSH.
+Setup (already done; repeat only if the task is lost, or after changing the Windows password - the task keeps the old one and will fail to start). Run locally at the machine, not over SSH:
+
+```powershell
+Start-Process powershell -Verb RunAs -ArgumentList '-NoExit -ExecutionPolicy Bypass -File "C:\Users\The Anvaya Bali\Documents\revenue-console\scripts\register-deploy-task.ps1"'
+```
+
+- `The Anvaya Bali` is a standard (non-admin) account; the admins are `User` and `Administrator`. Registering a stored-password task needs admin (unelevated it fails with `Access is denied`), so this elevates - approve the UAC prompt with the `User` account. The script still registers the task to run as `The Anvaya Bali` (`-UserName` parameter).
+- It prompts for `The Anvaya Bali`'s Windows password in a dialog - never via a `schtasks /rp` argument, which would leak it into shell history/process logs.
+- Because an admin creates the task, `The Anvaya Bali` can't read or run it by default (`schtasks /query` → `Access is denied`). The script appends a read/run ACE for that account to the task's security descriptor. To re-apply only that grant, add `-GrantOnly` (no password prompt).
+- From a Claude Code session, launch it with `Start-Process ... -Verb RunAs` as above. Running it via the `!` prompt prefix goes through Git Bash, which strips backslashes from paths.
+
+Deploying over SSH (cmd.exe):
+
+```
+"C:\Users\The Anvaya Bali\AppData\Local\Programs\Git\cmd\git.exe" -C "C:\Users\The Anvaya Bali\Documents\revenue-console" pull
+schtasks /run /tn revenue-console-deploy
+type "C:\Users\The Anvaya Bali\Documents\revenue-console\deploy.log"
+```
+
+`schtasks /run` returns immediately; re-check `deploy.log` until the "Deploy finished" line appears. Commands that don't pull images (`docker compose ps`, `logs`, `restart`) can run directly over SSH.
