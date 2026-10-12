@@ -1,6 +1,5 @@
 import pandas as pd
 from tabulate import tabulate
-from datetime import datetime
 import os
 import sqlite3
 from ..infrastructure.paths import get_data_dir
@@ -177,22 +176,14 @@ def load_and_clean_data(db_path=None, demand_bins=None, demand_labels=None, requ
         return None
     
     def assign_season(date):
-        year = date.year
-        date_no_year = date.replace(year=2025)
-        if (datetime(2025, 1, 1) <= date_no_year <= datetime(2025, 1, 3) or
-            datetime(2025, 12, 27) <= date_no_year <= datetime(2025, 12, 31)):
+        # Compare (month, day) so 29 February works - rebuilding the date in
+        # a fixed non-leap year raised for it.
+        day = (date.month, date.day)
+        if day <= (1, 3) or day >= (12, 27):
             return 'Peak'
-        elif (datetime(2025, 1, 4) <= date_no_year <= datetime(2025, 5, 31) or
-              datetime(2025, 6, 1) <= date_no_year <= datetime(2025, 6, 30) or
-              datetime(2025, 9, 1) <= date_no_year <= datetime(2025, 9, 30) or
-              datetime(2025, 10, 1) <= date_no_year <= datetime(2025, 12, 22)):
-            return 'Normal'
-        elif (datetime(2025, 7, 1) <= date_no_year <= datetime(2025, 8, 31) or
-              datetime(2025, 12, 23) <= date_no_year <= datetime(2025, 12, 26)):
+        if (7, 1) <= day <= (8, 31) or (12, 23) <= day <= (12, 26):
             return 'High'
-        else:
-            print(f"Warning: Unassigned season for {date}. Defaulting to Normal.")
-            return 'Normal'
+        return 'Normal'
     
     data['Season'] = data['Date'].apply(assign_season)
     
@@ -225,8 +216,11 @@ def apply_yield_matrix(data, very_low_threshold_pct=None, low_threshold_pct=None
                        deluxe_override_occupancy=None, deluxe_override_premiere=None,
                        deluxe_override_amount=None, bar_level_shift=0, allocation_policy=None):
     # Use default values if not provided
-    very_low_threshold_pct = very_low_threshold_pct or VERY_LOW_THRESHOLD_PCT
-    low_threshold_pct = low_threshold_pct or LOW_THRESHOLD_PCT
+    # None means "not configured"; 0 is a real setting (escalation off).
+    if very_low_threshold_pct is None:
+        very_low_threshold_pct = VERY_LOW_THRESHOLD_PCT
+    if low_threshold_pct is None:
+        low_threshold_pct = LOW_THRESHOLD_PCT
     room_caps = {**ROOM_CAPS, **(room_caps or {})}
     policy = load_policy(ROOM_CAPS, allocation_policy)
     allocation_scope = ['Deluxe Room', 'Premiere Room']

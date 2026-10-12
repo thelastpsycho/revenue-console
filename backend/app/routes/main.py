@@ -9,6 +9,7 @@ from ..integrations.pms.other_room_allotment_updater import update_rest_allotmen
 from ..integrations.dedge.bar_updater import update_bar
 from ..shared import log_queue, allotment_run_control
 from ..pipeline import runner as pipeline_runner
+from ..pipeline import fast_runner, fast_pipeline_schedule
 import queue
 import threading
 import time
@@ -70,6 +71,12 @@ def scrape_with_progress(start_date=None, username=None, password=None):
     finally:
         scraping_active = False
 
+def _pipeline_busy():
+    """Manual actions must not run alongside either pipeline - the scheduled
+    fast pipeline included - or they overwrite its data and pushes mid-run."""
+    return pipeline_runner.pipeline_active or fast_runner.pipeline_active
+
+
 @bp.route('/api/health')
 def health_check():
     return jsonify({"status": "healthy"})
@@ -77,7 +84,7 @@ def health_check():
 @bp.route('/api/scrape', methods=['POST'])
 def trigger_scrape():
     global scraping_active, scraping_error
-    if pipeline_runner.pipeline_active:
+    if _pipeline_busy():
         return jsonify({"status": "error", "message": "A pipeline run is currently in progress; please wait for it to finish."}), 409
     if scraping_active:
         return jsonify({"status": "error", "message": "Scraping already in progress"}), 409
@@ -141,7 +148,7 @@ def scrape_stream():
 
 @bp.route('/api/combine-inventory', methods=['POST'])
 def trigger_combine():
-    if pipeline_runner.pipeline_active:
+    if _pipeline_busy():
         return jsonify({"status": "error", "message": "A pipeline run is currently in progress; please wait for it to finish."}), 409
     try:
         print("Starting inventory combination process...")
@@ -203,7 +210,7 @@ def trigger_combine():
 
 @bp.route('/api/yield', methods=['POST'])
 def trigger_yield():
-    if pipeline_runner.pipeline_active:
+    if _pipeline_busy():
         return jsonify({"status": "error", "message": "A pipeline run is currently in progress; please wait for it to finish."}), 409
     try:
         print("Starting yield calculation process...")
@@ -216,15 +223,16 @@ def trigger_yield():
                 "message": "Combined inventory database not found. Please run combine inventory first."
             }), 400
 
-        # Call the main function which handles the entire process
-        from ..revenue.yield_engine import main
-        result = main()
-        
-        if result is None:
+        # Same settings the pipeline uses (Schedule panel config, else the
+        # default config file), so a manual run can't produce different
+        # allotments from the scheduled one.
+        yield_config = (fast_pipeline_schedule.get_state().get("effectiveConfig") or {}).get("yieldConfig")
+        if not yield_config:
             return jsonify({
                 "status": "error",
-                "message": "Failed to process yield calculation"
-            }), 500
+                "message": "No pipeline yield settings found. Save them in the Schedule panel first."
+            }), 400
+        result = apply_custom_yield(yield_config)
         
         # Verify the database was created
         db_path = get_data_path('inventory_allocation.db')
@@ -300,7 +308,7 @@ def trigger_scrape_cm():
     to match the PMS scraper's range. Progress streams over /api/scrape-cm/stream
     (scrape_cm_inventory's own step logs already push onto the shared log_queue).
     """
-    if pipeline_runner.pipeline_active:
+    if _pipeline_busy():
         return jsonify({"status": "error", "message": "A pipeline run is currently in progress; please wait for it to finish."}), 409
     try:
         data = request.get_json(silent=True) or {}
@@ -335,7 +343,7 @@ def trigger_scrape_cm():
 
 @bp.route('/api/custom-yield', methods=['POST'])
 def trigger_custom_yield():
-    if pipeline_runner.pipeline_active:
+    if _pipeline_busy():
         return jsonify({"status": "error", "message": "A pipeline run is currently in progress; please wait for it to finish."}), 409
     try:
         print("Starting custom yield calculation process...")
@@ -465,7 +473,7 @@ def stream_allotment_logs():
 @bp.route('/api/update-allotment', methods=['POST'])
 def trigger_update_allotment():
     """Trigger allotment update process"""
-    if pipeline_runner.pipeline_active:
+    if _pipeline_busy():
         return jsonify({"status": "error", "message": "A pipeline run is currently in progress; please wait for it to finish."}), 409
     try:
         data = request.get_json()
@@ -551,7 +559,7 @@ def resume_update_allotment():
 @bp.route('/api/update-rest-allotment', methods=['POST'])
 def trigger_update_rest_allotment():
     """Trigger allotment update process for the 11 room types other than Deluxe/Premiere"""
-    if pipeline_runner.pipeline_active:
+    if _pipeline_busy():
         return jsonify({"status": "error", "message": "A pipeline run is currently in progress; please wait for it to finish."}), 409
     try:
         data = request.get_json()
@@ -629,7 +637,7 @@ def trigger_update_bar():
     DEDGE_PASSWORD env vars, and login is skipped entirely when the persistent
     Chrome profile already holds a valid session.
     """
-    if pipeline_runner.pipeline_active:
+    if _pipeline_busy():
         return jsonify({"status": "error", "message": "A pipeline run is currently in progress; please wait for it to finish."}), 409
     try:
         data = request.get_json(silent=True) or {}
