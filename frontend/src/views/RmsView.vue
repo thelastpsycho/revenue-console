@@ -216,6 +216,10 @@ ChartJS.register(
   Tooltip,
   Legend,
 );
+// chart.js is a shared singleton module, so this default applies to every
+// Chart instance in the app, not just RMS - matching style.css's root font
+// instead of chart.js's own Helvetica/Arial fallback.
+ChartJS.defaults.font.family = "'Nunito Sans', ui-sans-serif, system-ui, sans-serif";
 const today = hotelToday(),
   route = useRoute(),
   router = useRouter();
