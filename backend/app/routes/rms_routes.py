@@ -143,3 +143,24 @@ def note(day):
     except (ValueError, TypeError) as exc:
         return _error(str(exc), 400)
     return jsonify({"status": "success", "note": value})
+
+
+@bp.route('/api/rms/reports', methods=['GET'])
+def reports():
+    from ..revenue.rms_reports import build_reports
+    try:
+        start = _date_arg('start', booking_events._today())
+        end = _date_arg('end', start + timedelta(days=29))
+        if end < start or (end - start).days >= MAX_PACE_DAYS:
+            raise ValueError('Choose a valid range of at most 366 days')
+        basis = request.args.get('dateBasis', 'stay')
+        if basis not in ('stay', 'booking'):
+            raise ValueError('dateBasis must be stay or booking')
+        pickup = int(request.args.get('pickupDays', 7))
+        if not 1 <= pickup <= 90:
+            raise ValueError('pickupDays must be between 1 and 90')
+        result = build_reports(start.isoformat(), end.isoformat(), pickup_days=pickup,
+                               date_basis=basis, **_pace_options())
+    except (ValueError, TypeError) as exc:
+        return _error(str(exc), 400)
+    return jsonify({'status': 'success', **result})

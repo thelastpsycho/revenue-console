@@ -413,7 +413,75 @@
           </div>
         </div>
       </template>
+      <RmsGroupedReports
+        v-if="
+          loaded && ['behaviour', 'business', 'rooms', 'forecast'].includes(tab)
+        "
+        :group="tab === 'forecast' ? 'performance' : tab"
+        :filters="loaded"
+        :basis="basis"
+        :labels="dims.labels"
+        :forecast="forecast"
+        @drilldown="drilldownGroup"
+      />
       <template v-if="tab === 'forecast'">
+        <div class="neu-card overflow-hidden">
+          <h2 class="p-4 font-semibold">Monthly booking position & targets</h2>
+          <p class="px-4 pb-3 text-xs text-slate-500">
+            {{ basisLabel }}. ADR uses IDR nights only. RevPAR is the IDR
+            revenue component / room capacity. Targets require complete,
+            unfiltered months on the same basis. These are booking positions,
+            not audited actuals.
+          </p>
+          <div class="overflow-x-auto">
+            <table class="min-w-full text-xs">
+              <thead>
+                <tr>
+                  <th
+                    v-for="h in [
+                      'Month',
+                      'Room nights',
+                      'Room revenue',
+                      'ADR',
+                      'RevPAR (IDR component)',
+                      'Target',
+                      'Target gap',
+                      'Required revenue / remaining day',
+                    ]"
+                    :key="h"
+                    class="p-3 text-left"
+                  >
+                    {{ h }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="m in months"
+                  :key="m.month"
+                  class="border-t border-slate-100"
+                >
+                  <td class="p-3">
+                    {{ m.month
+                    }}<span v-if="!m.fullMonth" class="block text-amber-800"
+                      >Partial month</span
+                    ><span v-if="m.hasForeign" class="block text-slate-500"
+                      >Foreign revenue excluded</span
+                    >
+                  </td>
+                  <td class="p-3">{{ num(m.roomNights) }}</td>
+                  <td class="p-3">{{ money(m.revenue) }}</td>
+                  <td class="p-3">{{ money(m.adr) }}</td>
+                  <td class="p-3">{{ money(m.revpar) }}</td>
+                  <td class="p-3">{{ money(m.budget) }}</td>
+                  <td class="p-3">{{ money(m.gap) }}</td>
+                  <td class="p-3">{{ money(m.required) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="neu-card overflow-hidden">
           <h2 class="p-4 font-semibold">PMS hotel forecast — whole hotel</h2>
           <p class="px-4 pb-3 text-xs text-slate-500">
@@ -857,6 +925,7 @@ import {
   type ChartTypeRegistry,
 } from "chart.js";
 import axios from "../plugins/axios";
+import RmsGroupedReports from "../components/RmsGroupedReports.vue";
 import {
   addDays,
   hotelToday,
@@ -974,8 +1043,11 @@ const today = hotelToday(),
   router = useRouter();
 const tabs = [
   { id: "overview", label: "Overview" },
-  { id: "pace", label: "Pace" },
-  { id: "forecast", label: "PMS forecast" },
+  { id: "pace", label: "Pace & Pickup" },
+  { id: "forecast", label: "Performance & Forecast" },
+  { id: "behaviour", label: "Booking Behaviour" },
+  { id: "business", label: "Business Production" },
+  { id: "rooms", label: "Room Type & Inventory" },
   { id: "data", label: "Data & settings" },
 ];
 const query = (k: string, f = "") =>
@@ -1087,6 +1159,13 @@ function saveUrl() {
   router.replace({
     query: { ...(loaded.value || filters), tab: tab.value, basis: basis.value },
   });
+}
+function drilldownGroup(dimension: string, id: string) {
+  if (loaded.value) Object.assign(filters, loaded.value);
+  if (dimension === "market") filters.marketId = id;
+  else filters.roomType = id;
+  tab.value = "pace";
+  void loadAll();
 }
 function selectTab(id: string) {
   tab.value = id;

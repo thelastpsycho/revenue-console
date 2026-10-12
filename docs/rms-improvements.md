@@ -111,3 +111,36 @@ old-booking discovery, idempotent PII-free versions, long in-house refreshes,
 missing coverage, leap/custom comparisons, package deductions, currency isolation,
 settings validation, CSRF, cache deduplication/failure retention, weighted ADR,
 partial-month targets and CSV formula protection. No test uses live PMS data.
+
+## Grouped reports
+
+RMS navigation groups reports into Performance & Forecast, Pace & Pickup,
+Booking Behaviour, Business Production, and Room Type & Inventory, alongside
+Overview and Data & Settings. Existing forecast/data deep links retain their IDs.
+
+`GET /api/rms/reports` reads existing booking versions. Production is grouped by
+market ID, room-type code and RateId (falling back to RateType), with OTB nights,
+IDR revenue, weighted IDR ADR, currency coverage, 1/7/30-day pickup, the selected
+pickup decomposition and matched-period comparison. Missing market IDs remain
+Unassigned. Group totals include comparison/prior-only groups so amendments and
+cancellations remain visible. Drilldowns apply the segment or room type to the
+existing pace page. The segment trend shows the top five groups plus Other.
+
+Behaviour uses unique reservations rather than stay nights. Its own date-basis
+selector switches between stays overlapping the selected dates and bookings
+created within those dates; production continues to use stay dates. Lead time,
+full-reservation length of stay, booking/arrival weekdays and current cancelled /
+no-show counts are provided. Active behaviour distributions exclude cancelled
+and no-show reservations. Cancellation percentages use all reservations in the
+selected cohort, including cancelled/no-show rows; they are not event rates or
+predictions of future cancellations. Negative lead times are disclosed and omitted
+from lead-time buckets and averages.
+
+Room inventory displays physical availability independently from segment/market
+filters, with expected occupied / capacity and high-occupancy shading. Revenue
+and historical-quality definitions are the same as existing pace. CSV exports
+retain nulls and protect string values against spreadsheet formula execution.
+
+Channel/company/nationality production, commission-based contribution, audited
+actuals and forecast accuracy are visibly marked as needing additional verified
+data. Rate-plan production does not claim to measure promotion attribution.
