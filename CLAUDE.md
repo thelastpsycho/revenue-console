@@ -138,11 +138,11 @@ Then `ssh console2-ssh`. Key-based auth is set up; password login may still be e
 
 Working fix: a Windows Scheduled Task with **"Run whether user is logged on or not"**, which does have DPAPI access. The task runs `scripts/deploy.cmd` (`docker compose build && docker compose up -d`, both steps logged with start/finish timestamps and exit code to `deploy.log` in the repo root, gitignored by `*.log`).
 
-**Status (2026-10-12):** `revenue-console-deploy` is registered (runs as `The Anvaya Bali`, logon mode Interactive/Background) and that account has been granted read/run on it. First end-to-end test over SSH **failed silently**: `schtasks /run /tn revenue-console-deploy` reports `SUCCESS: Attempted to run...`, but `Last Result` stays at `267011` (`SCHED_S_TASK_HAS_NOT_RUN`), `Last Run Time` never updates, and `deploy.log` is never created - the task is never actually launched, even on repeated attempts a few seconds apart.
+**Status (2026-10-12): working.** `revenue-console-deploy` is registered (runs as `The Anvaya Bali`, logon mode Interactive/Background) and a triggered run completed with `Last Result: 0` and `Deploy finished ... exit code 0` in `deploy.log`.
 
-Diagnosis is blocked from this SSH session: `The Anvaya Bali` is a standard account, and both Event Viewer (`wevtutil qe Microsoft-Windows-TaskScheduler/Operational`) and PowerShell's CIM-backed cmdlets (`Get-ScheduledTaskInfo`, `Start-ScheduledTask`) return `Access is denied` for it - `schtasks` uses the older COM API so its "attempted" response gets through, but there's no visibility into why the actual launch never happens. Suspect the `(A;;GRGX;;;$sid)` ACE from `register-deploy-task.ps1` (generic read+execute) grants enough to query/request a run but not the specific right Task Scheduler needs to launch a stored-password task.
+Earlier runs failed silently (`schtasks /run` said `SUCCESS: Attempted to run...` but `Last Result` stayed `267011` and no `deploy.log` appeared). Task history (event 104, `LogonUserExEx` error `0x80070569`) plus Security event 4625 (logon type 4, status `0xC000015B`, "The user has not been granted the requested logon type") showed the cause: a stored-password task logs on as a **batch job**, and only Administrators, Backup Operators and Performance Log Users hold `SeBatchLogonRight` by default - the standard `The Anvaya Bali` account didn't. `register-deploy-task.ps1` now grants that right (via `secedit`). The task ACL was never the problem.
 
-Next step needs an admin account locally (RDP or physical access, not SSH): open Task Scheduler → `revenue-console-deploy` → History tab (turn on "Enable All Tasks History" in the Actions pane if empty) and read the actual failure reason for the run attempts made on 2026-10-12.
+`The Anvaya Bali` can't read the Task Scheduler event log or use the CIM cmdlets (`Get-ScheduledTaskInfo`) - use `schtasks /query /tn revenue-console-deploy /v /fo list` for status, and an elevated session for event history (task history is now enabled).
 
 Setup (already done; repeat only if the task is lost, or after changing the Windows password - the task keeps the old one and will fail to start). Run locally at the machine, not over SSH:
 
@@ -152,7 +152,7 @@ Start-Process powershell -Verb RunAs -ArgumentList '-NoExit -ExecutionPolicy Byp
 
 - `The Anvaya Bali` is a standard (non-admin) account; the admins are `User` and `Administrator`. Registering a stored-password task needs admin (unelevated it fails with `Access is denied`), so this elevates - approve the UAC prompt with the `User` account. The script still registers the task to run as `The Anvaya Bali` (`-UserName` parameter).
 - It prompts for `The Anvaya Bali`'s Windows password in a dialog - never via a `schtasks /rp` argument, which would leak it into shell history/process logs.
-- Because an admin creates the task, `The Anvaya Bali` can't read or run it by default (`schtasks /query` → `Access is denied`). The script appends a read/run ACE for that account to the task's security descriptor. To re-apply only that grant, add `-GrantOnly` (no password prompt).
+- Because an admin creates the task, `The Anvaya Bali` can't read or run it by default (`schtasks /query` → `Access is denied`). The script appends a read/run ACE for that account to the task's security descriptor and grants it "Log on as a batch job". To re-apply only those grants, add `-GrantOnly` (no password prompt).
 - From a Claude Code session, launch it with `Start-Process ... -Verb RunAs` as above. Running it via the `!` prompt prefix goes through Git Bash, which strips backslashes from paths.
 
 Deploying over SSH (cmd.exe):
