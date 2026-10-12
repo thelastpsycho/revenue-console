@@ -75,6 +75,7 @@
         :idr-coverage="idrCoverage"
         :basis="basis"
         :pickup-days="loaded?.pickupDays || filters.pickupDays"
+        :compare-with-budget="compareWithBudget"
         @open-day="openDay"
       />
       <RmsForecastTab
@@ -245,8 +246,9 @@ const filters = reactive<Filters>({
   roomType: query("roomType"),
   marketId: query("marketId"),
   pickupDays: Number(query("pickupDays", "7")),
-  comparison: query("comparison", "weekday"),
+  comparison: query("comparison", "calendar"),
   comparisonStart: query("comparisonStart"),
+  compareWith: query("compareWith") === "budget" ? "budget" : "yoy",
 });
 const reportSync = ref<Sync | null>(null);
 const loaded = ref<Filters | null>(null),
@@ -293,12 +295,15 @@ const dirty = computed(
   () =>
     loaded.value && JSON.stringify(filters) !== JSON.stringify(loaded.value),
 );
+const compareWithBudget = computed(() => loaded.value?.compareWith === "budget");
 const comparisonLabel = computed(() =>
-  loaded.value?.comparison === "custom"
-    ? `Matched period from ${loaded.value.comparisonStart}`
-    : loaded.value?.comparison === "calendar"
-      ? "Same calendar date last year"
-      : "Same weekday last year",
+  loaded.value?.compareWith === "budget"
+    ? "Budget (gross)"
+    : loaded.value?.comparison === "custom"
+      ? `Matched period from ${loaded.value.comparisonStart}`
+      : loaded.value?.comparison === "calendar"
+        ? "Same calendar date last year"
+        : "Same weekday last year",
 );
 const forecastBusy = computed(() =>
   Object.values(forecast.value?.sections || {}).some((s) => s.refreshing),
@@ -331,7 +336,11 @@ async function loadAll() {
     error.value = "Choose a valid range of at most 366 days.";
     return;
   }
-  if (filters.comparison === "custom" && !filters.comparisonStart) {
+  if (
+    filters.compareWith !== "budget" &&
+    filters.comparison === "custom" &&
+    !filters.comparisonStart
+  ) {
     error.value = "Choose a comparison start date.";
     return;
   }
@@ -640,7 +649,9 @@ const buckets = computed(() => {
           basis.value === "gross" ? r.stlyRevenue : r.stlyNetRevenue,
         ),
       ),
-      bucketStlyIdrRooms = sumKnown(rs.map((r) => r.stlyIdrRooms));
+      bucketStlyIdrRooms = sumKnown(rs.map((r) => r.stlyIdrRooms)),
+      bucketBudgetRooms = sumKnown(rs.map((r) => r.budgetRooms)),
+      bucketBudgetRevenue = sumKnown(rs.map((r) => r.budgetRevenue));
     return {
       key,
       rooms: sumKnown(rs.map(currentRooms)),
@@ -649,6 +660,11 @@ const buckets = computed(() => {
       comparisonRevenue: bucketComparisonRevenue,
       adr: ratio(bucketRevenue, bucketIdrRooms),
       comparisonAdr: ratio(bucketComparisonRevenue, bucketStlyIdrRooms),
+      budgetRooms: bucketBudgetRooms,
+      budgetRevenue: bucketBudgetRevenue,
+      // Budget revenue is already all-IDR, so this divides by its own room
+      // count rather than idrRooms (the actual-booking currency subset).
+      budgetAdr: ratio(bucketBudgetRevenue, bucketBudgetRooms),
     };
   });
 });
@@ -657,7 +673,9 @@ const chartTable = computed(() => {
     totalRevenue = sumKnown(b.map((x) => x.revenue)),
     totalComparisonRevenue = sumKnown(b.map((x) => x.comparisonRevenue)),
     totalIdrRooms = rows.value.reduce((s, r) => s + r.idrRooms, 0),
-    totalStlyIdrRooms = sumKnown(rows.value.map((r) => r.stlyIdrRooms));
+    totalStlyIdrRooms = sumKnown(rows.value.map((r) => r.stlyIdrRooms)),
+    totalBudgetRooms = sumKnown(b.map((x) => x.budgetRooms)),
+    totalBudgetRevenue = sumKnown(b.map((x) => x.budgetRevenue));
   return {
     buckets: b,
     totals: {
@@ -667,9 +685,15 @@ const chartTable = computed(() => {
       comparisonRevenue: totalComparisonRevenue,
       adr: ratio(totalRevenue, totalIdrRooms),
       comparisonAdr: ratio(totalComparisonRevenue, totalStlyIdrRooms),
+      budgetRooms: totalBudgetRooms,
+      budgetRevenue: totalBudgetRevenue,
+      budgetAdr: ratio(totalBudgetRevenue, totalBudgetRooms),
     },
   };
 });
+// The comparator bar/line swaps between LY and budget rather than showing
+// both, so the chart only clutters up with budget when the operator asks
+// for it via "Compare with".
 const chartData = computed(() => ({
   labels: buckets.value.map((b) => b.key),
   datasets: [
@@ -681,14 +705,23 @@ const chartData = computed(() => ({
       yAxisID: "rooms",
       order: 2,
     },
-    {
-      type: "bar" as const,
-      label: "Comparison nights",
-      data: buckets.value.map((b) => b.comparison),
-      backgroundColor: "#cbd5e1",
-      yAxisID: "rooms",
-      order: 2,
-    },
+    compareWithBudget.value
+      ? {
+          type: "bar" as const,
+          label: "Budget nights (gross)",
+          data: buckets.value.map((b) => b.budgetRooms),
+          backgroundColor: "#fcd34d",
+          yAxisID: "rooms",
+          order: 2,
+        }
+      : {
+          type: "bar" as const,
+          label: "Comparison nights",
+          data: buckets.value.map((b) => b.comparison),
+          backgroundColor: "#cbd5e1",
+          yAxisID: "rooms",
+          order: 2,
+        },
     {
       type: "line" as const,
       label: "IDR ADR",
@@ -697,15 +730,25 @@ const chartData = computed(() => ({
       yAxisID: "adr",
       order: 1,
     },
-    {
-      type: "line" as const,
-      label: "Comparison ADR",
-      data: buckets.value.map((b) => b.comparisonAdr),
-      borderColor: "#64748b",
-      borderDash: [4, 4],
-      yAxisID: "adr",
-      order: 1,
-    },
+    compareWithBudget.value
+      ? {
+          type: "line" as const,
+          label: "Budget ADR (gross)",
+          data: buckets.value.map((b) => b.budgetAdr),
+          borderColor: "#b45309",
+          borderDash: [4, 4],
+          yAxisID: "adr",
+          order: 1,
+        }
+      : {
+          type: "line" as const,
+          label: "Comparison ADR",
+          data: buckets.value.map((b) => b.comparisonAdr),
+          borderColor: "#64748b",
+          borderDash: [4, 4],
+          yAxisID: "adr",
+          order: 1,
+        },
   ],
 }));
 const chartOptions: ChartOptions<keyof ChartTypeRegistry> = {

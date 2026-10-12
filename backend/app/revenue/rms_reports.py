@@ -84,7 +84,11 @@ def room_rate_breakdown(start, end, room_type=None, market_id=None):
 
 def build_reports(start, end, room_type=None, market_id=None, comparison='weekday',
                   comparison_start=None, pickup_days=7, date_basis='stay'):
+    from . import rms_budget
     today = be._today().isoformat()
+    # Segment budget has no room-type dimension and is tied to stay dates,
+    # not booking-creation dates, so neither filter leaves a matching figure.
+    budget_by_market = {} if room_type or date_basis != 'stay' else rms_budget.segment_totals(start, end, basis='gross')
     first, last = date.fromisoformat(start), date.fromisoformat(end)
     comparison_days = [(first + timedelta(days=i), be.comparison_date(first + timedelta(days=i), comparison, comparison_start, start))
                        for i in range((last - first).days + 1)]
@@ -146,7 +150,8 @@ def build_reports(start, end, room_type=None, market_id=None, comparison='weekda
                                'cancelledRooms': cancelled if net is not None else None,
                                'amendedRooms': net - new + cancelled if net is not None else None,
                                'comparison': dict(comp.get(key, _blank())) if comparison_quality != 'unavailable' else None,
-                               'comparisonQuality': comparison_quality})
+                               'comparisonQuality': comparison_quality,
+                               'budget': budget_by_market.get(key) if dimension == 'market' else None})
         production[dimension] = sorted(group_rows, key=lambda r: (-(r['rooms'] or 0), r['name']))
     eligible = [r for r in states.values() if be._matches(r, room_type, market_id) and
                 (start <= r['reservation_date'] <= end if date_basis == 'booking' else bool(_nights(r, start, end)))]

@@ -16,6 +16,8 @@ export interface PaceRow {
   stlyIdrRooms: number | null;
   stlyNetRevenue: number | null;
   lyFinalRooms: number | null;
+  budgetRooms: number | null;
+  budgetRevenue: number | null;
   currentQuality: string;
   comparisonQuality: string;
   pickupQuality: string;
@@ -74,6 +76,10 @@ export interface Filters {
   pickupDays: number;
   comparison: string;
   comparisonStart: string;
+  // "comparison" always holds a valid YoY submode so it keeps working as the
+  // backend's matching mode (pickup, LY-final, etc. depend on it even when
+  // the operator is looking at budget); this picks which one is displayed.
+  compareWith: "yoy" | "budget";
 }
 export interface CurvePoint {
   lead: number;
@@ -178,11 +184,18 @@ export function monthlySummary(
       Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0),
     ).getUTCDate();
     const fullMonth = days.length === end && days[0]?.date === `${month}-01`;
-    const budget =
+    // Segment budget is per-day and market-aware, so it works for partial
+    // ranges and market filters; fall back to the flat manual target where
+    // it isn't available (net basis, room-type filters, or months with no
+    // import - the imported workbook only carries gross figures).
+    const segmentBudget =
+      basis === "gross" ? sumKnown(days.map((r) => r.budgetRevenue)) : null;
+    const flatBudget =
       !filtered && fullMonth
         ? (budgets.find((b) => b.month === month && b.basis === basis)
             ?.revenue ?? null)
         : null;
+    const budget = segmentBudget ?? flatBudget;
     const gap = difference(revenue, budget),
       futureDays = days.filter((r) => r.date >= today).length;
     return {

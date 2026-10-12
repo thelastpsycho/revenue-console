@@ -1,7 +1,7 @@
 <template>
   <RmsCard
     title="Monthly position and targets"
-    :description="`${basisLabel}. Booking positions, not audited actuals. Targets need complete, unfiltered months on the same basis.`"
+    :description="`${basisLabel}. Booking positions, not audited actuals. Targets use the imported segment budget per day where available (partial ranges and market filters included); otherwise the manual monthly figure, which needs a complete, unfiltered month on the same basis.`"
   >
     <div class="overflow-x-auto">
       <table class="data-table">

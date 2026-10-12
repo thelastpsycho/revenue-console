@@ -78,13 +78,14 @@
       </label>
       <label>
         <span class="field-label">Compare with</span>
-        <select v-model="filters.comparison" class="neu-input">
+        <select v-model="compareSelection" class="neu-input">
           <option value="weekday">Same weekday last year</option>
           <option value="calendar">Same date last year</option>
           <option value="custom">Matched event / holiday</option>
+          <option value="budget">Budget (gross)</option>
         </select>
       </label>
-      <label v-if="filters.comparison === 'custom'">
+      <label v-if="compareSelection === 'custom'">
         <span class="field-label">Comparison begins</span>
         <input
           v-model="filters.comparisonStart"
@@ -230,6 +231,22 @@ const basis = defineModel<"gross" | "net">("basis", { required: true });
 
 const marketName = (id: string) =>
   props.dims.markets.find((m) => String(m.id) === id)?.name || id;
+
+// filters.comparison always keeps a valid YoY submode (pickup/LY-final
+// depend on it regardless of what's displayed); "Budget" is a separate
+// display mode layered on top via compareWith, not a fourth comparison value.
+const compareSelection = computed<string>({
+  get: () =>
+    props.filters.compareWith === "budget" ? "budget" : props.filters.comparison,
+  set: (value) => {
+    if (value === "budget") {
+      props.filters.compareWith = "budget";
+    } else {
+      props.filters.compareWith = "yoy";
+      props.filters.comparison = value;
+    }
+  },
+});
 
 const sectionState = (s: Section) =>
   s.refreshing ? "refreshing…" : s.error ? "failed" : s.stale ? "stale" : "ready";

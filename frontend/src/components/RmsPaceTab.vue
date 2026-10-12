@@ -46,10 +46,16 @@
               :title="m.money ? `${money(m.cur(b))} · LY ${money(m.ly(b))}` : undefined"
             >
               {{ m.fmt(m.cur(b)) }}
-              <span class="sub">
+              <span v-if="!compareWithBudget" class="sub">
                 LY {{ m.fmt(m.ly(b)) }} ·
                 <span :class="signClass(pctDiff(m.cur(b), m.ly(b)))">{{
                   pctLabel(pctDiff(m.cur(b), m.ly(b)))
+                }}</span>
+              </span>
+              <span v-else-if="m.budget(b) != null" class="sub">
+                Budget {{ m.fmt(m.budget(b)) }} ·
+                <span :class="signClass(pctDiff(m.cur(b), m.budget(b)))">{{
+                  pctLabel(pctDiff(m.cur(b), m.budget(b)))
                 }}</span>
               </span>
             </td>
@@ -148,6 +154,9 @@ interface Bucket {
   comparisonRevenue: number | null;
   adr: number | null;
   comparisonAdr: number | null;
+  budgetRooms: number | null;
+  budgetRevenue: number | null;
+  budgetAdr: number | null;
 }
 const props = defineProps<{
   rows: PaceRow[];
@@ -158,6 +167,7 @@ const props = defineProps<{
   idrCoverage: number | null;
   basis: "gross" | "net";
   pickupDays: number;
+  compareWithBudget: boolean;
 }>();
 defineEmits<{ openDay: [date: string] }>();
 const chartView = defineModel<string>("chartView", { required: true });
@@ -168,11 +178,11 @@ const views = [
   { id: "weekly", label: "Weekly" },
   { id: "monthly", label: "Monthly" },
 ];
-// Each summary row shows the current value with LY and % change underneath.
+// Each summary row shows the current value with LY and budget (gross) % change underneath.
 const metrics = [
-  { label: "Room nights", cur: (b: Bucket) => b.rooms, ly: (b: Bucket) => b.comparison, fmt: num, money: false },
-  { label: "Revenue", cur: (b: Bucket) => b.revenue, ly: (b: Bucket) => b.comparisonRevenue, fmt: moneyShort, money: true },
-  { label: "ADR", cur: (b: Bucket) => b.adr, ly: (b: Bucket) => b.comparisonAdr, fmt: moneyShort, money: true },
+  { label: "Room nights", cur: (b: Bucket) => b.rooms, ly: (b: Bucket) => b.comparison, budget: (b: Bucket) => b.budgetRooms, fmt: num, money: false },
+  { label: "Revenue", cur: (b: Bucket) => b.revenue, ly: (b: Bucket) => b.comparisonRevenue, budget: (b: Bucket) => b.budgetRevenue, fmt: moneyShort, money: true },
+  { label: "ADR", cur: (b: Bucket) => b.adr, ly: (b: Bucket) => b.comparisonAdr, budget: (b: Bucket) => b.budgetAdr, fmt: moneyShort, money: true },
 ];
 const totalBucket = computed<Bucket>(() => ({
   key: "Total",

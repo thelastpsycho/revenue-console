@@ -55,6 +55,39 @@ test("partial months, filtered reports and mismatched basis have no budget compa
     null,
   );
 });
+test("per-day segment budget covers partial ranges and market filters that the flat target can't", () => {
+  const withBudget = rows.map((r) => ({ ...r, budgetRevenue: 150 }));
+  const [partial] = monthlySummary(
+    withBudget.slice(1),
+    "gross",
+    [],
+    capacities,
+    "2026-10-12",
+    false,
+  );
+  assert.equal(partial.fullMonth, false);
+  assert.equal(partial.budget, 150 * 30);
+  const [filtered] = monthlySummary(
+    withBudget,
+    "gross",
+    [],
+    capacities,
+    "2026-10-12",
+    true,
+  );
+  assert.equal(filtered.budget, 150 * 31);
+  // The imported workbook only carries gross figures, so net basis still
+  // needs the manual flat target (none given here) rather than the segment one.
+  const [net] = monthlySummary(
+    withBudget,
+    "net",
+    [],
+    capacities,
+    "2026-10-12",
+    false,
+  );
+  assert.equal(net.budget, null);
+});
 test("missing capacity and history are unavailable, never fake zero", () => {
   assert.equal(
     monthlySummary(rows, "gross", [], {}, "2026-10-12", false)[0].revpar,

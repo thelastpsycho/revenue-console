@@ -535,11 +535,15 @@ def pickup_breakdown(previous, current, day, before, today, room_type, market_id
 def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_days=7,
                comparison="weekday", comparison_start=None):
     from .rms_workspace import get_settings
+    from . import rms_budget
     today = today or _today()
     s, e = date.fromisoformat(start), date.fromisoformat(end)
     ly_start = comparison_date(s, comparison, comparison_start, start).isoformat()
     ly_end = comparison_date(e, comparison, comparison_start, start).isoformat()
     history = version_history([(start, end), (ly_start, ly_end)])
+    # Segment budget has no room-type dimension, so a room-type filter leaves
+    # no figure that actually matches what's being compared.
+    budget = {} if room_type else rms_budget.daily_totals(start, end, market_id=market_id, basis="gross")
     rules = get_settings()["revenueRules"]
     with _db_lock, _db() as conn:
         coverage = _get_meta(conn, "backfillFrom")
@@ -566,8 +570,11 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
         cur, prev = now.get(day, _empty()), before.get(day, _empty())
         pickup_quality = _quality(prior_day, coverage, history)
         breakdown = pickup_breakdown(previous, current, day, prior_day, current_day, room_type, market_id)
+        day_budget = budget.get(day)
         out.append({
             "date": day, "lyDate": ly, **cur,
+            "budgetRooms": day_budget["rooms"] if day_budget else None,
+            "budgetRevenue": day_budget["revenue"] if day_budget else None,
             "pickupRooms": cur["rooms"] - prev["rooms"] if pickup_quality != "unavailable" else None,
             "pickupRevenue": cur["revenue"] - prev["revenue"] if pickup_quality != "unavailable" else None,
             **{k: v if pickup_quality != "unavailable" else None for k, v in breakdown.items()},

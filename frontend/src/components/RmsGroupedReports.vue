@@ -167,8 +167,15 @@
                 <th class="num">Revenue</th>
                 <th class="num">ADR</th>
                 <th class="num">Pickup ({{ pickupKey }}d)</th>
-                <th class="num">LY nights</th>
-                <th class="num">vs LY</th>
+                <template v-if="activeDimension === 'market' && compareWithBudget">
+                  <th class="num">Budget nights</th>
+                  <th class="num">Budget revenue (gross)</th>
+                  <th class="num">vs budget (gross)</th>
+                </template>
+                <template v-else>
+                  <th class="num">LY nights</th>
+                  <th class="num">vs LY</th>
+                </template>
                 <template v-if="moreColumns">
                   <th class="num">IDR coverage</th>
                   <th v-for="n in otherPickups" :key="n" class="num">
@@ -211,12 +218,25 @@
                 <td class="num" :title="r.pickup[pickupKey]?.quality">
                   {{ signed(r.pickup[pickupKey]?.rooms ?? null) }}
                 </td>
-                <td class="num">{{ number(r.comparison?.rooms) }}</td>
-                <td
-                  :class="['num', gapClass(difference(r.rooms, r.comparison?.rooms ?? null))]"
-                >
-                  {{ signed(difference(r.rooms, r.comparison?.rooms ?? null)) }}
-                </td>
+                <template v-if="activeDimension === 'market' && compareWithBudget">
+                  <td class="num">{{ number(r.budget?.rooms ?? null) }}</td>
+                  <td class="num" :title="money(r.budget?.revenue ?? null)">
+                    {{ moneyShort(r.budget?.revenue ?? null) }}
+                  </td>
+                  <td
+                    :class="['num', gapClass(difference(revenue(r), r.budget?.revenue ?? null))]"
+                  >
+                    {{ signed(difference(revenue(r), r.budget?.revenue ?? null)) }}
+                  </td>
+                </template>
+                <template v-else>
+                  <td class="num">{{ number(r.comparison?.rooms) }}</td>
+                  <td
+                    :class="['num', gapClass(difference(r.rooms, r.comparison?.rooms ?? null))]"
+                  >
+                    {{ signed(difference(r.rooms, r.comparison?.rooms ?? null)) }}
+                  </td>
+                </template>
                 <template v-if="moreColumns">
                   <td class="num">{{ percent(ratio(r.idrRooms, r.rooms)) }}</td>
                   <td
@@ -314,6 +334,7 @@ interface Production extends Metrics {
   amendedRooms: number | null;
   comparison: Metrics | null;
   comparisonQuality: string;
+  budget: { rooms: number | null; revenue: number | null } | null;
 }
 interface ReportData {
   quality: string;
@@ -349,10 +370,12 @@ const props = defineProps<{
     pickupDays: number;
     comparison: string;
     comparisonStart: string;
+    compareWith: "yoy" | "budget";
   };
   basis: "gross" | "net";
   labels: Record<string, string>;
 }>();
+const compareWithBudget = computed(() => props.filters.compareWith === "budget");
 defineEmits<{ drilldown: [dimension: string, id: string] }>();
 const dimensions = [
   { id: "market", label: "Market" },
@@ -522,6 +545,7 @@ function download(rows: unknown[][], name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function exportProduction() {
+  const budgetCols = activeDimension.value === "market" && compareWithBudget.value;
   download(
     [
       [
@@ -532,8 +556,9 @@ function exportProduction() {
         "1d pickup",
         "7d pickup",
         "30d pickup",
-        "Comparison nights",
-        "Comparison quality",
+        ...(budgetCols
+          ? ["Budget nights", "Budget revenue (gross)"]
+          : ["Comparison nights", "Comparison quality"]),
       ],
       ...productionRows.value.map((r) => [
         rowName(r),
@@ -543,8 +568,9 @@ function exportProduction() {
         r.pickup["1"].rooms,
         r.pickup["7"].rooms,
         r.pickup["30"].rooms,
-        r.comparison?.rooms,
-        r.comparisonQuality,
+        ...(budgetCols
+          ? [r.budget?.rooms ?? null, r.budget?.revenue ?? null]
+          : [r.comparison?.rooms ?? null, r.comparisonQuality]),
       ]),
     ],
     activeDimension.value,
