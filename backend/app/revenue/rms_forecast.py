@@ -22,6 +22,30 @@ Room revenue only - no F&B/outlet fields are returned.
 from datetime import date, timedelta
 
 from ..integrations.pms.api_client import PMSApiClient
+from ..integrations.pms.fast_allotment_updater import LABEL_BY_CHECKBOX_VALUE, TYPE_ID_ALIASES
+
+# Every raw PMS room-type code these forecast endpoints can return: the 13
+# representative codes allotment pushes to, plus the bed-configuration
+# variants TYPE_ID_ALIASES folds into them (e.g. PRTG -> PRKG). Needed to
+# tell a room-type field apart from the other numeric columns these rows
+# carry (ExtraBed, TotalRoom, RoomAvailable, Occupancy...).
+_ROOM_TYPE_CODES = set(LABEL_BY_CHECKBOX_VALUE) | set(TYPE_ID_ALIASES)
+
+
+def _canonicalize_counts(values):
+    """Fold bed-configuration variants into their representative online room
+    type, summing counts - matching pms_processor.py's physical-inventory
+    grouping (DLK+DLT -> Deluxe, PRKG+PRKP+PRTG+PRTP -> Premiere, ...).
+    Non-room-type fields pass through unchanged."""
+    out = {}
+    for k, v in values.items():
+        if k in _ROOM_TYPE_CODES:
+            canon = TYPE_ID_ALIASES.get(k, k)
+            out[canon] = out.get(canon, 0) + (v or 0)
+        else:
+            out[k] = v
+    return out
+
 
 CHUNK = 7
 # ReportExpectedRoomOccupied's Mode window, clamped server-side at 30 days.
@@ -79,18 +103,27 @@ def _segments(rows):
 def _room_types(rows):
     """Unpivots the "MM-DD" columns back to full dates using each row's own
     StartDate/EndDate (so a chunk spanning New Year resolves correctly, and
-    the row's actual span is used rather than an assumed chunk size)."""
-    out = []
+    the row's actual span is used rather than an assumed chunk size).
+
+    The PMS reports one row per raw bed-configuration code (TypeId), not per
+    online-sellable room type - canonicalized and summed per (date, type) the
+    same way _canonicalize_counts does for availability, or a date with both
+    PRKG and PRTG rows would show as two separate "Premiere" entries."""
+    merged = {}
     for r in rows:
+        type_id = TYPE_ID_ALIASES.get(r["TypeId"], r["TypeId"])
         start = date.fromisoformat(r["StartDate"][:10])
         end = date.fromisoformat(r["EndDate"][:10])
         for i in range((end - start).days + 1):
             d = start + timedelta(days=i)
             key = f"{d:%m-%d}"
-            if key in r:
-                out.append({"date": d.isoformat(), "typeId": r["TypeId"],
-                            "rooms": r[key], "roomCount": r.get("NoOfRooms")})
-    return out
+            if key not in r:
+                continue
+            entry = merged.setdefault((d.isoformat(), type_id),
+                                       {"date": d.isoformat(), "typeId": type_id, "rooms": 0, "roomCount": 0})
+            entry["rooms"] += r[key] or 0
+            entry["roomCount"] += r.get("NoOfRooms") or 0
+    return list(merged.values())
 
 
 # Section cache: persistent across worker restarts, with database-backed leases.
@@ -131,8 +164,8 @@ def fetch_section(start, days, section, client_factory=PMSApiClient):
             fcntl.flock(lock, fcntl.LOCK_EX)
             rows = _room_types([r for s in _starts(start, days, ROOM_CHUNK) for r in _post_room_types(client, s)])
     elif section == "availability":
-        rows = [{"date": r["Date"][:10] if "Date" in r else r["TrxDate"][:10], "values": {
-            k: v for k, v in r.items() if isinstance(v, (int, float)) and k not in ("HotelId", "ROW_ID")}}
+        rows = [{"date": r["Date"][:10] if "Date" in r else r["TrxDate"][:10], "values": _canonicalize_counts(
+            {k: v for k, v in r.items() if isinstance(v, (int, float)) and k not in ("HotelId", "ROW_ID")})}
             for r in client.get_available_room_inventory(start.isoformat(), days)]
     else:
         chunk = CHUNK if section == "hotel" else SEGMENT_CHUNK

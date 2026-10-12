@@ -234,6 +234,26 @@ def test_expected_room_pivot_unpivots_across_new_year():
     assert out[3] == {"date": "2027-01-01", "typeId": "DLT", "rooms": 4.0, "roomCount": 138}
 
 
+def test_expected_room_pivot_merges_bed_configuration_variants():
+    """PRKG (Premiere King Garden) and PRTG (Premiere Twin Garden) are the
+    same online room type at different bed configurations - the PMS reports
+    them as separate rows, but RMS must sum them into one "Premiere" entry
+    or it fragments inventory/occupancy the same way bookings used to."""
+    rows = [
+        {"TypeId": "PRKG", "NoOfRooms": 40, "StartDate": "2026-10-01", "EndDate": "2026-10-01", "10-01": 10.0},
+        {"TypeId": "PRTG", "NoOfRooms": 20, "StartDate": "2026-10-01", "EndDate": "2026-10-01", "10-01": 5.0},
+    ]
+    out = rms_forecast._room_types(rows)
+    assert out == [{"date": "2026-10-01", "typeId": "PRKG", "rooms": 15.0, "roomCount": 60}]
+
+
+def test_canonicalize_counts_merges_variants_and_leaves_other_fields_alone():
+    values = {"DLT": 6, "DLK": 0, "PRKG": -18, "PRTG": 33, "PRKP": 2, "TotalRoom": 493, "RoomAvailable": 26}
+    assert rms_forecast._canonicalize_counts(values) == {
+        "DLT": 6, "PRKG": 17, "TotalRoom": 493, "RoomAvailable": 26,
+    }
+
+
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv("APP_ACCESS_PIN", "123456")
