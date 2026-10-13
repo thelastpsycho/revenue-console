@@ -15,30 +15,33 @@
 
   <aside
     :class="[
-      'fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-slate-200 bg-white transition-transform duration-200 ease-out lg:translate-x-0',
+      'group/sidebar fixed inset-y-0 left-0 z-40 flex w-64 flex-col overflow-hidden border-r border-slate-200 bg-white transition-[width] duration-200 ease-out lg:w-16 lg:translate-x-0 lg:hover:w-64',
       open ? 'translate-x-0' : '-translate-x-full',
     ]"
   >
     <!-- Brand -->
-    <div class="flex h-16 items-center gap-2.5 border-b border-slate-200 px-6">
-      <span class="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-white">
+    <div class="flex h-16 items-center gap-2.5 border-b border-slate-200 px-6 lg:px-[18px] lg:group-hover/sidebar:px-6">
+      <span class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white">
         <ChartBarSquareIcon class="h-5 w-5" />
       </span>
-      <div class="leading-tight">
+      <div class="min-w-0 whitespace-nowrap leading-tight lg:hidden lg:group-hover/sidebar:block">
         <p class="text-sm font-semibold tracking-tight text-slate-900">Revenue Console</p>
         <p class="text-xs text-slate-400">Yield &amp; Inventory</p>
       </div>
     </div>
 
     <!-- Navigation -->
-    <nav class="flex-1 space-y-0.5 overflow-y-auto px-3 py-5">
-      <p class="px-3 pb-2 text-[11px] font-medium uppercase tracking-widest text-slate-400">
+    <nav class="flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden px-3 py-5">
+      <p
+        class="whitespace-nowrap px-3 pb-2 text-[11px] font-medium uppercase tracking-widest text-slate-400 lg:hidden lg:group-hover/sidebar:block"
+      >
         Pipeline
       </p>
       <div v-for="item in navigation" :key="item.name">
         <div class="flex items-stretch gap-0.5">
           <router-link
             :to="item.href"
+            :title="item.name"
             @click="$emit('close')"
             :class="[
               route.path === item.href
@@ -54,10 +57,10 @@
                 'h-5 w-5 flex-shrink-0 transition-colors',
               ]"
             />
-            <span>{{ item.name }}</span>
+            <span class="whitespace-nowrap lg:hidden lg:group-hover/sidebar:inline">{{ item.name }}</span>
             <span
               v-if="item.href === SCHEDULE_PAGE && scheduleBadge"
-              class="relative ml-auto flex h-2.5 w-2.5"
+              class="relative ml-auto flex h-2.5 w-2.5 flex-shrink-0"
               :title="scheduleBadge.title"
               :aria-label="scheduleBadge.title"
             >
@@ -71,7 +74,7 @@
           <button
             v-if="item.children"
             type="button"
-            class="flex w-7 flex-shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+            class="hidden w-7 flex-shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-50 hover:text-slate-600 lg:group-hover/sidebar:flex"
             :aria-expanded="isExpanded(item)"
             :aria-label="`${isExpanded(item) ? 'Collapse' : 'Expand'} ${item.name}`"
             @click="toggleExpanded(item)"
@@ -81,7 +84,10 @@
             />
           </button>
         </div>
-        <div v-if="item.children && isExpanded(item)" class="ml-6 mt-0.5 space-y-0.5 border-l border-slate-200 pl-3">
+        <div
+          v-if="item.children && isExpanded(item)"
+          class="ml-6 mt-0.5 space-y-0.5 border-l border-slate-200 pl-3 lg:hidden lg:group-hover/sidebar:block"
+        >
           <router-link
             v-for="child in item.children"
             :key="child.name"
@@ -91,7 +97,7 @@
               route.path === child.href
                 ? 'bg-slate-100 text-slate-900'
                 : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900',
-              'flex items-center rounded-lg px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer',
+              'flex items-center whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer',
             ]"
           >
             {{ child.name }}
@@ -106,7 +112,7 @@
         <span class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">
           RC
         </span>
-        <div class="min-w-0 leading-tight">
+        <div class="min-w-0 whitespace-nowrap leading-tight lg:hidden lg:group-hover/sidebar:block">
           <p class="truncate text-xs font-medium text-slate-900">Local session</p>
           <p class="truncate text-[11px] text-slate-400">fo.hospitality.mykg.id</p>
         </div>

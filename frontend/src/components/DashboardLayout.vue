@@ -3,7 +3,7 @@
     <AppSidebar :open="sidebarOpen" @close="sidebarOpen = false" />
 
     <!-- Content column (offset by sidebar on desktop) -->
-    <div class="flex min-h-screen flex-col lg:pl-64">
+    <div class="flex min-h-screen flex-col lg:pl-16">
       <!-- Mobile top bar -->
       <header
         class="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-slate-200 bg-white px-4 lg:hidden"
