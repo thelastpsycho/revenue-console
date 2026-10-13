@@ -4,7 +4,8 @@
     :description="`On-the-books nights and revenue by room type and PMS rate code · ${basisLabel}.`"
     scroll
   >
-    <table v-if="breakdown?.roomTypes.length" class="data-table">
+    <RmsSkeleton v-if="loading" variant="table" :count="6" :columns="4" />
+    <table v-else-if="breakdown?.roomTypes.length" class="data-table">
       <thead>
         <tr>
           <th>Room / rate plan</th>
@@ -51,13 +52,14 @@
         </tr>
       </tfoot>
     </table>
-    <template v-if="!breakdown?.roomTypes.length" #empty>
-      {{ breakdown ? "No bookings for this selection." : "Loading breakdown…" }}
+    <template v-if="!loading && !breakdown?.roomTypes.length" #empty>
+      No bookings for this selection.
     </template>
   </RmsCard>
 </template>
 <script setup lang="ts">
 import RmsCard from "./RmsCard.vue";
+import RmsSkeleton from "./RmsSkeleton.vue";
 import {
   num,
   money,
@@ -68,6 +70,7 @@ import {
   type BreakdownMetrics,
 } from "../utils/rms";
 const props = defineProps<{
+  loading: boolean;
   breakdown: Breakdown | null;
   basis: "gross" | "net";
   basisLabel: string;

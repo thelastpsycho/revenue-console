@@ -4,7 +4,8 @@
     :description="`${basisLabel}. Booking positions, not audited actuals. Targets use the imported segment budget per day where available (partial ranges and market filters included); otherwise the manual monthly figure, which needs a complete, unfiltered month on the same basis.`"
   >
     <div class="overflow-x-auto">
-      <table class="data-table">
+      <RmsSkeleton v-if="loading" variant="table" :count="3" :columns="8" />
+      <table v-else class="data-table">
         <thead>
           <tr>
             <th>Month</th>
@@ -50,11 +51,12 @@
         </tbody>
       </table>
     </div>
-    <template v-if="!months.length" #empty>Apply a range to load data.</template>
+    <template v-if="!loading && !months.length" #empty>Apply a range to load data.</template>
   </RmsCard>
 </template>
 <script setup lang="ts">
 import RmsCard from "./RmsCard.vue";
+import RmsSkeleton from "./RmsSkeleton.vue";
 import {
   num,
   money,
@@ -63,6 +65,7 @@ import {
   type MonthSummary,
 } from "../utils/rms";
 defineProps<{
+  loading: boolean;
   months: MonthSummary[];
   basisLabel: string;
 }>();

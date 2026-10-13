@@ -18,10 +18,12 @@
       </div>
     </template>
     <div class="h-72 p-4">
-      <Chart type="bar" :data="chartData" :options="chartOptions" />
+      <RmsSkeleton v-if="loading" variant="chart" />
+      <Chart v-else type="bar" :data="chartData" :options="chartOptions" />
     </div>
+    <RmsSkeleton v-if="loading" variant="table" :count="3" :columns="4" />
     <div
-      v-if="chartTable.buckets.length"
+      v-else-if="chartTable.buckets.length"
       class="overflow-x-auto border-t border-slate-200"
     >
       <table class="data-table">
@@ -76,7 +78,8 @@
         Behind LY only
       </label>
     </template>
-    <table v-if="pickupRows.length" class="data-table">
+    <RmsSkeleton v-if="loading" variant="table" :count="6" :columns="6" />
+    <table v-else-if="pickupRows.length" class="data-table">
       <thead>
         <tr>
           <th>Stay date</th>
@@ -117,7 +120,7 @@
         </tr>
       </tbody>
     </table>
-    <template v-if="!pickupRows.length" #empty>
+    <template v-if="!loading && !pickupRows.length" #empty>
       {{
         rows.length
           ? "No dates are behind last year."
@@ -131,6 +134,7 @@ import { computed, ref } from "vue";
 import { Chart } from "vue-chartjs";
 import type { ChartOptions, ChartTypeRegistry } from "chart.js";
 import RmsCard from "./RmsCard.vue";
+import RmsSkeleton from "./RmsSkeleton.vue";
 import {
   num,
   money,
@@ -159,6 +163,7 @@ interface Bucket {
   budgetAdr: number | null;
 }
 const props = defineProps<{
+  loading: boolean;
   rows: PaceRow[];
   chartData: any;
   chartOptions: ChartOptions<keyof ChartTypeRegistry>;

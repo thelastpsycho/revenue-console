@@ -17,7 +17,8 @@
         </button>
       </div>
     </template>
-    <div v-if="types.length" class="max-h-[65vh] overflow-auto">
+    <RmsSkeleton v-if="forecastBusy && !types.length" variant="table" :count="8" :columns="10" />
+    <div v-else-if="types.length" class="max-h-[65vh] overflow-auto">
       <table class="data-table">
         <thead>
           <tr>
@@ -56,18 +57,15 @@
       <span class="flex items-center gap-1"><span class="h-3 w-3 rounded-sm bg-amber-200" /> 90–99%</span>
       <span class="flex items-center gap-1"><span class="h-3 w-3 rounded-sm bg-rose-200" /> full or oversold</span>
     </div>
-    <template v-if="!types.length" #empty>
-      {{
-        forecastBusy
-          ? "Room type inventory is loading…"
-          : "No room type inventory for this selection."
-      }}
+    <template v-if="!forecastBusy && !types.length" #empty>
+      No room type inventory for this selection.
     </template>
   </RmsCard>
 </template>
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import RmsCard from "./RmsCard.vue";
+import RmsSkeleton from "./RmsSkeleton.vue";
 import { num, percent, ratio, EMPTY, type Forecast } from "../utils/rms";
 
 interface TypeRow {

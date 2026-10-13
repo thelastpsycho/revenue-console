@@ -8,11 +8,9 @@
         <ArrowDownTrayIcon class="h-4 w-4" /> Export CSV
       </button>
     </template>
-    <p v-if="loading" role="status" class="px-4 py-3 text-xs text-slate-500">
-      Loading source mix…
-    </p>
     <p v-if="error" role="alert" class="alert-error">{{ error }}</p>
-    <table v-if="rows.length" class="data-table">
+    <RmsSkeleton v-if="loading" variant="table" :count="6" :columns="5" />
+    <table v-else-if="rows.length" class="data-table">
       <thead>
         <tr>
           <th>Company</th>
@@ -63,6 +61,7 @@ import { onBeforeUnmount, ref, watch } from "vue";
 import { ArrowDownTrayIcon } from "@heroicons/vue/24/outline";
 import axios from "../plugins/axios";
 import RmsCard from "./RmsCard.vue";
+import RmsSkeleton from "./RmsSkeleton.vue";
 import {
   csvText,
   money,

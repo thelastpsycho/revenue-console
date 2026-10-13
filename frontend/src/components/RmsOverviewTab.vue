@@ -1,5 +1,6 @@
 <template>
-  <dl class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+  <RmsSkeleton v-if="loading" variant="tiles" :count="4" />
+  <dl v-else class="grid grid-cols-2 gap-3 lg:grid-cols-4">
     <div v-for="t in tiles" :key="t.label" class="stat-tile">
       <dt>{{ t.label }}</dt>
       <dd :title="t.title">{{ t.value }}</dd>
@@ -38,7 +39,8 @@
         </button>
       </div>
     </template>
-    <table v-if="attentionRows.length" class="data-table">
+    <RmsSkeleton v-if="loading" variant="table" :count="6" :columns="8" />
+    <table v-else-if="attentionRows.length" class="data-table">
       <thead>
         <tr>
           <th>Stay date</th>
@@ -89,7 +91,7 @@
         </tr>
       </tbody>
     </table>
-    <template #empty v-if="!attentionRows.length">
+    <template #empty v-if="!loading && !attentionRows.length">
       {{
         rowsLength
           ? "No dates are flagged for this selection."
@@ -98,7 +100,7 @@
     </template>
   </RmsCard>
 
-  <RmsMonthlyTargetsTable :months="months" :basis-label="basisLabel" />
+  <RmsMonthlyTargetsTable :months="months" :basis-label="basisLabel" :loading="loading" />
 </template>
 <script setup lang="ts">
 import {
@@ -112,6 +114,7 @@ import {
 import type { PaceRow, MonthSummary } from "../utils/rms";
 import RmsCard from "./RmsCard.vue";
 import RmsMonthlyTargetsTable from "./RmsMonthlyTargetsTable.vue";
+import RmsSkeleton from "./RmsSkeleton.vue";
 interface AttentionRow extends PaceRow {
   otb: number | null;
   occupancy: number | null;
@@ -128,6 +131,7 @@ export interface Tile {
   subs: { text: string; tone?: string }[];
 }
 defineProps<{
+  loading: boolean;
   tiles: Tile[];
   attentionRows: AttentionRow[];
   flaggedCount: number;

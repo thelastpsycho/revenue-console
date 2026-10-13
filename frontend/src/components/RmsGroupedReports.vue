@@ -1,10 +1,20 @@
 <template>
   <div class="space-y-4">
-    <p v-if="loading" role="status" class="text-xs text-slate-500">
-      Loading booking reports…
-    </p>
     <p v-if="error" role="alert" class="alert-error">{{ error }}</p>
-    <template v-if="data">
+    <template v-if="loading">
+      <RmsSkeleton variant="tiles" :count="4" />
+      <div class="grid gap-4 lg:grid-cols-2">
+        <RmsCard v-for="i in 2" :key="i" title="Loading…">
+          <div class="h-56 p-4">
+            <RmsSkeleton variant="chart" />
+          </div>
+        </RmsCard>
+      </div>
+      <RmsCard title="Loading…">
+        <RmsSkeleton variant="table" :count="8" :columns="6" />
+      </RmsCard>
+    </template>
+    <template v-else-if="data">
       <!-- ===== Booking behaviour ===== -->
       <template v-if="group === 'behaviour'">
         <div class="neu-card flex flex-wrap items-end justify-between gap-3 p-4">
@@ -310,6 +320,7 @@ import { type ChartOptions, type ChartTypeRegistry } from "chart.js";
 import { ArrowDownTrayIcon } from "@heroicons/vue/24/outline";
 import axios from "../plugins/axios";
 import RmsCard from "./RmsCard.vue";
+import RmsSkeleton from "./RmsSkeleton.vue";
 import {
   ratio,
   difference,

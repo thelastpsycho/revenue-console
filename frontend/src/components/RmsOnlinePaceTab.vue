@@ -17,12 +17,10 @@
         </button>
       </div>
     </template>
-    <p v-if="loading" role="status" class="px-4 py-3 text-xs text-slate-500">
-      Loading pace…
-    </p>
     <p v-if="error" role="alert" class="alert-error">{{ error }}</p>
     <div class="h-72 p-4">
-      <Chart type="bar" :data="chartData" :options="chartOptions" />
+      <RmsSkeleton v-if="loading" variant="chart" />
+      <Chart v-else type="bar" :data="chartData" :options="chartOptions" />
     </div>
   </RmsCard>
 
@@ -31,7 +29,8 @@
     description="Current room nights and revenue for the Online segment, with net pickup over the last 7 days."
     scroll
   >
-    <table v-if="rows.length" class="data-table">
+    <RmsSkeleton v-if="loading" variant="table" :count="6" :columns="5" />
+    <table v-else-if="rows.length" class="data-table">
       <thead>
         <tr>
           <th>Stay date</th>
@@ -84,6 +83,7 @@ import {
 } from "chart.js";
 import axios from "../plugins/axios";
 import RmsCard from "./RmsCard.vue";
+import RmsSkeleton from "./RmsSkeleton.vue";
 import {
   num,
   money,

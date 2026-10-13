@@ -54,6 +54,7 @@
       />
       <RmsOverviewTab
         v-if="tab === 'overview'"
+        :loading="loading"
         :tiles="tiles"
         :attention-rows="attentionRows"
         :flagged-count="flaggedCount"
@@ -67,6 +68,7 @@
       />
       <RmsPaceTab
         v-if="tab === 'pace'"
+        :loading="loading"
         :rows="rows"
         v-model:chart-view="chartView"
         :chart-data="chartData"
@@ -95,6 +97,7 @@
       />
       <RmsRateBreakdown
         v-if="tab === 'business'"
+        :loading="breakdownLoading"
         :breakdown="breakdown"
         :basis="basis"
         :basis-label="basisLabel"
@@ -273,6 +276,7 @@ const notes = ref<Record<string, { text: string; updatedAt: string }>>({}),
     updatedAt: string | null;
   }>({ byDate: {}, updatedAt: null });
 const loading = ref(false),
+  breakdownLoading = ref(false),
   error = ref(""),
   onlyAttention = ref(true),
   chartView = ref("monthly");
@@ -353,7 +357,14 @@ async function loadAll() {
     f = { ...filters };
   loading.value = true;
   error.value = "";
+  forecast.value = null;
+  breakdown.value = null;
   clearTimeout(forecastTimer);
+  // Forecast and breakdown don't depend on pace's response, so they're fired
+  // alongside it rather than chained after - no reason to make their (much
+  // faster) results wait behind pace's slower reconstruction.
+  void loadForecast(id, f);
+  void loadBreakdown(id, f);
   try {
     const r = await axios.get("/api/rms/pace", { params: f, timeout: 120000 });
     if (disposed || id !== requestId) return;
@@ -365,11 +376,7 @@ async function loadAll() {
     notes.value = r.data.notes;
     bar.value = r.data.bar;
     closeDay();
-    forecast.value = null;
-    breakdown.value = null;
     saveUrl();
-    void loadForecast(id, f);
-    void loadBreakdown(id, f);
   } catch (e) {
     if (id === requestId) error.value = message(e);
   } finally {
@@ -377,6 +384,7 @@ async function loadAll() {
   }
 }
 async function loadBreakdown(id: number, f: Filters) {
+  breakdownLoading.value = true;
   try {
     const r = await axios.get("/api/rms/pace/breakdown", {
       params: { start: f.start, end: f.end, roomType: f.roomType, marketId: f.marketId },
@@ -385,6 +393,8 @@ async function loadBreakdown(id: number, f: Filters) {
     if (!disposed && id === requestId) breakdown.value = r.data;
   } catch (e) {
     if (id === requestId && !disposed) error.value = message(e);
+  } finally {
+    if (id === requestId) breakdownLoading.value = false;
   }
 }
 async function loadForecast(id: number, f: Filters, refresh = false) {

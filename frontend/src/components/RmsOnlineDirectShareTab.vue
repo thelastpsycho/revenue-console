@@ -8,47 +8,53 @@
         <ArrowDownTrayIcon class="h-4 w-4" /> Export CSV
       </button>
     </template>
-    <p v-if="loading" role="status" class="px-4 py-3 text-xs text-slate-500">
-      Loading direct share…
-    </p>
     <p v-if="error" role="alert" class="alert-error">{{ error }}</p>
-    <dl v-if="buckets.length" class="grid grid-cols-2 gap-3 p-4 lg:grid-cols-4">
-      <div class="stat-tile">
-        <dt>Direct (Santika Online) share</dt>
-        <dd>{{ percent(directSharePct) }}</dd>
+    <template v-if="loading">
+      <RmsSkeleton variant="tiles" :count="4" />
+      <div class="h-72 p-4">
+        <RmsSkeleton variant="chart" />
       </div>
-      <div v-for="b in topBuckets" :key="b.id" class="stat-tile">
-        <dt>{{ b.name }}</dt>
-        <dd>{{ num(b.rooms) }}</dd>
+      <RmsSkeleton variant="table" :count="6" :columns="6" />
+    </template>
+    <template v-else>
+      <dl v-if="buckets.length" class="grid grid-cols-2 gap-3 p-4 lg:grid-cols-4">
+        <div class="stat-tile">
+          <dt>Direct (Santika Online) share</dt>
+          <dd>{{ percent(directSharePct) }}</dd>
+        </div>
+        <div v-for="b in topBuckets" :key="b.id" class="stat-tile">
+          <dt>{{ b.name }}</dt>
+          <dd>{{ num(b.rooms) }}</dd>
+        </div>
+      </dl>
+      <div class="h-72 p-4">
+        <Chart type="bar" :data="chartData" :options="chartOptions" />
       </div>
-    </dl>
-    <div class="h-72 p-4">
-      <Chart type="bar" :data="chartData" :options="chartOptions" />
-    </div>
-    <table v-if="buckets.length" class="data-table border-t border-slate-200">
-      <thead>
-        <tr>
-          <th>Channel</th>
-          <th class="num">Room nights</th>
-          <th class="num">Share</th>
-          <th class="num">Revenue</th>
-          <th class="num">ADR</th>
-          <th class="num">Net ADR</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="b in buckets" :key="b.id">
-          <td class="whitespace-nowrap font-semibold text-slate-900">
-            {{ b.name }}
-          </td>
-          <td class="num">{{ num(b.rooms) }}</td>
-          <td class="num">{{ percent(share(b)) }}</td>
-          <td class="num" :title="money(b.revenue)">{{ moneyShort(b.revenue) }}</td>
-          <td class="num" :title="money(adr(b))">{{ moneyShort(adr(b)) }}</td>
-          <td class="num" :title="money(netAdr(b))">{{ moneyShort(netAdr(b)) }}</td>
-        </tr>
-      </tbody>
-    </table>
+      <table v-if="buckets.length" class="data-table border-t border-slate-200">
+        <thead>
+          <tr>
+            <th>Channel</th>
+            <th class="num">Room nights</th>
+            <th class="num">Share</th>
+            <th class="num">Revenue</th>
+            <th class="num">ADR</th>
+            <th class="num">Net ADR</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="b in buckets" :key="b.id">
+            <td class="whitespace-nowrap font-semibold text-slate-900">
+              {{ b.name }}
+            </td>
+            <td class="num">{{ num(b.rooms) }}</td>
+            <td class="num">{{ percent(share(b)) }}</td>
+            <td class="num" :title="money(b.revenue)">{{ moneyShort(b.revenue) }}</td>
+            <td class="num" :title="money(adr(b))">{{ moneyShort(adr(b)) }}</td>
+            <td class="num" :title="money(netAdr(b))">{{ moneyShort(netAdr(b)) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </template>
     <template v-if="!loading && !series.length" #empty>
       No online bookings cover this range.
     </template>
@@ -71,6 +77,7 @@ import {
 import { ArrowDownTrayIcon } from "@heroicons/vue/24/outline";
 import axios from "../plugins/axios";
 import RmsCard from "./RmsCard.vue";
+import RmsSkeleton from "./RmsSkeleton.vue";
 import {
   csvText,
   money,
