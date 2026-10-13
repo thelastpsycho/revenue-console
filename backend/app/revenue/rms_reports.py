@@ -1,4 +1,6 @@
 """Grouped RMS analysis from observed, PII-free booking versions."""
+from .report_cache import cached_report
+
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -48,6 +50,7 @@ def _group(states, start, end, as_of, dimension, room_type, market_id, rules, ch
     return dict(result)
 
 
+@cached_report
 def room_rate_breakdown(start, end, room_type=None, market_id=None, channels=None):
     """Current on-the-books nights/revenue by room type, nested by rate plan -
     the Booking.com-style 'breakdown by room and rate' table."""
@@ -82,6 +85,7 @@ def room_rate_breakdown(start, end, room_type=None, market_id=None, channels=Non
     return {'roomTypes': sorted(room_types.values(), key=lambda r: -r['rooms']), 'total': grand}
 
 
+@cached_report
 def build_reports(start, end, room_type=None, market_id=None, comparison='weekday',
                   comparison_start=None, pickup_days=7, date_basis='stay', channels=None):
     from . import rms_budget

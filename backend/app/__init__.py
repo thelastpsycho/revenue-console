@@ -29,6 +29,7 @@ def create_app():
     from .routes import bar_hold_routes
     from .routes import stop_sale_routes
     from .routes import rms_routes
+    from .routes import admin_routes
     app.register_blueprint(main.bp)
     app.register_blueprint(database_routes.bp)
     app.register_blueprint(pipeline_routes.bp)
@@ -39,5 +40,6 @@ def create_app():
     app.register_blueprint(bar_hold_routes.bp)
     app.register_blueprint(stop_sale_routes.bp)
     app.register_blueprint(rms_routes.bp)
+    app.register_blueprint(admin_routes.bp)
     
     return app 

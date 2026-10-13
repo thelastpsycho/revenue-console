@@ -1,87 +1,98 @@
-import { createRouter, createWebHistory } from 'vue-router'
-import DashboardView from './views/DashboardView.vue'
-import InventoryCollectionView from './views/InventoryCollectionView.vue'
-import YieldManagementView from './views/YieldManagementView.vue'
-import InventoryDataView from './views/InventoryDataView.vue'
-import AllotmentManagementView from './views/AllotmentManagementView.vue'
-import BarPricingView from './views/BarPricingView.vue'
-import AutomationPipelineView from './views/AutomationPipelineView.vue'
-import PmsApiTestView from './views/PmsApiTestView.vue'
-import FastApiPipelineView from './views/FastApiPipelineView.vue'
-import FastPipelineHistoryView from './views/FastPipelineHistoryView.vue'
-import StopSaleView from './views/StopSaleView.vue'
-import RmsView from './views/RmsView.vue'
-import RmsOnlineView from './views/RmsOnlineView.vue'
+import { createRouter, createWebHistory } from "vue-router";
+const DashboardView = () => import("./views/DashboardView.vue");
+const InventoryCollectionView = () =>
+  import("./views/InventoryCollectionView.vue");
+const YieldManagementView = () => import("./views/YieldManagementView.vue");
+const InventoryDataView = () => import("./views/InventoryDataView.vue");
+const AllotmentManagementView = () =>
+  import("./views/AllotmentManagementView.vue");
+const BarPricingView = () => import("./views/BarPricingView.vue");
+const AutomationPipelineView = () =>
+  import("./views/AutomationPipelineView.vue");
+const PmsApiTestView = () => import("./views/PmsApiTestView.vue");
+const FastApiPipelineView = () => import("./views/FastApiPipelineView.vue");
+const FastPipelineHistoryView = () =>
+  import("./views/FastPipelineHistoryView.vue");
+const StopSaleView = () => import("./views/StopSaleView.vue");
+const RmsView = () => import("./views/RmsView.vue");
+const RmsOnlineView = () => import("./views/RmsOnlineView.vue");
+
+const AdministrationView = () => import("./views/AdministrationView.vue");
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
-      path: '/',
-      name: 'home',
-      component: DashboardView
+      path: "/administration",
+      name: "administration",
+      component: AdministrationView,
     },
     {
-      path: '/scraping',
-      name: 'scraping',
-      component: InventoryCollectionView
+      path: "/",
+      name: "home",
+      component: DashboardView,
     },
     {
-      path: '/yielder',
-      name: 'yielder',
-      component: YieldManagementView
+      path: "/scraping",
+      name: "scraping",
+      component: InventoryCollectionView,
     },
     {
-      path: '/data',
-      name: 'data',
-      component: InventoryDataView
+      path: "/yielder",
+      name: "yielder",
+      component: YieldManagementView,
     },
     {
-      path: '/allotment',
-      name: 'allotment',
-      component: AllotmentManagementView
+      path: "/data",
+      name: "data",
+      component: InventoryDataView,
     },
     {
-      path: '/bar-calculator',
-      name: 'bar-calculator',
-      component: BarPricingView
+      path: "/allotment",
+      name: "allotment",
+      component: AllotmentManagementView,
     },
     {
-      path: '/pipeline',
-      name: 'pipeline',
-      component: AutomationPipelineView
+      path: "/bar-calculator",
+      name: "bar-calculator",
+      component: BarPricingView,
     },
     {
-      path: '/pms-api-test',
-      name: 'pms-api-test',
-      component: PmsApiTestView
+      path: "/pipeline",
+      name: "pipeline",
+      component: AutomationPipelineView,
     },
     {
-      path: '/fast-api-pipeline',
-      name: 'fast-api-pipeline',
-      component: FastApiPipelineView
+      path: "/pms-api-test",
+      name: "pms-api-test",
+      component: PmsApiTestView,
     },
     {
-      path: '/fast-pipeline-history',
-      name: 'fast-pipeline-history',
-      component: FastPipelineHistoryView
+      path: "/fast-api-pipeline",
+      name: "fast-api-pipeline",
+      component: FastApiPipelineView,
     },
     {
-      path: '/stop-sale',
-      name: 'stop-sale',
-      component: StopSaleView
+      path: "/fast-pipeline-history",
+      name: "fast-pipeline-history",
+      component: FastPipelineHistoryView,
     },
     {
-      path: '/rms',
-      name: 'rms',
-      component: RmsView
+      path: "/stop-sale",
+      name: "stop-sale",
+      component: StopSaleView,
     },
     {
-      path: '/rms/online',
-      name: 'rms-online',
-      component: RmsOnlineView
-    }
-  ]
-})
+      path: "/rms",
+      name: "rms",
+      component: RmsView,
+    },
+    {
+      path: "/rms/online",
+      name: "rms-online",
+      component: RmsOnlineView,
+    },
+  ],
+});
 
-export default router 
+export default router;
