@@ -87,16 +87,19 @@ const props = defineProps<{
   filters: { start: string; end: string; roomType: string; channels: string[] };
 }>();
 
+// Ocean gradient: direct (the brand/hero channel) anchors the deep end,
+// named OTAs step up through blue/cyan/teal, "other"/"unassigned" stay
+// neutral slate so they don't compete with real channel data.
 const BUCKET_COLORS: Record<string, string> = {
-  direct: "#0f766e",
-  booking_com: "#1d4ed8",
-  agoda: "#be123c",
-  traveloka: "#0891b2",
-  expedia: "#9333ea",
-  tiket_com: "#ea580c",
-  trip_com: "#65a30d",
+  direct: "#0e7490",
+  booking_com: "#0ea5e9",
+  agoda: "#38bdf8",
+  traveloka: "#22d3ee",
+  expedia: "#2dd4bf",
+  tiket_com: "#5eead4",
+  trip_com: "#7dd3fc",
   other: "#94a3b8",
-  unassigned: "#cbd5e1",
+  unassigned: "#e2e8f0",
 };
 
 const buckets = ref<ChannelBucket[]>([]),
