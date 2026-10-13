@@ -41,7 +41,7 @@
         <div class="flex items-stretch gap-0.5">
           <router-link
             :to="item.href"
-            :title="item.name"
+            :title="item.href === SCHEDULE_PAGE && scheduleBadge ? `${item.name} — ${scheduleBadge.title}` : item.name"
             @click="$emit('close')"
             :class="[
               route.path === item.href
@@ -53,23 +53,14 @@
             <component
               :is="item.icon"
               :class="[
-                route.path === item.href ? 'text-slate-900' : 'text-slate-400 group-hover:text-slate-600',
+                item.href === SCHEDULE_PAGE && scheduleBadge
+                  ? SCHEDULE_ICON_CLASSES[scheduleBadge.tone]
+                  : route.path === item.href ? 'text-slate-900' : 'text-slate-400 group-hover:text-slate-600',
                 'h-5 w-5 flex-shrink-0 transition-colors',
               ]"
+              :aria-label="item.href === SCHEDULE_PAGE && scheduleBadge ? scheduleBadge.title : undefined"
             />
             <span class="whitespace-nowrap lg:hidden lg:group-hover/sidebar:inline">{{ item.name }}</span>
-            <span
-              v-if="item.href === SCHEDULE_PAGE && scheduleBadge"
-              class="relative ml-auto flex h-2.5 w-2.5 flex-shrink-0"
-              :title="scheduleBadge.title"
-              :aria-label="scheduleBadge.title"
-            >
-              <span
-                v-if="scheduleBadge.blink"
-                :class="['absolute inline-flex h-full w-full animate-ping rounded-full opacity-75', scheduleBadge.color]"
-              />
-              <span :class="['relative inline-flex h-2.5 w-2.5 rounded-full', scheduleBadge.color]" />
-            </span>
           </router-link>
           <button
             v-if="item.children"
@@ -168,12 +159,19 @@ function toggleExpanded(item: { name: string }) {
   expanded.value[item.name] = !isExpanded(item)
 }
 
-// Schedule indicator on the Fast API Pipeline item: blinks while the
-// UI-managed schedule is on and the scheduler container is checking in
-// (red = live, green = preview); steady amber when it's on but the
-// scheduler is offline, i.e. switched on but nothing will actually run.
+// Schedule indicator on the Fast API Pipeline item: the icon itself turns
+// color and pulses while the UI-managed schedule is on and the scheduler
+// container is checking in (red = live, green = preview); steady amber
+// when it's on but the scheduler is offline, i.e. switched on but nothing
+// will actually run. Driving the icon (rather than a separate dot) means
+// it still reads correctly when the sidebar is collapsed to an icon rail.
 const SCHEDULE_PAGE = '/fast-api-pipeline'
 const SCHEDULE_POLL_MS = 15000
+const SCHEDULE_ICON_CLASSES: Record<string, string> = {
+  live: 'text-rose-500 animate-pulse',
+  preview: 'text-emerald-500 animate-pulse',
+  offline: 'text-amber-500',
+}
 
 const schedule = ref<{
   enabled: boolean
@@ -205,7 +203,7 @@ const scheduleBadge = computed(() => {
   const s = schedule.value
   if (!s?.enabled) return null
   if (!s.schedulerOnline) {
-    return { blink: false, color: 'bg-amber-500', title: 'Schedule is on, but the scheduler is offline - no runs will happen' }
+    return { tone: 'offline', title: 'Schedule is on, but the scheduler is offline - no runs will happen' }
   }
   const mode = s.live ? 'LIVE' : 'Preview'
   const every = s.intervalMinutes % 60 === 0 ? `${s.intervalMinutes / 60} h` : `${s.intervalMinutes} min`
@@ -214,8 +212,7 @@ const scheduleBadge = computed(() => {
     : 'soon'
   const status = runInProgress.value ? 'run in progress' : `next run ${next}`
   return {
-    blink: true,
-    color: s.live ? 'bg-rose-500' : 'bg-emerald-500',
+    tone: s.live ? 'live' : 'preview',
     title: `Schedule on - ${mode}, every ${every} - ${status}`,
   }
 })
