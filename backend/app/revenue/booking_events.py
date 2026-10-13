@@ -577,23 +577,99 @@ def _quality(as_of, coverage, history):
     return "observed" if first and as_of >= first else "estimated"
 
 
-def pickup_breakdown(previous, current, day, before, today, room_type, market_id, channels=None):
-    new = cancelled = amendments = 0
+def _occupied_days(r, start, end, as_of, room_type, market_id, channels):
+    """ISO day strings in [start,end] where r is active and matches, as of as_of."""
+    if not r or not _active(r, as_of) or not _matches(r, room_type, market_id, channels):
+        return set()
+    first, last = max(start, r["arrival_date"]), min(end, (date.fromisoformat(r["departure_date"]) - timedelta(days=1)).isoformat())
+    if first > last:
+        return set()
+    return set(_stay_dates(first, (date.fromisoformat(last) + timedelta(days=1)).isoformat()))
+
+
+def pickup_breakdown_series(previous, current, start, end, before, today, room_type, market_id, channels=None):
+    """Per-day {newRooms, cancelledRooms, amendedRooms} for the whole
+    [start,end] range in one pass over reservations - replaces calling the
+    old per-day pickup_breakdown() once per day, which re-diffed every
+    reservation for each day instead of just once."""
+    buckets = {d: {"newRooms": 0, "cancelledRooms": 0, "amendedRooms": 0}
+               for d in _stay_dates(start, (date.fromisoformat(end) + timedelta(days=1)).isoformat())}
     for rid in previous.keys() | current.keys():
         old, cur = previous.get(rid), current.get(rid)
-        def counts(r, at):
-            return bool(r and r["arrival_date"] <= day < r["departure_date"] and
-                        _active(r, at) and _matches(r, room_type, market_id, channels))
-        delta = int(counts(cur, today)) - int(counts(old, before))
-        if not delta:
-            continue
-        if delta > 0 and cur["reservation_date"] > before:
-            new += delta
-        elif delta < 0 and cur and not _active(cur, today):
-            cancelled -= delta
-        else:
-            amendments += delta
-    return {"newRooms": new, "cancelledRooms": cancelled, "amendedRooms": amendments}
+        old_days = _occupied_days(old, start, end, before, room_type, market_id, channels)
+        cur_days = _occupied_days(cur, start, end, today, room_type, market_id, channels)
+        added, removed = cur_days - old_days, old_days - cur_days
+        if added:
+            key = "newRooms" if cur["reservation_date"] > before else "amendedRooms"
+            for d in added:
+                buckets[d][key] += 1
+        if removed:
+            # A true cancellation is a positive count of rooms lost; an
+            # amendment that moves a reservation off this day is a negative
+            # contribution to the net amendment figure (mirrors the old
+            # per-day delta, which was negative here).
+            if cur and not _active(cur, today):
+                for d in removed:
+                    buckets[d]["cancelledRooms"] += 1
+            else:
+                for d in removed:
+                    buckets[d]["amendedRooms"] -= 1
+    return buckets
+
+
+def _version_segments(versions, observed_from, range_end):
+    """[(as_of_start, as_of_end_exclusive, payload), ...]: the as-of window
+    during which each version is the one state_as_of(history, as_of) would
+    return for this reservation - including the pre-first-observation
+    estimate and its observed_from cutoff (see state_as_of). Precomputed
+    once per reservation instead of re-derived by walking the version list
+    fresh for every as-of value a caller needs."""
+    segments = []
+    first_observed, first_payload = versions[0]
+    pre_end = min(first_observed, observed_from) if observed_from else first_observed
+    if pre_end > first_payload["reservation_date"]:
+        segments.append((first_payload["reservation_date"], pre_end, first_payload))
+    for i, (observed, payload) in enumerate(versions):
+        seg_end = versions[i + 1][0] if i + 1 < len(versions) else range_end
+        if seg_end > observed:
+            segments.append((observed, seg_end, payload))
+    return segments
+
+
+def final_rooms_series(history, start, end, rules, room_type=None, market_id=None, channels=None):
+    """Per-day actuals "as observed on that stay date itself" (no later
+    cancellations/amendments counted) for every day in [start,end] - i.e.
+    state_as_of(history, day) aggregated at exactly that diagonal day.
+
+    Unlike stly/now/before (one as-of shared across many days, so a single
+    state_as_of + aggregate() pair already covers the whole range), this
+    as-of is different for every single day, so the old code paid a fresh
+    state_as_of + aggregate pass per day. This instead walks each
+    reservation's version timeline once and intersects it against the
+    as-of-equals-day diagonal directly."""
+    from .rms_workspace import net_rate
+    range_end = (date.fromisoformat(end) + timedelta(days=1)).isoformat()
+    out = {d: _empty() for d in _stay_dates(start, range_end)}
+    for versions in history.values():
+        for seg_start, seg_end, payload in _version_segments(versions, history.observed_from, range_end):
+            if not _matches(payload, room_type, market_id, channels):
+                continue
+            lo = max(seg_start, start, payload["arrival_date"])
+            hi = min(seg_end, range_end, payload["departure_date"])
+            if payload["status"] == CANCELLED:
+                hi = min(hi, payload.get("cancelled_on") or payload["reservation_date"])
+            if lo >= hi:
+                continue
+            for day in _stay_dates(lo, hi):
+                bucket = out[day]
+                bucket["rooms"] += 1
+                if payload["currency"] == "IDR":
+                    bucket["idrRooms"] += 1
+                    bucket["revenue"] += payload["room_rate"]
+                    bucket["netRevenue"] += net_rate(payload["room_rate"], payload.get("rate_type"), day, rules, payload.get("rate_id"))
+                elif payload["currency"] == "USD":
+                    bucket["revenueUsd"] += payload["room_rate"]
+    return out
 
 
 @cached_report
@@ -616,12 +692,10 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
     current, previous = state_as_of(history, current_day), state_as_of(history, prior_day)
     now = aggregate(current, start, end, current_day, room_type, market_id, rules, channels)
     before = aggregate(previous, start, end, prior_day, room_type, market_id, rules, channels)
-    states_cache = {}
-    def at(day, as_of):
-        if as_of not in states_cache:
-            states_cache[as_of] = state_as_of(history, as_of)
-        return aggregate(states_cache[as_of], day, day, as_of, room_type, market_id, rules, channels).get(day, _empty())
-    out = []
+    breakdown_series = pickup_breakdown_series(previous, current, start, end, prior_day, current_day,
+                                               room_type, market_id, channels)
+
+    days_meta = []
     for i in range((e - s).days + 1):
         d = s + timedelta(days=i)
         day = d.isoformat()
@@ -629,12 +703,35 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
         ly = ly_day.isoformat()
         ly_as_of = (today - (d - ly_day)).isoformat()
         quality = _quality(ly_as_of, coverage, history) if ly_as_of <= current_day else "unavailable"
-        stly = at(ly, ly_as_of) if quality != "unavailable" else None
         final_quality = _quality(ly, coverage, history)
-        final = at(ly, ly) if ly_day < today and final_quality != "unavailable" else None
+        days_meta.append({"day": day, "ly": ly, "ly_day": ly_day, "ly_as_of": ly_as_of,
+                          "quality": quality, "final_quality": final_quality})
+
+    # stly shares one as-of across (near enough) the whole range - comparison_date
+    # is a fixed shift for weekday/custom modes and only drifts by a leap day for
+    # calendar mode - so group by the actual as-of value and reconstruct/aggregate
+    # once per group instead of once per day.
+    stly_by_day = {}
+    as_of_groups = {}
+    for m in days_meta:
+        if m["quality"] != "unavailable":
+            as_of_groups.setdefault(m["ly_as_of"], []).append(m["ly"])
+    for as_of, lys in as_of_groups.items():
+        bucket = aggregate(state_as_of(history, as_of), min(lys), max(lys), as_of, room_type, market_id, rules, channels)
+        for ly in lys:
+            stly_by_day[ly] = bucket.get(ly, _empty())
+
+    # final's as-of is genuinely different per day (see final_rooms_series).
+    final_by_day = final_rooms_series(history, ly_start, ly_end, rules, room_type, market_id, channels)
+
+    out = []
+    for m in days_meta:
+        day, ly = m["day"], m["ly"]
+        stly = stly_by_day.get(ly) if m["quality"] != "unavailable" else None
+        final = final_by_day.get(ly) if m["ly_day"] < today and m["final_quality"] != "unavailable" else None
         cur, prev = now.get(day, _empty()), before.get(day, _empty())
         pickup_quality = _quality(prior_day, coverage, history)
-        breakdown = pickup_breakdown(previous, current, day, prior_day, current_day, room_type, market_id, channels)
+        breakdown = breakdown_series[day]
         day_budget = budget.get(day)
         out.append({
             "date": day, "lyDate": ly, **cur,
@@ -643,7 +740,7 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
             "pickupRooms": cur["rooms"] - prev["rooms"] if pickup_quality != "unavailable" else None,
             "pickupRevenue": cur["revenue"] - prev["revenue"] if pickup_quality != "unavailable" else None,
             **{k: v if pickup_quality != "unavailable" else None for k, v in breakdown.items()},
-            "comparisonQuality": quality, "pickupQuality": pickup_quality,
+            "comparisonQuality": m["quality"], "pickupQuality": pickup_quality,
             "currentQuality": _quality(current_day, coverage, history),
             "stlyRooms": stly["rooms"] if stly else None,
             "stlyRevenue": stly["revenue"] if stly else None,

@@ -175,6 +175,36 @@ def test_failed_refresh_preserves_stale_payload_without_poll_retry(monkeypatch):
     assert len(DeferredThread.jobs) == count + 4
 
 
+def test_final_reflects_same_day_state_not_a_later_cancellation(monkeypatch):
+    """lyFinalRooms is "as observed on the stay date itself" - a cancellation
+    recorded after that date must not erase that day's actuals, even though
+    the reservation is cancelled in every state queried after that point."""
+    monkeypatch.setattr(be, "_today", lambda: date(2025, 9, 1))
+    be.upsert([api_row(1, "2025-09-01", "2025-10-21", "2025-10-22")])
+    monkeypatch.setattr(be, "_today", lambda: date(2025, 10, 25))
+    be.upsert([{**api_row(1, "2025-09-01", "2025-10-21", "2025-10-22"), "ReservationStatus": "L",
+               "UpdatedDate": "2025-10-25T01:00:00+00:00"}])
+    monkeypatch.setattr(be, "_today", lambda: date(2026, 10, 11))
+    row = be.pace_table("2026-10-20", "2026-10-20")[0]
+    assert row["lyDate"] == "2025-10-21"
+    assert row["rooms"] == 0           # cancelled as of today
+    assert row["lyFinalRooms"] == 1    # but still on the books as of the stay date itself
+
+
+def test_final_reflects_an_amendment_observed_before_the_stay_date(monkeypatch):
+    """An amendment recorded before the stay date had already happened by
+    then, so lyFinalRooms/Revenue should use the amended version, not the
+    original one - multi-version history, not just the single-version case."""
+    monkeypatch.setattr(be, "_today", lambda: date(2025, 9, 1))
+    be.upsert([api_row(1, "2025-09-01", "2025-10-21", "2025-10-22", rate=1000000)])
+    monkeypatch.setattr(be, "_today", lambda: date(2025, 10, 10))
+    be.upsert([api_row(1, "2025-09-01", "2025-10-21", "2025-10-22", rate=1500000)])
+    monkeypatch.setattr(be, "_today", lambda: date(2026, 10, 11))
+    row = be.pace_table("2026-10-20", "2026-10-20")[0]
+    assert row["lyDate"] == "2025-10-21"
+    assert row["lyFinalRevenue"] == 1500000
+
+
 def test_late_discovery_does_not_rewrite_observed_history(monkeypatch):
     be.upsert([api_row(1, "2026-09-01", "2026-12-01", "2026-12-02")])
     monkeypatch.setattr(be, "_today", lambda: date(2026, 10, 8))

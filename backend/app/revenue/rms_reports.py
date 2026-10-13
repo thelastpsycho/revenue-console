@@ -33,21 +33,35 @@ def _blank():
     return {'rooms': 0, 'idrRooms': 0, 'revenue': 0, 'netRevenue': 0}
 
 
-def _group(states, start, end, as_of, dimension, room_type, market_id, rules, channels=None):
-    result = defaultdict(_blank)
+def _group_days(states, start, end, as_of, dimension, room_type, market_id, rules, channels=None):
+    """Per-day {key: metrics} for [start,end] - computed in one pass instead
+    of once per day, so callers needing several days (a comparison range, or
+    the market trend) don't rescan every reservation once per day."""
+    result = {}
     for r in states.values():
         if not be._active(r, as_of) or not be._matches(r, room_type, market_id, channels):
             continue
         nights = _nights(r, start, end)
         if not nights:
             continue
-        b = result[_key(r, dimension)]
-        b['rooms'] += len(nights)
-        if r['currency'] == 'IDR':
-            b['idrRooms'] += len(nights)
-            b['revenue'] += r['room_rate'] * len(nights)
-            b['netRevenue'] += sum(net_rate(r['room_rate'], r.get('rate_type'), day, rules, r.get('rate_id')) for day in nights)
-    return dict(result)
+        key = _key(r, dimension)
+        for day in nights:
+            b = result.setdefault(day, defaultdict(_blank))[key]
+            b['rooms'] += 1
+            if r['currency'] == 'IDR':
+                b['idrRooms'] += 1
+                b['revenue'] += r['room_rate']
+                b['netRevenue'] += net_rate(r['room_rate'], r.get('rate_type'), day, rules, r.get('rate_id'))
+    return {day: dict(keys) for day, keys in result.items()}
+
+
+def _group(states, start, end, as_of, dimension, room_type, market_id, rules, channels=None):
+    totals = defaultdict(_blank)
+    for day_buckets in _group_days(states, start, end, as_of, dimension, room_type, market_id, rules, channels).values():
+        for key, metrics in day_buckets.items():
+            for k, v in metrics.items():
+                totals[key][k] += v
+    return dict(totals)
 
 
 @cached_report
@@ -108,32 +122,59 @@ def build_reports(start, end, room_type=None, market_id=None, comparison='weekda
              for n in sorted(set([1, 7, 30, pickup_days]))}
     names = {str(r['market_id']): r.get('market') or str(r['market_id']) for versions in history.values()
              for _, r in versions if r.get('market_id') is not None}
-    production = {}
+    # as_of/quality only depend on the (current_day, matched_day) shift, not on
+    # dimension - comparison_date is a fixed shift for weekday/custom modes and
+    # only drifts by a leap day for calendar mode, so this is usually one group
+    # covering the whole range. Computed once and reused across dimensions.
+    as_of_groups = {}
+    for current_day, matched_day in comparison_days:
+        as_of = (be._today() - (current_day - matched_day)).isoformat()
+        as_of_groups.setdefault(as_of, []).append(matched_day.isoformat())
+    quality_by_as_of = {as_of: (be._quality(as_of, coverage, history) if as_of <= today else 'unavailable')
+                       for as_of in as_of_groups}
+
+    # Market trend uses a single as-of (today) for every day, so it's batched
+    # the same way, computed once instead of once per day.
     trend = []
+    trend_days = _group_days(states, start, end, today, 'market', room_type, market_id, rules, channels)
+    for current_day, _ in comparison_days:
+        day = current_day.isoformat()
+        for key, metrics in trend_days.get(day, {}).items():
+            trend.append({'date': day, 'id': key, 'name': names.get(key, 'Unassigned' if key == 'unassigned' else key), **metrics})
+
+    production = {}
     state_cache = {}
     for dimension in ['market', 'roomType', 'ratePlan']:
         cur = _group(states, start, end, today, dimension, room_type, market_id, rules, channels)
         before = {n: _group(s, start, end, (be._today() - timedelta(days=n)).isoformat(), dimension, room_type, market_id, rules, channels)
                   for n, s in prior.items()}
         comp = defaultdict(_blank)
-        comp_quality = []
-        for current_day, matched_day in comparison_days:
-            day, matched = current_day.isoformat(), matched_day.isoformat()
-            as_of = (be._today() - (current_day - matched_day)).isoformat()
-            q = be._quality(as_of, coverage, history) if as_of <= today else 'unavailable'
-            comp_quality.append(q)
-            if q != 'unavailable':
-                if as_of not in state_cache:
-                    state_cache[as_of] = be.state_as_of(history, as_of)
-                grouped = _group(state_cache[as_of], matched, matched, as_of, dimension, room_type, market_id, rules, channels)
-                for key, metrics in grouped.items():
+        quality_values = set()
+        for as_of, matched_list in as_of_groups.items():
+            q = quality_by_as_of[as_of]
+            quality_values.add(q)
+            if q == 'unavailable':
+                continue
+            if as_of not in state_cache:
+                state_cache[as_of] = be.state_as_of(history, as_of)
+            grouped_days = _group_days(state_cache[as_of], min(matched_list), max(matched_list), as_of,
+                                       dimension, room_type, market_id, rules, channels)
+            for matched in matched_list:
+                for key, metrics in grouped_days.get(matched, {}).items():
                     for metric, value in metrics.items(): comp[key][metric] += value
-            if dimension == 'market':
-                for key, metrics in _group(states, day, day, today, dimension, room_type, market_id, rules, channels).items():
-                    trend.append({'date': day, 'id': key, 'name': names.get(key, 'Unassigned' if key == 'unassigned' else key), **metrics})
-        comparison_quality = 'unavailable' if 'unavailable' in comp_quality else 'estimated' if 'estimated' in comp_quality else 'observed'
+        comparison_quality = 'unavailable' if 'unavailable' in quality_values else 'estimated' if 'estimated' in quality_values else 'observed'
         keys = set(cur) | set(comp)
         for values in before.values(): keys.update(values)
+        cutoff = (be._today() - timedelta(days=pickup_days)).isoformat()
+        new_by_key = defaultdict(int)
+        for r in states.values():
+            if r['reservation_date'] > cutoff and be._active(r, today) and be._matches(r, room_type, market_id, channels):
+                new_by_key[_key(r, dimension)] += len(_nights(r, start, end))
+        cancelled_by_key = defaultdict(int)
+        for rid, r in prior[pickup_days].items():
+            if (be._active(r, cutoff) and be._matches(r, room_type, market_id, channels)
+                    and rid in states and not be._active(states[rid], today)):
+                cancelled_by_key[_key(r, dimension)] += len(_nights(r, start, end))
         group_rows = []
         for key in keys:
             metrics = cur.get(key, _blank())
@@ -141,12 +182,7 @@ def build_reports(start, end, room_type=None, market_id=None, comparison='weekda
             for n, values in before.items():
                 q = be._quality((be._today() - timedelta(days=n)).isoformat(), coverage, history)
                 pickup[str(n)] = {'rooms': metrics['rooms'] - values.get(key, _blank())['rooms'] if q != 'unavailable' else None, 'quality': q}
-            cutoff = (be._today() - timedelta(days=pickup_days)).isoformat()
-            new = sum(len(_nights(r, start, end)) for r in states.values() if r['reservation_date'] > cutoff
-                      and be._active(r, today) and be._matches(r, room_type, market_id, channels) and _key(r, dimension) == key)
-            cancelled = sum(len(_nights(r, start, end)) for rid, r in prior[pickup_days].items()
-                            if be._active(r, cutoff) and be._matches(r, room_type, market_id, channels) and _key(r, dimension) == key
-                            and rid in states and not be._active(states[rid], today))
+            new, cancelled = new_by_key.get(key, 0), cancelled_by_key.get(key, 0)
             net = pickup[str(pickup_days)]['rooms']
             group_rows.append({'id': key, 'name': names.get(key, 'Unassigned' if key == 'unassigned' else key) if dimension == 'market' else key,
                                **{k: v if quality != 'unavailable' else None for k, v in metrics.items()},
