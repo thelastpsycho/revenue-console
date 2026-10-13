@@ -85,6 +85,8 @@ def _connect():
             rate_type TEXT,
             market_id INTEGER,
             market TEXT,
+            company_id INTEGER,
+            company TEXT,
             room_rate REAL,
             currency TEXT,
             cancelled_on TEXT,
@@ -129,6 +131,10 @@ def _connect():
         )
     if "rate_id" not in columns:
         conn.execute("ALTER TABLE bookings ADD COLUMN rate_id TEXT")
+    if "company_id" not in columns:
+        conn.execute("ALTER TABLE bookings ADD COLUMN company_id INTEGER")
+    if "company" not in columns:
+        conn.execute("ALTER TABLE bookings ADD COLUMN company TEXT")
     # Seed an existing installation once, preserving only the same PII-free fields.
     seeded = conn.execute("SELECT value FROM meta WHERE key='versionsSeeded'").fetchone()
     if not seeded:
@@ -137,8 +143,8 @@ def _connect():
           'reservation_id', b.reservation_id, 'reservation_date', b.reservation_date,
           'arrival_date', b.arrival_date, 'departure_date', b.departure_date,
           'status', b.status, 'type_id', b.type_id, 'rate_type', b.rate_type, 'rate_id', b.rate_id,
-          'market_id', b.market_id, 'market', b.market, 'room_rate', b.room_rate,
-          'currency', b.currency, 'cancelled_on', b.cancelled_on)
+          'market_id', b.market_id, 'market', b.market, 'company_id', b.company_id, 'company', b.company,
+          'room_rate', b.room_rate, 'currency', b.currency, 'cancelled_on', b.cancelled_on)
         FROM bookings b WHERE NOT EXISTS (
           SELECT 1 FROM booking_versions v WHERE v.reservation_id = b.reservation_id)""",
             (_today().isoformat(), _now()))
@@ -197,6 +203,8 @@ def _normalize(row):
         "rate_id": row.get("RateId"),
         "market_id": row.get("MarketId"),
         "market": row.get("MarketDescription"),
+        "company_id": row.get("CompanyId"),
+        "company": row.get("CompanyName"),
         "room_rate": room_rate,
         "currency": currency,
         # Net of breakfast and tax/service; USD rooms are left NULL since
@@ -242,15 +250,17 @@ def upsert(rows):
                     cancelled_on = rec["cancel_day"] or rec["reservation_date"]
             conn.execute("""
                 INSERT OR REPLACE INTO bookings (reservation_id, reservation_date, arrival_date, departure_date,
-                    nights, status, type_id, rate_type, market_id, market, room_rate, currency, net_rate, rate_id,
-                    cancelled_on, updated_at, synced_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    nights, status, type_id, rate_type, market_id, market, company_id, company, room_rate,
+                    currency, net_rate, rate_id, cancelled_on, updated_at, synced_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (rec["reservation_id"], rec["reservation_date"], rec["arrival_date"], rec["departure_date"],
                  rec["nights"], rec["status"], rec["type_id"], rec["rate_type"], rec["market_id"], rec["market"],
-                 rec["room_rate"], rec["currency"], rec["net_rate"], rec["rate_id"], cancelled_on, rec["updated_at"], synced))
+                 rec["company_id"], rec["company"], rec["room_rate"], rec["currency"], rec["net_rate"], rec["rate_id"],
+                 cancelled_on, rec["updated_at"], synced))
             version = {key: rec[key] for key in (
                 "reservation_id", "reservation_date", "arrival_date", "departure_date", "status",
-                "type_id", "rate_type", "rate_id", "market_id", "market", "room_rate", "currency")}
+                "type_id", "rate_type", "rate_id", "market_id", "market", "company_id", "company",
+                "room_rate", "currency")}
             version["cancelled_on"] = cancelled_on
             payload = json.dumps(version, sort_keys=True)
             last = conn.execute("SELECT payload FROM booking_versions WHERE reservation_id = ? ORDER BY id DESC LIMIT 1",
@@ -455,21 +465,54 @@ def _active(r, as_of):
     return r["status"] != CANCELLED or (r.get("cancelled_on") or r["reservation_date"]) > as_of
 
 
-def _matches(r, room_type, market_id):
+# Booking-company channel classification, used by the Online segment report
+# and as an optional filter here. (bucket id, display label, substrings
+# matched case-insensitively against bookings.company.) Only "Santika Online
+# Reservation", "Booking.com" and "Agoda.com" are confirmed exact strings
+# from a live PMS probe (docs/pms-data-api.md); the rest are lenient markers,
+# validated against real company names seen in bookings.company after the
+# company_id/company columns were backfilled.
+CHANNEL_BUCKETS = [
+    ("direct", "Santika Online", ["santika online"]),
+    ("booking_com", "Booking.com", ["booking.com"]),
+    ("agoda", "Agoda", ["agoda"]),
+    ("traveloka", "Traveloka", ["traveloka"]),
+    ("expedia", "Expedia", ["expedia"]),
+    ("tiket_com", "Tiket.com", ["tiket.com", "tiket"]),
+    ("trip_com", "Trip.com", ["trip.com"]),
+]
+OTHER_BUCKET = ("other", "Other online channel")
+UNASSIGNED_BUCKET = ("unassigned", "Unassigned")
+BUCKET_ORDER = [b[:2] for b in CHANNEL_BUCKETS] + [OTHER_BUCKET, UNASSIGNED_BUCKET]
+
+
+def channel_bucket(company):
+    """(bucket id, display label) for a booking's CompanyName."""
+    name = (company or "").strip().lower()
+    if not name:
+        return UNASSIGNED_BUCKET
+    for bucket_id, label, markers in CHANNEL_BUCKETS:
+        if any(marker in name for marker in markers):
+            return bucket_id, label
+    return OTHER_BUCKET
+
+
+def _matches(r, room_type, market_id, channels=None):
     return (not room_type or r["type_id"] == room_type) and (
-        market_id in (None, "") or r["market_id"] == int(market_id))
+        market_id in (None, "") or r["market_id"] == int(market_id)) and (
+        not channels or channel_bucket(r.get("company"))[0] in channels)
 
 
 def _empty():
     return {"rooms": 0, "idrRooms": 0, "revenue": 0, "revenueUsd": 0, "netRevenue": 0}
 
 
-def aggregate(states, start, end, as_of, room_type=None, market_id=None, rules=None):
+def aggregate(states, start, end, as_of, room_type=None, market_id=None, rules=None, channels=None):
     from .rms_workspace import net_rate, get_settings
     rules = rules if rules is not None else get_settings()["revenueRules"]
     out = {}
     for r in states.values():
-        if not _active(r, as_of) or not _matches(r, room_type, market_id):
+        if not _active(r, as_of) or not _matches(r, room_type, market_id, channels):
             continue
         first, last = max(start, r["arrival_date"]), min(end, (date.fromisoformat(r["departure_date"]) - timedelta(days=1)).isoformat())
         if first > last:
@@ -486,8 +529,9 @@ def aggregate(states, start, end, as_of, room_type=None, market_id=None, rules=N
     return out
 
 
-def on_the_books(start, end, as_of, room_type=None, market_id=None):
-    return aggregate(state_as_of(version_history([(start, end)]), as_of), start, end, as_of, room_type, market_id)
+def on_the_books(start, end, as_of, room_type=None, market_id=None, channels=None):
+    return aggregate(state_as_of(version_history([(start, end)]), as_of), start, end, as_of, room_type, market_id,
+                     channels=channels)
 
 
 LY_OFFSET = timedelta(days=364)
@@ -513,13 +557,13 @@ def _quality(as_of, coverage, history):
     return "observed" if first and as_of >= first else "estimated"
 
 
-def pickup_breakdown(previous, current, day, before, today, room_type, market_id):
+def pickup_breakdown(previous, current, day, before, today, room_type, market_id, channels=None):
     new = cancelled = amendments = 0
     for rid in previous.keys() | current.keys():
         old, cur = previous.get(rid), current.get(rid)
         def counts(r, at):
             return bool(r and r["arrival_date"] <= day < r["departure_date"] and
-                        _active(r, at) and _matches(r, room_type, market_id))
+                        _active(r, at) and _matches(r, room_type, market_id, channels))
         delta = int(counts(cur, today)) - int(counts(old, before))
         if not delta:
             continue
@@ -533,7 +577,7 @@ def pickup_breakdown(previous, current, day, before, today, room_type, market_id
 
 
 def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_days=7,
-               comparison="weekday", comparison_start=None):
+               comparison="weekday", comparison_start=None, channels=None):
     from .rms_workspace import get_settings
     from . import rms_budget
     today = today or _today()
@@ -541,21 +585,21 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
     ly_start = comparison_date(s, comparison, comparison_start, start).isoformat()
     ly_end = comparison_date(e, comparison, comparison_start, start).isoformat()
     history = version_history([(start, end), (ly_start, ly_end)])
-    # Segment budget has no room-type dimension, so a room-type filter leaves
-    # no figure that actually matches what's being compared.
-    budget = {} if room_type else rms_budget.daily_totals(start, end, market_id=market_id, basis="gross")
+    # Segment budget has no room-type or channel dimension, so those filters
+    # leave no figure that actually matches what's being compared.
+    budget = {} if room_type or channels else rms_budget.daily_totals(start, end, market_id=market_id, basis="gross")
     rules = get_settings()["revenueRules"]
     with _db_lock, _db() as conn:
         coverage = _get_meta(conn, "backfillFrom")
     current_day, prior_day = today.isoformat(), (today - timedelta(days=pickup_days)).isoformat()
     current, previous = state_as_of(history, current_day), state_as_of(history, prior_day)
-    now = aggregate(current, start, end, current_day, room_type, market_id, rules)
-    before = aggregate(previous, start, end, prior_day, room_type, market_id, rules)
+    now = aggregate(current, start, end, current_day, room_type, market_id, rules, channels)
+    before = aggregate(previous, start, end, prior_day, room_type, market_id, rules, channels)
     states_cache = {}
     def at(day, as_of):
         if as_of not in states_cache:
             states_cache[as_of] = state_as_of(history, as_of)
-        return aggregate(states_cache[as_of], day, day, as_of, room_type, market_id, rules).get(day, _empty())
+        return aggregate(states_cache[as_of], day, day, as_of, room_type, market_id, rules, channels).get(day, _empty())
     out = []
     for i in range((e - s).days + 1):
         d = s + timedelta(days=i)
@@ -569,7 +613,7 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
         final = at(ly, ly) if ly_day < today and final_quality != "unavailable" else None
         cur, prev = now.get(day, _empty()), before.get(day, _empty())
         pickup_quality = _quality(prior_day, coverage, history)
-        breakdown = pickup_breakdown(previous, current, day, prior_day, current_day, room_type, market_id)
+        breakdown = pickup_breakdown(previous, current, day, prior_day, current_day, room_type, market_id, channels)
         day_budget = budget.get(day)
         out.append({
             "date": day, "lyDate": ly, **cur,
@@ -591,7 +635,7 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
 
 
 def pace_curve(stay_date, max_lead=180, room_type=None, market_id=None,
-               comparison="weekday", comparison_start=None, range_start=None):
+               comparison="weekday", comparison_start=None, range_start=None, channels=None):
     from .rms_workspace import get_settings
     d = date.fromisoformat(stay_date)
     ly = comparison_date(d, comparison, comparison_start, range_start or stay_date)
@@ -607,7 +651,7 @@ def pace_curve(stay_date, max_lead=180, room_type=None, market_id=None,
                 continue
             quality = _quality(as_of.isoformat(), coverage, history)
             value = aggregate(state_as_of(history, as_of.isoformat()), day.isoformat(), day.isoformat(),
-                              as_of.isoformat(), room_type, market_id, rules).get(day.isoformat(), _empty())
+                              as_of.isoformat(), room_type, market_id, rules, channels).get(day.isoformat(), _empty())
             points.append({"lead": lead, "asOf": as_of.isoformat(), "quality": quality,
                            "rooms": value["rooms"] if quality != "unavailable" else None,
                            "revenue": value["revenue"] if quality != "unavailable" else None})
@@ -624,7 +668,8 @@ def dimensions():
         markets = [{"id": r["market_id"], "name": r["market"]} for r in conn.execute(
             "SELECT market_id, MAX(market) market FROM bookings WHERE market_id IS NOT NULL "
             "GROUP BY market_id ORDER BY market")]
-    return {"roomTypes": types, "markets": markets}
+    channels = [{"id": bucket_id, "name": label} for bucket_id, label in BUCKET_ORDER]
+    return {"roomTypes": types, "markets": markets, "channels": channels}
 
 
 if __name__ == "__main__":  # python -m app.revenue.booking_events [backfill|daily|weekly] [days]

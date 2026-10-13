@@ -31,10 +31,10 @@ def _blank():
     return {'rooms': 0, 'idrRooms': 0, 'revenue': 0, 'netRevenue': 0}
 
 
-def _group(states, start, end, as_of, dimension, room_type, market_id, rules):
+def _group(states, start, end, as_of, dimension, room_type, market_id, rules, channels=None):
     result = defaultdict(_blank)
     for r in states.values():
-        if not be._active(r, as_of) or not be._matches(r, room_type, market_id):
+        if not be._active(r, as_of) or not be._matches(r, room_type, market_id, channels):
             continue
         nights = _nights(r, start, end)
         if not nights:
@@ -48,7 +48,7 @@ def _group(states, start, end, as_of, dimension, room_type, market_id, rules):
     return dict(result)
 
 
-def room_rate_breakdown(start, end, room_type=None, market_id=None):
+def room_rate_breakdown(start, end, room_type=None, market_id=None, channels=None):
     """Current on-the-books nights/revenue by room type, nested by rate plan -
     the Booking.com-style 'breakdown by room and rate' table."""
     today = be._today().isoformat()
@@ -56,7 +56,7 @@ def room_rate_breakdown(start, end, room_type=None, market_id=None):
     rules = get_settings()['revenueRules']
     totals = defaultdict(_blank)
     for r in states.values():
-        if not be._active(r, today) or not be._matches(r, room_type, market_id):
+        if not be._active(r, today) or not be._matches(r, room_type, market_id, channels):
             continue
         nights = _nights(r, start, end)
         if not nights:
@@ -83,7 +83,7 @@ def room_rate_breakdown(start, end, room_type=None, market_id=None):
 
 
 def build_reports(start, end, room_type=None, market_id=None, comparison='weekday',
-                  comparison_start=None, pickup_days=7, date_basis='stay'):
+                  comparison_start=None, pickup_days=7, date_basis='stay', channels=None):
     from . import rms_budget
     today = be._today().isoformat()
     # Segment budget has no room-type dimension and is tied to stay dates,
@@ -108,8 +108,8 @@ def build_reports(start, end, room_type=None, market_id=None, comparison='weekda
     trend = []
     state_cache = {}
     for dimension in ['market', 'roomType', 'ratePlan']:
-        cur = _group(states, start, end, today, dimension, room_type, market_id, rules)
-        before = {n: _group(s, start, end, (be._today() - timedelta(days=n)).isoformat(), dimension, room_type, market_id, rules)
+        cur = _group(states, start, end, today, dimension, room_type, market_id, rules, channels)
+        before = {n: _group(s, start, end, (be._today() - timedelta(days=n)).isoformat(), dimension, room_type, market_id, rules, channels)
                   for n, s in prior.items()}
         comp = defaultdict(_blank)
         comp_quality = []
@@ -121,11 +121,11 @@ def build_reports(start, end, room_type=None, market_id=None, comparison='weekda
             if q != 'unavailable':
                 if as_of not in state_cache:
                     state_cache[as_of] = be.state_as_of(history, as_of)
-                grouped = _group(state_cache[as_of], matched, matched, as_of, dimension, room_type, market_id, rules)
+                grouped = _group(state_cache[as_of], matched, matched, as_of, dimension, room_type, market_id, rules, channels)
                 for key, metrics in grouped.items():
                     for metric, value in metrics.items(): comp[key][metric] += value
             if dimension == 'market':
-                for key, metrics in _group(states, day, day, today, dimension, room_type, market_id, rules).items():
+                for key, metrics in _group(states, day, day, today, dimension, room_type, market_id, rules, channels).items():
                     trend.append({'date': day, 'id': key, 'name': names.get(key, 'Unassigned' if key == 'unassigned' else key), **metrics})
         comparison_quality = 'unavailable' if 'unavailable' in comp_quality else 'estimated' if 'estimated' in comp_quality else 'observed'
         keys = set(cur) | set(comp)
@@ -139,9 +139,9 @@ def build_reports(start, end, room_type=None, market_id=None, comparison='weekda
                 pickup[str(n)] = {'rooms': metrics['rooms'] - values.get(key, _blank())['rooms'] if q != 'unavailable' else None, 'quality': q}
             cutoff = (be._today() - timedelta(days=pickup_days)).isoformat()
             new = sum(len(_nights(r, start, end)) for r in states.values() if r['reservation_date'] > cutoff
-                      and be._active(r, today) and be._matches(r, room_type, market_id) and _key(r, dimension) == key)
+                      and be._active(r, today) and be._matches(r, room_type, market_id, channels) and _key(r, dimension) == key)
             cancelled = sum(len(_nights(r, start, end)) for rid, r in prior[pickup_days].items()
-                            if be._active(r, cutoff) and be._matches(r, room_type, market_id) and _key(r, dimension) == key
+                            if be._active(r, cutoff) and be._matches(r, room_type, market_id, channels) and _key(r, dimension) == key
                             and rid in states and not be._active(states[rid], today))
             net = pickup[str(pickup_days)]['rooms']
             group_rows.append({'id': key, 'name': names.get(key, 'Unassigned' if key == 'unassigned' else key) if dimension == 'market' else key,
@@ -153,7 +153,7 @@ def build_reports(start, end, room_type=None, market_id=None, comparison='weekda
                                'comparisonQuality': comparison_quality,
                                'budget': budget_by_market.get(key) if dimension == 'market' else None})
         production[dimension] = sorted(group_rows, key=lambda r: (-(r['rooms'] or 0), r['name']))
-    eligible = [r for r in states.values() if be._matches(r, room_type, market_id) and
+    eligible = [r for r in states.values() if be._matches(r, room_type, market_id, channels) and
                 (start <= r['reservation_date'] <= end if date_basis == 'booking' else bool(_nights(r, start, end)))]
     # Do not count cancelled/no-show bookings as realized occupancy.
     active = [r for r in eligible if be._active(r, today) and r['status'] != 'N']
@@ -177,6 +177,6 @@ def build_reports(start, end, room_type=None, market_id=None, comparison='weekda
                           'averageLengthOfStay': sum(los(r) for r in active) / len(active) if active else None,
                           'weekdays': weekdays, 'losses': losses},
             'unavailable': [
-                {'report': 'Channel, company and nationality production', 'reason': 'These dimensions are not yet stored in the verified booking cache.'},
+                {'report': 'Nationality production', 'reason': 'This dimension is not yet stored in the verified booking cache. Channel/company production is available on the Online report for the Online segment.'},
                 {'report': 'Promotion effectiveness and net channel contribution', 'reason': 'Requires verified promotion mapping and commission/cost data; rate-plan production is available.'},
                 {'report': 'Audited actuals and forecast accuracy', 'reason': 'Requires verified final actuals and a history of forecast snapshots.'}]}

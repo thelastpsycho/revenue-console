@@ -1,5 +1,6 @@
 """RMS phase 1: booking cache ingest (PII-free, master folio only), pace
 on-the-books/cancellation logic, sync planning, and forecast unpivoting."""
+import json
 import sqlite3
 import time
 from datetime import date, datetime
@@ -21,14 +22,15 @@ def data_dir(tmp_path, monkeypatch):
 
 
 def api_row(rid, booked, arrival, departure, status="D", folio=None, master=True, rate=1_000_000.0,
-            currency="IDR", type_id="DLT", market_id=8, updated=None):
+            currency="IDR", type_id="DLT", market_id=8, updated=None, company_id=None, company=None):
     return {
         "ReservationId": rid, "FolioId": folio or rid * 10, "IsMasterFolio": master,
         "ReservationDate": f"{booked}T00:00:00", "ArrivalDate": f"{arrival}T00:00:00",
         "DepartureDate": f"{departure}T00:00:00",
         "Nights": (date.fromisoformat(departure) - date.fromisoformat(arrival)).days,
         "ReservationStatus": status, "TypeId": type_id, "RateType": "BAR", "MarketId": market_id,
-        "MarketDescription": "Online", "RoomRate": rate, "Currency": currency, "TimeZone": 8,
+        "MarketDescription": "Online", "CompanyId": company_id, "CompanyName": company,
+        "RoomRate": rate, "Currency": currency, "TimeZone": 8,
         "UpdatedDate": updated or f"{booked}T03:00:00.1234567+00:00",
         # PII the API returns that must never reach disk:
         "GuestName": "Jane Guest", "EmailAddress": "jane@example.com", "MobilePhone": "+6281",
@@ -112,6 +114,33 @@ def test_adr_basis_excludes_usd_nights_and_floors_zero_rate_rooms():
     assert (day["rooms"], day["idrRooms"]) == (3, 2)
     assert day["netRevenue"] == pytest.approx(1_000_000)               # (1,560,000 - 350,000) / 1.21
     assert day["netRevenue"] / day["idrRooms"] == pytest.approx(500_000)  # ADR over IDR nights only
+
+
+def test_ingest_captures_company_id_and_name(data_dir):
+    be.upsert([api_row(1, "2026-10-01", "2026-10-20", "2026-10-21", company_id=11647, company="Booking.com")])
+    conn = sqlite3.connect(data_dir / be.DB_FILE)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT company_id, company FROM bookings WHERE reservation_id = 1").fetchone()
+    assert (row["company_id"], row["company"]) == (11647, "Booking.com")
+    version = json.loads(conn.execute(
+        "SELECT payload FROM booking_versions WHERE reservation_id = 1 ORDER BY id DESC LIMIT 1").fetchone()[0])
+    assert (version["company_id"], version["company"]) == (11647, "Booking.com")
+
+
+def test_migration_adds_company_columns_to_a_pre_existing_database(data_dir):
+    conn = sqlite3.connect(data_dir / be.DB_FILE)
+    conn.execute("""CREATE TABLE bookings (
+        reservation_id INTEGER PRIMARY KEY, reservation_date TEXT, arrival_date TEXT, departure_date TEXT,
+        nights INTEGER, status TEXT, type_id TEXT, rate_type TEXT, market_id INTEGER, market TEXT,
+        room_rate REAL, currency TEXT, cancelled_on TEXT, updated_at TEXT, synced_at TEXT)""")
+    conn.execute("INSERT INTO bookings (reservation_id, room_rate, currency) VALUES (1, 1000000, 'IDR')")
+    conn.commit()
+    conn.close()
+    with be._db():
+        pass
+    conn = sqlite3.connect(data_dir / be.DB_FILE)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(bookings)")}
+    assert {"company_id", "company"} <= columns
 
 
 def test_migration_backfills_net_rate_for_a_pre_existing_database(data_dir):

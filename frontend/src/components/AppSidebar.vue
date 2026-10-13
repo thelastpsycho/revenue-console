@@ -35,39 +35,69 @@
       <p class="px-3 pb-2 text-[11px] font-medium uppercase tracking-widest text-slate-400">
         Pipeline
       </p>
-      <router-link
-        v-for="item in navigation"
-        :key="item.name"
-        :to="item.href"
-        @click="$emit('close')"
-        :class="[
-          route.path === item.href
-            ? 'bg-slate-100 text-slate-900'
-            : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900',
-          'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors cursor-pointer',
-        ]"
-      >
-        <component
-          :is="item.icon"
-          :class="[
-            route.path === item.href ? 'text-slate-900' : 'text-slate-400 group-hover:text-slate-600',
-            'h-5 w-5 flex-shrink-0 transition-colors',
-          ]"
-        />
-        <span>{{ item.name }}</span>
-        <span
-          v-if="item.href === SCHEDULE_PAGE && scheduleBadge"
-          class="relative ml-auto flex h-2.5 w-2.5"
-          :title="scheduleBadge.title"
-          :aria-label="scheduleBadge.title"
-        >
-          <span
-            v-if="scheduleBadge.blink"
-            :class="['absolute inline-flex h-full w-full animate-ping rounded-full opacity-75', scheduleBadge.color]"
-          />
-          <span :class="['relative inline-flex h-2.5 w-2.5 rounded-full', scheduleBadge.color]" />
-        </span>
-      </router-link>
+      <div v-for="item in navigation" :key="item.name">
+        <div class="flex items-stretch gap-0.5">
+          <router-link
+            :to="item.href"
+            @click="$emit('close')"
+            :class="[
+              route.path === item.href
+                ? 'bg-slate-100 text-slate-900'
+                : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900',
+              'group flex flex-1 items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors cursor-pointer',
+            ]"
+          >
+            <component
+              :is="item.icon"
+              :class="[
+                route.path === item.href ? 'text-slate-900' : 'text-slate-400 group-hover:text-slate-600',
+                'h-5 w-5 flex-shrink-0 transition-colors',
+              ]"
+            />
+            <span>{{ item.name }}</span>
+            <span
+              v-if="item.href === SCHEDULE_PAGE && scheduleBadge"
+              class="relative ml-auto flex h-2.5 w-2.5"
+              :title="scheduleBadge.title"
+              :aria-label="scheduleBadge.title"
+            >
+              <span
+                v-if="scheduleBadge.blink"
+                :class="['absolute inline-flex h-full w-full animate-ping rounded-full opacity-75', scheduleBadge.color]"
+              />
+              <span :class="['relative inline-flex h-2.5 w-2.5 rounded-full', scheduleBadge.color]" />
+            </span>
+          </router-link>
+          <button
+            v-if="item.children"
+            type="button"
+            class="flex w-7 flex-shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+            :aria-expanded="isExpanded(item)"
+            :aria-label="`${isExpanded(item) ? 'Collapse' : 'Expand'} ${item.name}`"
+            @click="toggleExpanded(item)"
+          >
+            <ChevronRightIcon
+              :class="['h-4 w-4 transition-transform', isExpanded(item) && 'rotate-90']"
+            />
+          </button>
+        </div>
+        <div v-if="item.children && isExpanded(item)" class="ml-6 mt-0.5 space-y-0.5 border-l border-slate-200 pl-3">
+          <router-link
+            v-for="child in item.children"
+            :key="child.name"
+            :to="child.href"
+            @click="$emit('close')"
+            :class="[
+              route.path === child.href
+                ? 'bg-slate-100 text-slate-900'
+                : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900',
+              'flex items-center rounded-lg px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer',
+            ]"
+          >
+            {{ child.name }}
+          </router-link>
+        </div>
+      </div>
     </nav>
 
     <!-- Footer -->
@@ -94,6 +124,7 @@ import {
   CircleStackIcon,
   ChartBarIcon,
   ChartBarSquareIcon,
+  ChevronRightIcon,
   ReceiptPercentIcon,
   BeakerIcon,
   BoltIcon,
@@ -115,9 +146,21 @@ const navigation = [
   { name: 'Fast API Pipeline', href: '/fast-api-pipeline', icon: BoltIcon },
   { name: 'Pipeline History', href: '/fast-pipeline-history', icon: ClockIcon },
   { name: 'Stop Sale', href: '/stop-sale', icon: EnvelopeIcon },
-  { name: 'RMS', href: '/rms', icon: PresentationChartLineIcon },
+  {
+    name: 'RMS',
+    href: '/rms',
+    icon: PresentationChartLineIcon,
+    children: [{ name: 'Online', href: '/rms/online' }],
+  },
   { name: 'PMS API Test', href: '/pms-api-test', icon: BeakerIcon },
 ]
+const expanded = ref<Record<string, boolean>>({})
+function isExpanded(item: { name: string; children?: unknown[] }) {
+  return expanded.value[item.name] ?? route.path.startsWith('/rms')
+}
+function toggleExpanded(item: { name: string }) {
+  expanded.value[item.name] = !isExpanded(item)
+}
 
 // Schedule indicator on the Fast API Pipeline item: blinks while the
 // UI-managed schedule is on and the scheduler container is checking in

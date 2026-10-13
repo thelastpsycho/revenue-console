@@ -1,3 +1,22 @@
+// Remembers filters/tab across visits (private browsing or a full storage
+// quota just means nothing persists - never worth surfacing as an error).
+const STORAGE_PREFIX = "rc:";
+export function loadStoredFilters(key: string): Record<string, string> | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_PREFIX + key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+export function saveStoredFilters(key: string, value: Record<string, string | undefined>) {
+  try {
+    localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
+  } catch {
+    // ignore
+  }
+}
+
 export interface PaceRow {
   date: string;
   lyDate: string;
@@ -128,6 +147,40 @@ export interface Forecast {
       error: string | null;
     }
   >;
+}
+export interface CompanyRow {
+  id: string;
+  name: string;
+  rooms: number;
+  idrRooms: number;
+  revenue: number;
+  netRevenue: number;
+}
+export interface SourceBreakdown {
+  start: string;
+  end: string;
+  companies: CompanyRow[];
+  total: BreakdownMetrics;
+}
+export interface ChannelBucket {
+  id: string;
+  name: string;
+  rooms: number;
+  idrRooms: number;
+  revenue: number;
+  netRevenue: number;
+}
+export interface DirectShareSeriesPoint {
+  date: string;
+  [bucketId: string]: string | BreakdownMetrics;
+}
+export interface DirectShare {
+  start: string;
+  end: string;
+  quality: string;
+  buckets: ChannelBucket[];
+  series: DirectShareSeriesPoint[];
+  directSharePct: number | null;
 }
 export const addDays = (iso: string, n: number) => {
   const d = new Date(`${iso}T00:00:00Z`);

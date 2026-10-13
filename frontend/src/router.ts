@@ -11,6 +11,7 @@ import FastApiPipelineView from './views/FastApiPipelineView.vue'
 import FastPipelineHistoryView from './views/FastPipelineHistoryView.vue'
 import StopSaleView from './views/StopSaleView.vue'
 import RmsView from './views/RmsView.vue'
+import RmsOnlineView from './views/RmsOnlineView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -74,6 +75,11 @@ const router = createRouter({
       path: '/rms',
       name: 'rms',
       component: RmsView
+    },
+    {
+      path: '/rms/online',
+      name: 'rms-online',
+      component: RmsOnlineView
     }
   ]
 })

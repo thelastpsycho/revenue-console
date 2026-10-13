@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from flask import Blueprint, jsonify, request
 
 from ..integrations.pms.fast_allotment_updater import LABEL_BY_CHECKBOX_VALUE
-from ..revenue import booking_events, rms_forecast, rms_workspace
+from ..revenue import booking_events, rms_forecast, rms_online, rms_workspace
 
 bp = Blueprint('rms', __name__)
 
@@ -108,6 +108,14 @@ def start_sync():
     return jsonify({"status": "success", **booking_events.status()}), 202
 
 
+def _channels_arg():
+    raw = request.args.get("channels")
+    if not raw:
+        return None
+    values = [v for v in raw.split(",") if v]
+    return values or None
+
+
 def _pace_options():
     market = request.args.get("marketId")
     if market:
@@ -121,7 +129,7 @@ def _pace_options():
             raise ValueError("comparisonStart is required for custom comparisons")
         date.fromisoformat(custom)
     return {"room_type": request.args.get("roomType") or None, "market_id": market,
-            "comparison": mode, "comparison_start": custom}
+            "comparison": mode, "comparison_start": custom, "channels": _channels_arg()}
 
 
 @bp.route('/api/rms/settings', methods=['GET', 'PUT'])
@@ -178,7 +186,42 @@ def pace_breakdown():
         if market:
             market = int(market)
         result = room_rate_breakdown(start.isoformat(), end.isoformat(),
-                                     room_type=request.args.get('roomType') or None, market_id=market)
+                                     room_type=request.args.get('roomType') or None, market_id=market,
+                                     channels=_channels_arg())
+    except (ValueError, TypeError) as exc:
+        return _error(str(exc), 400)
+    return jsonify({'status': 'success', **result})
+
+
+def _online_range():
+    start = _date_arg('start', booking_events._today())
+    end = _date_arg('end', start + timedelta(days=29))
+    if end < start or (end - start).days >= MAX_PACE_DAYS:
+        raise ValueError('Choose a valid range of at most 366 days')
+    market = request.args.get('marketId')
+    market = int(market) if market else rms_online.ONLINE_MARKET_ID
+    return start, end, market
+
+
+@bp.route('/api/rms/online/source', methods=['GET'])
+def online_source():
+    try:
+        start, end, market = _online_range()
+        result = rms_online.source_breakdown(start.isoformat(), end.isoformat(), market_id=market,
+                                             room_type=request.args.get('roomType') or None,
+                                             channels=_channels_arg())
+    except (ValueError, TypeError) as exc:
+        return _error(str(exc), 400)
+    return jsonify({'status': 'success', **result})
+
+
+@bp.route('/api/rms/online/direct-share', methods=['GET'])
+def online_direct_share():
+    try:
+        start, end, market = _online_range()
+        result = rms_online.direct_share(start.isoformat(), end.isoformat(), market_id=market,
+                                         room_type=request.args.get('roomType') or None,
+                                         channels=_channels_arg())
     except (ValueError, TypeError) as exc:
         return _error(str(exc), 400)
     return jsonify({'status': 'success', **result})

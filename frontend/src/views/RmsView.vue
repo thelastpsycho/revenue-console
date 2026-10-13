@@ -205,6 +205,8 @@ import {
   type Filters,
   type Curve,
   type CurvePoint,
+  loadStoredFilters,
+  saveStoredFilters,
 } from "../utils/rms";
 ChartJS.register(
   BarController,
@@ -234,8 +236,10 @@ const tabs = [
   { id: "rooms", label: "Inventory", icon: TableCellsIcon },
   { id: "data", label: "Data & settings", icon: Cog6ToothIcon },
 ];
+const STORAGE_KEY = "rms";
+const stored = loadStoredFilters(STORAGE_KEY) || {};
 const query = (k: string, f = "") =>
-  typeof route.query[k] === "string" ? String(route.query[k]) : f;
+  typeof route.query[k] === "string" ? String(route.query[k]) : (stored[k] ?? f);
 const tab = ref(
     tabs.some((t) => t.id === query("tab")) ? query("tab") : "overview",
   ),
@@ -309,9 +313,9 @@ const forecastBusy = computed(() =>
   Object.values(forecast.value?.sections || {}).some((s) => s.refreshing),
 );
 function saveUrl() {
-  router.replace({
-    query: { ...(loaded.value || filters), tab: tab.value, basis: basis.value },
-  });
+  const q = { ...(loaded.value || filters), tab: tab.value, basis: basis.value };
+  router.replace({ query: q });
+  saveStoredFilters(STORAGE_KEY, q as unknown as Record<string, string>);
 }
 function drilldownGroup(dimension: string, id: string) {
   if (loaded.value) Object.assign(filters, loaded.value);
