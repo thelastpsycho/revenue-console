@@ -15,16 +15,16 @@
 
   <aside
     :class="[
-      'group/sidebar fixed inset-y-0 left-0 z-40 flex w-64 flex-col overflow-hidden border-r border-slate-200 bg-white transition-[width] duration-200 ease-out lg:w-16 lg:translate-x-0 lg:hover:w-64',
+      'group/sidebar fixed inset-y-0 left-0 z-40 flex w-64 flex-col overflow-hidden border-r border-slate-200 bg-white transition-[width] duration-200 ease-out lg:w-16 lg:translate-x-0 lg:hover:w-64 lg:focus-within:w-64',
       open ? 'translate-x-0' : '-translate-x-full',
     ]"
   >
     <!-- Brand -->
-    <div class="flex h-16 items-center gap-2.5 border-b border-slate-200 px-6 lg:px-[18px] lg:group-hover/sidebar:px-6">
+    <div class="flex h-16 items-center gap-2.5 border-b border-slate-200 px-6 lg:px-[18px] lg:group-hover/sidebar:px-6 lg:group-focus-within/sidebar:px-6">
       <span class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white">
         <ChartBarSquareIcon class="h-5 w-5" />
       </span>
-      <div class="min-w-0 whitespace-nowrap leading-tight lg:hidden lg:group-hover/sidebar:block">
+      <div class="min-w-0 whitespace-nowrap leading-tight lg:hidden lg:group-hover/sidebar:block lg:group-focus-within/sidebar:block">
         <p class="text-sm font-semibold tracking-tight text-slate-900">Revenue Console</p>
         <p class="text-xs text-slate-400">Yield &amp; Inventory</p>
       </div>
@@ -33,7 +33,7 @@
     <!-- Navigation -->
     <nav class="flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden px-3 py-5">
       <p
-        class="whitespace-nowrap px-3 pb-2 text-[11px] font-medium uppercase tracking-widest text-slate-400 lg:hidden lg:group-hover/sidebar:block"
+        class="whitespace-nowrap px-3 pb-2 text-[11px] font-medium uppercase tracking-widest text-slate-400 lg:hidden lg:group-hover/sidebar:block lg:group-focus-within/sidebar:block"
       >
         Pipeline
       </p>
@@ -41,13 +41,14 @@
         <div class="flex items-stretch gap-0.5">
           <router-link
             :to="item.href"
+            :aria-label="item.href === SCHEDULE_PAGE && scheduleBadge ? `${item.name} — ${scheduleBadge.title}` : item.name"
             :title="item.href === SCHEDULE_PAGE && scheduleBadge ? `${item.name} — ${scheduleBadge.title}` : item.name"
             @click="$emit('close')"
             :class="[
               route.path === item.href
                 ? 'bg-slate-100 text-slate-900'
                 : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900',
-              'group flex flex-1 items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors cursor-pointer',
+              'group flex flex-1 items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-slate-700',
             ]"
           >
             <component
@@ -60,12 +61,12 @@
               ]"
               :aria-label="item.href === SCHEDULE_PAGE && scheduleBadge ? scheduleBadge.title : undefined"
             />
-            <span class="whitespace-nowrap lg:hidden lg:group-hover/sidebar:inline">{{ item.name }}</span>
+            <span class="whitespace-nowrap lg:hidden lg:group-hover/sidebar:inline lg:group-focus-within/sidebar:inline">{{ item.name }}</span>
           </router-link>
           <button
             v-if="item.children"
             type="button"
-            class="hidden w-7 flex-shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-50 hover:text-slate-600 lg:group-hover/sidebar:flex"
+            class="flex w-7 lg:hidden flex-shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-50 hover:text-slate-600 lg:group-hover/sidebar:flex lg:group-focus-within/sidebar:flex"
             :aria-expanded="isExpanded(item)"
             :aria-label="`${isExpanded(item) ? 'Collapse' : 'Expand'} ${item.name}`"
             @click="toggleExpanded(item)"
@@ -77,7 +78,7 @@
         </div>
         <div
           v-if="item.children && isExpanded(item)"
-          class="ml-6 mt-0.5 space-y-0.5 border-l border-slate-200 pl-3 lg:hidden lg:group-hover/sidebar:block"
+          class="ml-6 mt-0.5 space-y-0.5 border-l border-slate-200 pl-3 lg:hidden lg:group-hover/sidebar:block lg:group-focus-within/sidebar:block"
         >
           <router-link
             v-for="child in item.children"
@@ -88,7 +89,7 @@
               route.path === child.href
                 ? 'bg-slate-100 text-slate-900'
                 : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900',
-              'flex items-center whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer',
+              'flex items-center whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-slate-700',
             ]"
           >
             {{ child.name }}
@@ -103,7 +104,7 @@
         <span class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">
           RC
         </span>
-        <div class="min-w-0 whitespace-nowrap leading-tight lg:hidden lg:group-hover/sidebar:block">
+        <div class="min-w-0 whitespace-nowrap leading-tight lg:hidden lg:group-hover/sidebar:block lg:group-focus-within/sidebar:block">
           <p class="truncate text-xs font-medium text-slate-900">Local session</p>
           <p class="truncate text-[11px] text-slate-400">fo.hospitality.mykg.id</p>
         </div>

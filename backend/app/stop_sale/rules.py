@@ -13,6 +13,7 @@ Only today and later are considered; the whole scraped range is checked.
 import os
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from ..infrastructure.paths import get_data_path
 
@@ -44,7 +45,7 @@ class InventoryUnavailable(RuntimeError):
 
 
 def _today():
-    return date.today()
+    return datetime.now(ZoneInfo("Asia/Makassar")).date()
 
 
 def load_combined_rows():
