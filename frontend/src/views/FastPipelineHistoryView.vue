@@ -163,6 +163,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useRoute } from 'vue-router'
 import axios from '../plugins/axios'
 import PageHeader from '../components/PageHeader.vue'
 
@@ -328,5 +329,15 @@ function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString()
 }
 
-onMounted(loadRuns)
+const route = useRoute()
+onMounted(async () => {
+  await loadRuns()
+  const id = Number(route.query.runId)
+  if (!Number.isSafeInteger(id) || id < 1) return
+  if (!runs.value.some(r => r.id === id)) {
+    try { const {data} = await axios.get(`/api/fast-pipeline/history/${id}`); runs.value.unshift(data.run) }
+    catch { loadError.value = 'Requested run could not be loaded'; return }
+  }
+  await toggleRun(id)
+})
 </script>

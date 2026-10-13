@@ -370,3 +370,19 @@ def test_failed_and_unsent_recipients_can_be_resent_once(client, data_dir, monke
 
     email = client.get(f"/api/stop-sale/history/{original['id']}/email").get_json()
     assert email["to"] == "Co a <a@x.com>" and "All room types" in email["html"]
+
+
+def test_preview_reports_date_coverage_even_when_no_closures(client, data_dir):
+    write_combined(data_dir, [row('2026-10-06'), row('2026-10-07'), row('2026-10-09')])
+    result = client.get('/api/stop-sale/preview').get_json()
+    assert result['coverage'] == {'from': '2026-10-07', 'to': '2026-10-09',
+                                  'days': 2, 'missingDays': 1, 'includesToday': True}
+    assert result['updatedAt'] is not None
+
+
+def test_preview_distinguishes_empty_upcoming_coverage(client, data_dir):
+    write_combined(data_dir, [row('2026-10-06')])
+    result = client.get('/api/stop-sale/preview').get_json()
+    assert result['closures'] == []
+    assert result['coverage'] == {'from': None, 'to': None, 'days': 0,
+                                  'missingDays': 0, 'includesToday': False}

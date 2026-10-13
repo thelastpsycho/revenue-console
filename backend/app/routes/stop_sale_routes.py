@@ -40,10 +40,17 @@ def _selected_ranges(dates):
 @bp.route('/api/stop-sale/preview', methods=['GET'])
 def preview():
     try:
-        closures = _closures()
+        rows = rules.load_combined_rows()
+        closures = rules.evaluate(rows, store.get_settings())
     except rules.InventoryUnavailable as exc:
         return _error(str(exc), 404)
-    return jsonify({"status": "success", "closures": closures, "updatedAt": rules.combined_updated_at()})
+    today = rules._today().isoformat()
+    dates = sorted({r["Date"] for r in rows if r["Date"] >= today})
+    missing = ((datetime.fromisoformat(dates[-1]) - datetime.fromisoformat(dates[0])).days + 1 - len(dates)) if dates else 0
+    coverage = {"from": dates[0] if dates else None, "to": dates[-1] if dates else None,
+                "days": len(dates), "missingDays": missing, "includesToday": today in dates}
+    return jsonify({"status": "success", "closures": closures,
+                    "updatedAt": rules.combined_updated_at(), "coverage": coverage})
 
 
 @bp.route('/api/stop-sale/settings', methods=['GET'])
