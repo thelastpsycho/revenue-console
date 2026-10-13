@@ -25,6 +25,8 @@
       </router-link>
     </header>
 
+    <DailyRevenueBriefing />
+
     <!-- Live status -->
     <section class="mt-10">
       <div class="flex items-center justify-between">
@@ -229,6 +231,7 @@ import {
   GlobeAltIcon,
 } from "@heroicons/vue/24/outline";
 import axios from "../plugins/axios";
+import DailyRevenueBriefing from "../components/DailyRevenueBriefing.vue";
 import { timestamp } from "../utils/rms";
 import {
   scheduleTone,
@@ -278,15 +281,15 @@ const links = [
     icon: ReceiptPercentIcon,
   },
   {
-    title: "Data",
-    description: "Raw and processed PMS/CM/combined inventory tables.",
-    href: "/data",
+    title: "Administration",
+    description: "Data health, mappings, settings, access and backup status.",
+    href: "/administration",
     icon: CircleStackIcon,
   },
   {
-    title: "Yielder",
-    description: "Manual yield run with full threshold control.",
-    href: "/yielder",
+    title: "Advanced tools",
+    description: "Manual inventory, yield and technical tools.",
+    href: "/administration?section=advanced",
     icon: ChartBarIcon,
   },
 ];

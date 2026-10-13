@@ -3,12 +3,29 @@ Read-only towards the PMS - the only writes are to the local booking cache."""
 
 from datetime import date, timedelta
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, g
+import time
 
 from ..integrations.pms.fast_allotment_updater import LABEL_BY_CHECKBOX_VALUE
 from ..revenue import booking_events, rms_forecast, rms_online, rms_workspace
 
 bp = Blueprint('rms', __name__)
+
+@bp.before_request
+def start_report_timer():
+    g.report_started = time.perf_counter()
+
+
+@bp.after_request
+def report_timing(response):
+    if hasattr(g, 'report_started'):
+        from ..revenue.report_cache import record_timing
+        elapsed = (time.perf_counter() - g.report_started) * 1000
+        response.headers['Server-Timing'] = f'report;dur={elapsed:.2f}'
+        response.headers['X-Report-Cache'] = getattr(g, 'report_cache', 'none')
+        record_timing(request.url_rule.rule if request.url_rule else request.path, elapsed)
+    return response
+
 
 MAX_PACE_DAYS = 366
 
@@ -225,3 +242,9 @@ def online_direct_share():
     except (ValueError, TypeError) as exc:
         return _error(str(exc), 400)
     return jsonify({'status': 'success', **result})
+
+
+@bp.route('/api/rms/briefing', methods=['GET'])
+def daily_briefing():
+    from ..revenue.revenue_briefing import briefing
+    return jsonify({'status': 'success', **briefing()})

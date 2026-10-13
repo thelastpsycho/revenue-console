@@ -192,14 +192,14 @@ def _refresh(key, start, days, section, lease):
                          ("PMS report unavailable. Retry refresh; the last successful result is retained.", key, lease))
 
 
-def cached_forecast(start, days, force=False):
+def cached_forecast(start, days, force=False, sections=SECTIONS):
     from datetime import datetime, timezone
     now = time.time()
     result = {"start": start.isoformat(), "end": (start + timedelta(days=days - 1)).isoformat(), "sections": {}}
     jobs = []
     with _cache_db() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        for section in SECTIONS:
+        for section in sections:
             key = f"{start}:{days}:{section}"
             row = conn.execute("SELECT * FROM forecast_cache WHERE key=?", (key,)).fetchone()
             stale = not row or not row["fetched"] or now - row["fetched"] > CACHE_TTL

@@ -10,6 +10,8 @@ are confirmed exact strings from a live PMS probe (docs/pms-data-api.md);
 the other named OTAs are matched by a lenient marker, validated against
 real company names seen in bookings.company after backfilling.
 """
+from .report_cache import cached_report
+
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -33,6 +35,7 @@ def _add_night(bucket, r, day, rules):
         bucket["netRevenue"] += net_rate(r["room_rate"], r.get("rate_type"), day, rules, r.get("rate_id"))
 
 
+@cached_report
 def source_breakdown(start, end, market_id=ONLINE_MARKET_ID, room_type=None, channels=None):
     """Current on-the-books nights/revenue by booking company within a
     market segment (default Online) - "where is this demand coming from"."""
@@ -61,6 +64,7 @@ def source_breakdown(start, end, market_id=ONLINE_MARKET_ID, room_type=None, cha
     return {"start": start, "end": end, "companies": rows, "total": grand}
 
 
+@cached_report
 def direct_share(start, end, market_id=ONLINE_MARKET_ID, room_type=None, channels=None):
     """Daily Santika Online (direct) vs named-OTA vs other channel split,
     plus period totals and the direct-channel share of known-channel rooms."""

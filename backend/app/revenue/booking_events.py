@@ -28,6 +28,8 @@ Three sync jobs, differing only in mode/window:
 - booking_versions: append-only observed changes; older reconstructed history is estimated.
 """
 
+from .report_cache import cached_report
+
 import re
 import json
 from zoneinfo import ZoneInfo
@@ -594,6 +596,7 @@ def pickup_breakdown(previous, current, day, before, today, room_type, market_id
     return {"newRooms": new, "cancelledRooms": cancelled, "amendedRooms": amendments}
 
 
+@cached_report
 def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_days=7,
                comparison="weekday", comparison_start=None, channels=None):
     from .rms_workspace import get_settings
@@ -652,6 +655,7 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
     return out
 
 
+@cached_report
 def pace_curve(stay_date, max_lead=180, room_type=None, market_id=None,
                comparison="weekday", comparison_start=None, range_start=None, channels=None):
     from .rms_workspace import get_settings
