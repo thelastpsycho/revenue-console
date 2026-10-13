@@ -60,6 +60,17 @@ body {
     @apply mb-1 block text-[11px] font-bold uppercase tracking-wider text-slate-500;
   }
 
+  /* Compact filter toolbar: tightens .neu-input/.field-label sizing down
+     toward .seg-btn's footprint. Buttons inside filter bars (Apply, date
+     presets, Done, Clear) already set their own per-instance sizes, so
+     .btn-primary/.btn-flat are left untouched here to avoid fighting them. */
+  .filter-bar .neu-input {
+    @apply px-2.5 py-1.5 text-xs;
+  }
+  .filter-bar .field-label {
+    @apply mb-0.5 text-[10px];
+  }
+
   /* Segmented control: tabs and view toggles */
   .seg {
     @apply inline-flex max-w-full gap-1 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-1;

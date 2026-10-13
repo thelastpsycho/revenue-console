@@ -3,6 +3,7 @@
     <PageHeader
       title="Revenue management"
       :subtitle="`Daily decisions · ${dayLabel(today)} · Bali time`"
+      compact
     >
       <template #actions>
         <button

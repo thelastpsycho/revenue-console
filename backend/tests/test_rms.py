@@ -143,6 +143,41 @@ def test_migration_adds_company_columns_to_a_pre_existing_database(data_dir):
     assert {"company_id", "company"} <= columns
 
 
+def test_migration_backfills_company_into_pre_existing_version_snapshots(data_dir):
+    # A reservation whose earliest observed snapshot predates company
+    # tracking: the bookings row (current state) already knows the company,
+    # but that old version payload doesn't carry it, so an "as of" lookup
+    # into the past (pace YoY) would see no company and get misclassified
+    # as unassigned - even though the channel never actually changed.
+    conn = sqlite3.connect(data_dir / be.DB_FILE)
+    conn.execute("""CREATE TABLE bookings (
+        reservation_id INTEGER PRIMARY KEY, reservation_date TEXT, arrival_date TEXT, departure_date TEXT,
+        nights INTEGER, status TEXT, type_id TEXT, rate_type TEXT, market_id INTEGER, market TEXT,
+        company_id INTEGER, company TEXT,
+        room_rate REAL, currency TEXT, cancelled_on TEXT, updated_at TEXT, synced_at TEXT)""")
+    conn.execute("""CREATE TABLE booking_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, reservation_id INTEGER NOT NULL,
+        observed_on TEXT NOT NULL, observed_at TEXT NOT NULL, payload TEXT NOT NULL)""")
+    conn.execute("""INSERT INTO bookings (reservation_id, reservation_date, arrival_date, departure_date,
+        nights, status, market_id, company_id, company, room_rate, currency)
+        VALUES (1, '2025-09-01', '2025-10-01', '2025-10-02', 1, 'D', 8, 11647, 'Booking.com', 1000000, 'IDR')""")
+    old_payload = json.dumps({"reservation_id": 1, "reservation_date": "2025-09-01",
+                              "arrival_date": "2025-10-01", "departure_date": "2025-10-02",
+                              "status": "D", "market_id": 8, "room_rate": 1000000, "currency": "IDR"})
+    conn.execute("INSERT INTO booking_versions (reservation_id, observed_on, observed_at, payload) VALUES (1, '2025-09-01', '2025-09-01T00:00:00', ?)",
+                (old_payload,))
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO meta (key, value) VALUES ('versionsSeeded', '1')")
+    conn.commit()
+    conn.close()
+    with be._db():  # _connect() runs the migration as a side effect
+        pass
+    conn = sqlite3.connect(data_dir / be.DB_FILE)
+    payload = json.loads(conn.execute(
+        "SELECT payload FROM booking_versions WHERE reservation_id = 1").fetchone()[0])
+    assert (payload["company_id"], payload["company"]) == (11647, "Booking.com")
+
+
 def test_migration_backfills_net_rate_for_a_pre_existing_database(data_dir):
     # Simulate a bookings table from before the net_rate column existed.
     conn = sqlite3.connect(data_dir / be.DB_FILE)

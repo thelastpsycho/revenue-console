@@ -3,6 +3,7 @@
     <PageHeader
       title="Online segment"
       subtitle="Source mix, pace, booking behaviour and Santika Online's share of direct vs OTA demand - market segment: Online."
+      compact
     />
 
     <nav class="seg !flex w-full" role="tablist" aria-label="Online sections">
@@ -15,20 +16,21 @@
         :aria-selected="tab === t.id"
         @click="selectTab(t.id)"
       >
+        <component :is="t.icon" class="h-4 w-4" />
         {{ t.label }}
       </button>
     </nav>
 
-    <form class="neu-card relative flex flex-wrap items-end gap-3 p-4" @submit.prevent="apply">
+    <form class="filter-bar neu-card relative flex flex-wrap items-end gap-2 p-3" @submit.prevent="apply">
       <div ref="dateMenuRef" class="relative">
         <span class="field-label">Stay dates</span>
         <button
           type="button"
-          class="neu-input flex items-center gap-2 whitespace-nowrap"
+          class="neu-input flex items-center gap-1.5 whitespace-nowrap"
           :aria-expanded="dateMenuOpen"
           @click="dateMenuOpen = !dateMenuOpen"
         >
-          <CalendarDaysIcon class="h-4 w-4 text-slate-400" />
+          <CalendarDaysIcon class="h-3.5 w-3.5 text-slate-400" />
           {{ shortDayYear(filters.start) }} – {{ shortDayYear(filters.end) }}
         </button>
         <div
@@ -108,7 +110,19 @@
           </div>
         </div>
       </div>
-      <button :class="['btn-primary', dirty && 'ring-2 ring-amber-300']">
+      <label>
+        <span class="field-label">Compare with</span>
+        <select v-model="filters.comparison" class="neu-input">
+          <option value="weekday">Same weekday last year</option>
+          <option value="calendar">Same date last year</option>
+          <option value="custom">Matched event / holiday</option>
+        </select>
+      </label>
+      <label v-if="filters.comparison === 'custom'">
+        <span class="field-label">Comparison begins</span>
+        <input v-model="filters.comparisonStart" type="date" required class="neu-input" />
+      </label>
+      <button :class="['btn-primary px-3 py-1.5 text-xs', dirty && 'ring-2 ring-amber-300']">
         {{ dirty ? "Apply changes" : "Apply" }}
       </button>
     </form>
@@ -123,7 +137,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { CalendarDaysIcon } from "@heroicons/vue/24/outline";
+import {
+  CalendarDaysIcon,
+  ChartPieIcon,
+  ArrowTrendingUpIcon,
+  UserGroupIcon,
+  GlobeAltIcon,
+} from "@heroicons/vue/24/outline";
 import axios from "../plugins/axios";
 import PageHeader from "../components/PageHeader.vue";
 import DateRangeCalendar from "../components/DateRangeCalendar.vue";
@@ -138,10 +158,10 @@ const today = hotelToday(),
   router = useRouter();
 
 const tabs = [
-  { id: "source", label: "Source" },
-  { id: "pace", label: "Pace" },
-  { id: "behaviour", label: "Booking behaviour" },
-  { id: "direct", label: "Direct share" },
+  { id: "source", label: "Source", icon: ChartPieIcon },
+  { id: "pace", label: "Pace", icon: ArrowTrendingUpIcon },
+  { id: "behaviour", label: "Booking behaviour", icon: UserGroupIcon },
+  { id: "direct", label: "Direct share", icon: GlobeAltIcon },
 ];
 const STORAGE_KEY = "rms-online";
 const stored = loadStoredFilters(STORAGE_KEY) || {};
@@ -154,12 +174,16 @@ interface OnlineFilters {
   end: string;
   roomType: string;
   channels: string[];
+  comparison: "weekday" | "calendar" | "custom";
+  comparisonStart: string;
 }
 const filters = reactive<OnlineFilters>({
   start: query("start", today),
   end: query("end", addDays(today, 29)),
   roomType: query("roomType"),
   channels: query("channels") ? query("channels").split(",").filter(Boolean) : [],
+  comparison: (query("comparison", "weekday") as OnlineFilters["comparison"]) || "weekday",
+  comparisonStart: query("comparisonStart"),
 });
 const loaded = ref<OnlineFilters | null>(null);
 const error = ref("");
@@ -191,6 +215,8 @@ function saveUrl() {
     end: f.end,
     roomType: f.roomType,
     channels: f.channels.length ? f.channels.join(",") : undefined,
+    comparison: f.comparison,
+    comparisonStart: f.comparison === "custom" ? f.comparisonStart : undefined,
     tab: tab.value,
   };
   router.replace({ query: q });
@@ -208,6 +234,10 @@ function apply() {
     (Date.parse(filters.end) - Date.parse(filters.start)) / 86400000 >= 366
   ) {
     error.value = "Choose a valid range of at most 366 days.";
+    return;
+  }
+  if (filters.comparison === "custom" && !filters.comparisonStart) {
+    error.value = "Choose a start date for the matched comparison.";
     return;
   }
   error.value = "";

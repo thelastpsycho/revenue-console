@@ -1,15 +1,15 @@
 <template>
-  <form class="neu-card relative p-4" @submit.prevent="$emit('submit')">
-    <div class="flex flex-wrap items-end gap-3">
+  <form class="filter-bar neu-card relative p-3" @submit.prevent="$emit('submit')">
+    <div class="flex flex-wrap items-end gap-2">
       <div ref="dateMenuRef" class="relative">
         <span class="field-label">Stay dates</span>
         <button
           type="button"
-          class="neu-input flex items-center gap-2 whitespace-nowrap"
+          class="neu-input flex items-center gap-1.5 whitespace-nowrap"
           :aria-expanded="dateMenuOpen"
           @click="dateMenuOpen = !dateMenuOpen"
         >
-          <CalendarDaysIcon class="h-4 w-4 text-slate-400" />
+          <CalendarDaysIcon class="h-3.5 w-3.5 text-slate-400" />
           {{ shortDayYear(filters.start) }} – {{ shortDayYear(filters.end) }}
         </button>
         <div
@@ -110,16 +110,16 @@
         </select>
       </label>
       <button
-        :class="['btn-primary', dirty && 'ring-2 ring-amber-300']"
+        :class="['btn-primary px-3 py-1.5 text-xs', dirty && 'ring-2 ring-amber-300']"
         :disabled="loading"
       >
-        <ArrowPathIcon v-if="loading" class="h-4 w-4 animate-spin" />
+        <ArrowPathIcon v-if="loading" class="h-3.5 w-3.5 animate-spin" />
         {{ loading ? "Loading…" : dirty ? "Apply changes" : "Apply" }}
       </button>
     </div>
 
     <div
-      class="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3"
+      class="mt-2 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-2"
     >
       <span v-if="dirty" class="pill pill-warn">
         Filters changed — figures still show the previous selection

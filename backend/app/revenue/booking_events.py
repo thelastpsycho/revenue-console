@@ -135,6 +135,24 @@ def _connect():
         conn.execute("ALTER TABLE bookings ADD COLUMN company_id INTEGER")
     if "company" not in columns:
         conn.execute("ALTER TABLE bookings ADD COLUMN company TEXT")
+    # company/company_id are static per reservation (the booking channel never
+    # changes after creation), but pace/YoY reconstruction reads whichever
+    # booking_versions snapshot was active "as of" a past date - for
+    # reservations first observed before these columns existed, that snapshot
+    # predates company tracking and has no company key, so channel filters
+    # silently drop them (only the *current* row, not history, got backfilled
+    # earlier). Patch every such snapshot with the reservation's now-known,
+    # time-invariant company once.
+    if not _get_meta(conn, "companyBackfilledIntoVersions"):
+        conn.execute("""
+            UPDATE booking_versions
+            SET payload = json_set(payload,
+                '$.company_id', (SELECT company_id FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id),
+                '$.company', (SELECT company FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id))
+            WHERE json_extract(payload, '$.company') IS NULL
+              AND EXISTS (SELECT 1 FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id AND b.company IS NOT NULL)
+        """)
+        _set_meta(conn, "companyBackfilledIntoVersions", "1")
     # Seed an existing installation once, preserving only the same PII-free fields.
     seeded = conn.execute("SELECT value FROM meta WHERE key='versionsSeeded'").fetchone()
     if not seeded:
