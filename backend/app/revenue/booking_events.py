@@ -442,23 +442,46 @@ class BookingHistory(dict):
     observed_from = None
 
 
-def version_history(ranges=None):
-    """One read per request; no guest PII or per-day database opens."""
+# Keyed by (db path, MAX(booking_versions.id)) so a cache hit is just one
+# cheap indexed query - reading and json-decoding the whole table made every
+# report request's latency scale with total database size, even though new
+# version rows only land a few times a day (sync jobs), not once per request.
+# The db path is part of the key (not just max_id) so tests that point
+# get_data_path at a fresh tmp_path per test can't collide with a stale
+# cache entry from a different database that happens to share a row count.
+_history_cache = {"key": None, "history": None}
+
+
+def _cached_full_history():
     with _db_lock, _db() as conn:
-        if ranges:
-            clauses = " OR ".join("(json_extract(payload, '$.arrival_date') <= ? AND json_extract(payload, '$.departure_date') > ?)" for _ in ranges)
-            params = [v for start, end in ranges for v in (end, start)]
-            rows = conn.execute(f"""SELECT reservation_id, observed_on, payload FROM booking_versions
-                WHERE reservation_id IN (SELECT DISTINCT reservation_id FROM booking_versions WHERE {clauses})
-                ORDER BY id""", params).fetchall()
-        else:
-            rows = conn.execute("SELECT reservation_id, observed_on, payload FROM booking_versions ORDER BY id").fetchall()
+        key = (get_data_path(DB_FILE), conn.execute("SELECT MAX(id) FROM booking_versions").fetchone()[0])
+        if _history_cache["key"] == key and _history_cache["history"] is not None:
+            return _history_cache["history"]
+        rows = conn.execute("SELECT reservation_id, observed_on, payload FROM booking_versions ORDER BY id").fetchall()
         first = conn.execute("SELECT MIN(observed_on) FROM booking_versions").fetchone()[0]
-    history = BookingHistory()
-    history.observed_from = first
-    for r in rows:
-        history.setdefault(r["reservation_id"], []).append((r["observed_on"], json.loads(r["payload"])))
-    return history
+        history = BookingHistory()
+        history.observed_from = first
+        for r in rows:
+            history.setdefault(r["reservation_id"], []).append((r["observed_on"], json.loads(r["payload"])))
+        _history_cache["key"], _history_cache["history"] = key, history
+        return history
+
+
+def version_history(ranges=None):
+    """Booking_versions filtered to reservations touching `ranges` (or the
+    whole table if None), served from the in-process cache above - the
+    filter itself runs in Python against the cached table instead of SQL,
+    since the expensive part was always reading/parsing the whole table."""
+    history = _cached_full_history()
+    if not ranges:
+        return history
+    filtered = BookingHistory()
+    filtered.observed_from = history.observed_from
+    for rid, versions in history.items():
+        if any(payload["arrival_date"] <= end and payload["departure_date"] > start
+               for start, end in ranges for _, payload in versions):
+            filtered[rid] = versions
+    return filtered
 
 
 def state_as_of(history, as_of):

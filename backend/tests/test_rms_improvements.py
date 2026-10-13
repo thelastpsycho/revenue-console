@@ -175,6 +175,24 @@ def test_failed_refresh_preserves_stale_payload_without_poll_retry(monkeypatch):
     assert len(DeferredThread.jobs) == count + 4
 
 
+def test_version_history_cache_does_not_leak_across_databases(tmp_path, monkeypatch):
+    """version_history() caches the whole table keyed by (db path, max row
+    id) so repeat requests skip re-reading it - but two different databases
+    that happen to reach the same row count must not be treated as the same
+    cache entry, or one tenant's/test's data would leak into another's."""
+    dir_a, dir_b = tmp_path / "a", tmp_path / "b"
+    dir_a.mkdir(); dir_b.mkdir()
+
+    monkeypatch.setattr(be, "get_data_path", lambda name: str(dir_a / name))
+    be.upsert([api_row(1, "2026-09-01", "2026-12-01", "2026-12-02")])
+    assert be.on_the_books("2026-12-01", "2026-12-01", "2026-10-01")["2026-12-01"]["rooms"] == 1
+
+    monkeypatch.setattr(be, "get_data_path", lambda name: str(dir_b / name))
+    be.upsert([api_row(1, "2026-09-01", "2027-01-01", "2027-01-02")])  # same row count, different dates
+    assert be.on_the_books("2026-12-01", "2026-12-01", "2026-10-01") == {}
+    assert be.on_the_books("2027-01-01", "2027-01-01", "2026-10-01")["2027-01-01"]["rooms"] == 1
+
+
 def test_final_reflects_same_day_state_not_a_later_cancellation(monkeypatch):
     """lyFinalRooms is "as observed on the stay date itself" - a cancellation
     recorded after that date must not erase that day's actuals, even though
