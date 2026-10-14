@@ -16,6 +16,7 @@ const FastPipelineHistoryView = () =>
 const StopSaleView = () => import("./views/StopSaleView.vue");
 const RmsView = () => import("./views/RmsView.vue");
 const RmsOnlineView = () => import("./views/RmsOnlineView.vue");
+const RmsPickupView = () => import("./views/RmsPickupView.vue");
 
 const AdministrationView = () => import("./views/AdministrationView.vue");
 
@@ -91,6 +92,11 @@ const router = createRouter({
       path: "/rms/online",
       name: "rms-online",
       component: RmsOnlineView,
+    },
+    {
+      path: "/rms/pick-up",
+      name: "rms-pickup",
+      component: RmsPickupView,
     },
   ],
 });

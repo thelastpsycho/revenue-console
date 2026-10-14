@@ -172,6 +172,7 @@ import {
   ClockIcon,
   EnvelopeIcon,
   PresentationChartLineIcon,
+  ArrowTrendingUpIcon,
 } from "@heroicons/vue/24/outline";
 
 defineProps<{ open: boolean }>();
@@ -186,6 +187,7 @@ const navigationAreas = [
       { name: "Overview", href: "/", icon: HomeIcon },
       { name: "RMS", href: "/rms", icon: PresentationChartLineIcon },
       { name: "Online segment", href: "/rms/online", icon: ChartBarIcon },
+      { name: "Pickup by month", href: "/rms/pick-up", icon: ArrowTrendingUpIcon },
     ],
   },
   {
