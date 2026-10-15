@@ -7,23 +7,92 @@
     />
 
     <form class="filter-bar neu-card flex flex-wrap items-end gap-2 p-3" @submit.prevent="apply">
-      <label>
+      <div ref="dateMenuRef" class="relative">
         <span class="field-label">Pickup window</span>
-        <select v-model.number="filters.pickupDays" class="neu-input">
-          <option v-for="d in [1, 3, 7, 14, 30]" :key="d" :value="d">
-            {{ d }} {{ d === 1 ? "day" : "days" }}
-          </option>
-        </select>
-      </label>
+        <button
+          type="button"
+          class="neu-input flex items-center gap-1.5 whitespace-nowrap"
+          :aria-expanded="dateMenuOpen"
+          @click="dateMenuOpen = !dateMenuOpen"
+        >
+          <CalendarDaysIcon class="h-3.5 w-3.5 text-slate-400" />
+          {{ shortDayYear(filters.pickupStart) }} – {{ shortDayYear(filters.pickupEnd) }}
+          ({{ pickupDaysLabel }})
+        </button>
+        <div
+          v-if="dateMenuOpen"
+          class="neu-card absolute left-0 top-full z-30 mt-1 w-64 space-y-3 p-3 shadow-lg"
+        >
+          <div class="grid grid-cols-2 gap-1.5">
+            <button type="button" class="btn-flat px-2 py-1 text-xs" @click="presetYesterday">
+              Yesterday
+            </button>
+            <button type="button" class="btn-flat px-2 py-1 text-xs" @click="presetThisWeek">
+              This week
+            </button>
+            <button type="button" class="btn-flat px-2 py-1 text-xs" @click="presetThisMonth">
+              This month
+            </button>
+            <button type="button" class="btn-flat px-2 py-1 text-xs" @click="presetLastWeek">
+              Last week
+            </button>
+            <button type="button" class="btn-flat px-2 py-1 text-xs" @click="presetLastMonth">
+              Last month
+            </button>
+          </div>
+          <div class="border-t border-slate-200 pt-3">
+            <span class="field-label">Custom range</span>
+            <div class="flex items-center gap-1.5">
+              <input
+                v-model="filters.pickupStart"
+                type="date"
+                :max="filters.pickupEnd"
+                class="neu-input w-full"
+              />
+              <span class="text-slate-400">–</span>
+              <input
+                v-model="filters.pickupEnd"
+                type="date"
+                :min="filters.pickupStart"
+                :max="maxPickupEnd"
+                class="neu-input w-full"
+              />
+            </div>
+            <div class="mt-2 flex justify-end">
+              <button
+                type="button"
+                class="btn-primary px-3 py-1 text-xs"
+                @click="dateMenuOpen = false"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
       <button :class="['btn-primary px-3 py-1.5 text-xs', dirty && 'ring-2 ring-amber-300']">
         {{ dirty ? "Apply changes" : "Apply" }}
       </button>
     </form>
     <p v-if="error" role="alert" class="alert-error">{{ error }}</p>
 
+    <RmsSkeleton v-if="loading" variant="tiles" :count="2" />
+    <dl v-else class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div class="stat-tile">
+        <dt>Total room nights pickup</dt>
+        <dd :class="signClass(totalPickupRooms)">{{ signed(totalPickupRooms) }}</dd>
+      </div>
+      <div class="stat-tile">
+        <dt>Total revenue pickup</dt>
+        <dd :title="money(totalPickupRevenue)">
+          {{ totalPickupRevenue == null ? EMPTY : signedMoney(totalPickupRevenue) }}
+        </dd>
+      </div>
+    </dl>
+
     <RmsCard
       title="Pickup by stay month"
-      :description="`Net pickup over the last ${loaded?.pickupDays ?? filters.pickupDays} days = new − cancelled + amendments, in room nights. OTB occupancy and revenue reflect what's currently on the books.`"
+      :description="`Net pickup ${loadedPickupLabel} = new − cancelled + amendments, in room nights. OTB occupancy and revenue reflect what's currently on the books.`"
     >
       <RmsSkeleton v-if="loading" variant="table" :count="12" :columns="4" />
       <table v-else-if="months.length" class="data-table">
@@ -55,7 +124,7 @@
         </tbody>
       </table>
       <template v-if="!loading && !months.length" #empty>
-        Apply a pickup window to load data.
+        Apply a pickup start date to load data.
       </template>
     </RmsCard>
   </div>
@@ -63,6 +132,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { CalendarDaysIcon } from "@heroicons/vue/24/outline";
 import axios from "../plugins/axios";
 import PageHeader from "../components/PageHeader.vue";
 import RmsCard from "../components/RmsCard.vue";
@@ -78,6 +148,8 @@ import {
   ratio,
   currentRooms,
   hotelToday,
+  addDays,
+  shortDayYear,
   loadStoredFilters,
   saveStoredFilters,
   type PaceRow,
@@ -88,23 +160,88 @@ const today = hotelToday(),
   route = useRoute(),
   router = useRouter();
 
+// Pickup compares OTB "as of" two dates - normally today vs pickupStart,
+// but asOf can be pinned to any past date too (e.g. "last week"), not just
+// today. Clamped to the pace API's 90-day pickup limit.
+const MAX_PICKUP_DAYS = 90;
+const maxPickupEnd = today;
+const mondayOf = (iso: string) =>
+  addDays(iso, -((new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7));
+
 const STORAGE_KEY = "rms-pickup";
 const stored = loadStoredFilters(STORAGE_KEY) || {};
 const query = (k: string, f = "") =>
   typeof route.query[k] === "string" ? String(route.query[k]) : (stored[k] ?? f);
 
 interface PickupFilters {
-  pickupDays: number;
+  pickupStart: string;
+  pickupEnd: string;
+}
+function daysBetween(startIso: string, endIso: string) {
+  const days = Math.round((Date.parse(endIso) - Date.parse(startIso)) / 86400000);
+  return Math.max(1, Math.min(MAX_PICKUP_DAYS, days));
 }
 const filters = reactive<PickupFilters>({
-  pickupDays: Number(query("pickupDays", "7")) || 7,
+  pickupStart: query("pickupStart", addDays(today, -7)) || addDays(today, -7),
+  pickupEnd: query("pickupEnd", today) || today,
 });
+const pickupDays = computed(() => daysBetween(filters.pickupStart, filters.pickupEnd));
+const pickupDaysLabel = computed(
+  () => `${pickupDays.value} ${pickupDays.value === 1 ? "day" : "days"}`,
+);
 const loaded = ref<PickupFilters | null>(null);
+const loadedPickupLabel = computed(() => {
+  const f = loaded.value ?? filters;
+  const days = daysBetween(f.pickupStart, f.pickupEnd);
+  return `from ${shortDayYear(f.pickupStart)} to ${shortDayYear(f.pickupEnd)} (${days} ${days === 1 ? "day" : "days"})`;
+});
 const dirty = computed(
   () => loaded.value && JSON.stringify(filters) !== JSON.stringify(loaded.value),
 );
 const error = ref("");
 const loading = ref(false);
+
+const dateMenuOpen = ref(false),
+  dateMenuRef = ref<HTMLElement | null>(null);
+function onDateMenuClickOutside(e: MouseEvent) {
+  if (
+    dateMenuOpen.value &&
+    dateMenuRef.value &&
+    !dateMenuRef.value.contains(e.target as Node)
+  )
+    dateMenuOpen.value = false;
+}
+function presetYesterday() {
+  filters.pickupStart = addDays(today, -1);
+  filters.pickupEnd = today;
+  dateMenuOpen.value = false;
+}
+function presetThisWeek() {
+  filters.pickupStart = mondayOf(today);
+  filters.pickupEnd = today;
+  dateMenuOpen.value = false;
+}
+function presetThisMonth() {
+  filters.pickupStart = `${today.slice(0, 7)}-01`;
+  filters.pickupEnd = today;
+  dateMenuOpen.value = false;
+}
+function presetLastWeek() {
+  const end = addDays(mondayOf(today), -1);
+  filters.pickupStart = addDays(end, -6);
+  filters.pickupEnd = end;
+  dateMenuOpen.value = false;
+}
+function presetLastMonth() {
+  const end = addDays(`${today.slice(0, 7)}-01`, -1);
+  filters.pickupStart = `${end.slice(0, 7)}-01`;
+  filters.pickupEnd = end;
+  dateMenuOpen.value = false;
+}
+onMounted(() => document.addEventListener("mousedown", onDateMenuClickOutside));
+onBeforeUnmount(() =>
+  document.removeEventListener("mousedown", onDateMenuClickOutside),
+);
 
 const paceRows = ref<PaceRow[]>([]);
 const forecast = ref<Forecast | null>(null);
@@ -145,6 +282,8 @@ const months = computed<MonthRow[]>(() => {
     };
   });
 });
+const totalPickupRooms = computed(() => sumKnown(months.value.map((m) => m.pickupRooms)));
+const totalPickupRevenue = computed(() => sumKnown(months.value.map((m) => m.pickupRevenue)));
 
 function monthLabel(month: string) {
   return new Date(`${month}-01T00:00:00Z`).toLocaleDateString("en-GB", {
@@ -168,8 +307,8 @@ function stayRange() {
 
 function saveUrl() {
   const f = loaded.value || filters;
-  router.replace({ query: { pickupDays: String(f.pickupDays) } });
-  saveStoredFilters(STORAGE_KEY, { pickupDays: String(f.pickupDays) });
+  router.replace({ query: { pickupStart: f.pickupStart, pickupEnd: f.pickupEnd } });
+  saveStoredFilters(STORAGE_KEY, { pickupStart: f.pickupStart, pickupEnd: f.pickupEnd });
 }
 
 let requestId = 0;
@@ -208,7 +347,12 @@ async function apply() {
   try {
     const { start, end } = stayRange();
     const r = await axios.get("/api/rms/pace", {
-      params: { start, end, pickupDays: filters.pickupDays },
+      params: {
+        start,
+        end,
+        pickupDays: daysBetween(filters.pickupStart, filters.pickupEnd),
+        asOf: filters.pickupEnd,
+      },
     });
     if (disposed || id !== requestId) return;
     paceRows.value = r.data.rows;

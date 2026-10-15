@@ -73,13 +73,17 @@ def pace():
         start = _date_arg("start", booking_events._today())
         end = _date_arg("end", start + timedelta(days=29))
         pickup_days = int(request.args.get("pickupDays", 7))
+        # Pickup normally compares "today" against pickupDays earlier, but a
+        # caller can pin the comparison's later end to any past date instead
+        # (e.g. "last week"/"last month", not anchored to today).
+        as_of = _date_arg("asOf", booking_events._today())
     except ValueError:
-        return _error("start/end must be YYYY-MM-DD and pickupDays a number", 400)
+        return _error("start/end/asOf must be YYYY-MM-DD and pickupDays a number", 400)
     if end < start or (end - start).days >= MAX_PACE_DAYS:
         return _error(f"Pick an end date on or after the start, at most {MAX_PACE_DAYS} days", 400)
     try:
         options = _pace_options()
-        rows = booking_events.pace_table(start.isoformat(), end.isoformat(),
+        rows = booking_events.pace_table(start.isoformat(), end.isoformat(), today=as_of,
                                          pickup_days=max(1, min(pickup_days, 90)), **options)
     except (ValueError, TypeError) as exc:
         return _error(str(exc), 400)
