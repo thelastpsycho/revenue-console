@@ -10,6 +10,9 @@ DEFAULT_SETTINGS = {
                       "breakfast": 350000, "taxService": 0.21}],
     # Operator-entered targets: the discovered PMS budget endpoint has unverified units.
     "budgets": [],
+    # Mid rate for converting USD-quoted bookings (~4% of volume - see
+    # docs/rms-plan.md) to IDR before they're added to revenue/ADR.
+    "usdIdrRate": 16000,
 }
 
 
@@ -29,7 +32,7 @@ def validate_settings(data):
         "occupancy": _number(thresholds.get("occupancy"), "occupancy", 0, 100),
         "weakPickup": _number(thresholds.get("weakPickup"), "weakPickup", 0, 100000),
         "behindRooms": _number(thresholds.get("behindRooms"), "behindRooms", 0, 100000),
-    }}
+    }, "usdIdrRate": _number(data.get("usdIdrRate"), "usdIdrRate", 1000, 100000)}
     rules = data.get("revenueRules", [])
     budgets = data.get("budgets", [])
     if not isinstance(rules, list) or not 1 <= len(rules) <= 100 or not isinstance(budgets, list) or len(budgets) > 120:
@@ -78,7 +81,9 @@ def get_settings():
     from . import booking_events as be
     with be._db_lock, be._db() as conn:
         value = be._get_meta(conn, "rmsSettings")
-    return json.loads(value) if value else copy.deepcopy(DEFAULT_SETTINGS)
+    # Merge over defaults so settings saved before a new top-level key existed
+    # (e.g. usdIdrRate) still get a usable value until the operator re-saves.
+    return {**copy.deepcopy(DEFAULT_SETTINGS), **(json.loads(value) if value else {})}
 
 
 def save_settings(data):

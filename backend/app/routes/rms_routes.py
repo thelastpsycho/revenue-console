@@ -114,7 +114,8 @@ def pace_pickup_groups():
         options = _pace_options()
         rows = pickup_by_dimension(start.isoformat(), end.isoformat(), dimension, today=as_of,
                                    pickup_days=max(1, min(pickup_days, 90)), room_type=options["room_type"],
-                                   market_id=options["market_id"], channels=options["channels"])
+                                   market_id=options["market_id"], channels=options["channels"],
+                                   company_ids=options["company_ids"])
     except (ValueError, TypeError) as exc:
         return _error(str(exc), 400)
     if limit:
@@ -173,6 +174,14 @@ def _channels_arg():
     return values or None
 
 
+def _company_ids_arg():
+    raw = request.args.get("companyIds")
+    if not raw:
+        return None
+    values = [int(v) for v in raw.split(",") if v]
+    return values or None
+
+
 def _pace_options():
     market = request.args.get("marketId")
     if market:
@@ -186,7 +195,8 @@ def _pace_options():
             raise ValueError("comparisonStart is required for custom comparisons")
         date.fromisoformat(custom)
     return {"room_type": request.args.get("roomType") or None, "market_id": market,
-            "comparison": mode, "comparison_start": custom, "channels": _channels_arg()}
+            "comparison": mode, "comparison_start": custom, "channels": _channels_arg(),
+            "company_ids": _company_ids_arg()}
 
 
 @bp.route('/api/rms/settings', methods=['GET', 'PUT'])
@@ -244,7 +254,7 @@ def pace_breakdown():
             market = int(market)
         result = room_rate_breakdown(start.isoformat(), end.isoformat(),
                                      room_type=request.args.get('roomType') or None, market_id=market,
-                                     channels=_channels_arg())
+                                     channels=_channels_arg(), company_ids=_company_ids_arg())
     except (ValueError, TypeError) as exc:
         return _error(str(exc), 400)
     return jsonify({'status': 'success', **result})
@@ -282,6 +292,12 @@ def online_direct_share():
     except (ValueError, TypeError) as exc:
         return _error(str(exc), 400)
     return jsonify({'status': 'success', **result})
+
+
+@bp.route('/api/rms/channel', methods=['GET'])
+def channel_mix():
+    result = rms_forecast.cached_channel(force=request.args.get("refresh") == "1")
+    return jsonify({"status": "success", **result})
 
 
 @bp.route('/api/rms/briefing', methods=['GET'])

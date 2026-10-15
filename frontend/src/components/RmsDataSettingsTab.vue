@@ -91,6 +91,24 @@
     </RmsCard>
 
     <RmsCard
+      title="Currency"
+      description="USD-quoted bookings (~4% of volume) are converted to IDR at this mid rate before being added to revenue/ADR. Other currencies are still excluded."
+      padded
+    >
+      <label>
+        <span class="field-label">USD/IDR mid rate</span>
+        <input
+          v-model.number="settings.usdIdrRate"
+          type="number"
+          min="1000"
+          max="100000"
+          required
+          class="neu-input w-36"
+        />
+      </label>
+    </RmsCard>
+
+    <RmsCard
       title="Estimated net revenue rules"
       description="Net = max(gross rate − breakfast, 0) / (1 + tax/service). A specific RateType overrides *; a package RateId overrides its type rule. Rules apply by stay date — keep a * rule covering all dates. 0.21 means 21%."
       padded

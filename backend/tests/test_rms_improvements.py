@@ -1,6 +1,7 @@
 """Regression coverage for observed history, honest comparisons and cached reports."""
 import copy
 import json
+import time
 from datetime import date
 
 import pytest
@@ -173,6 +174,47 @@ def test_failed_refresh_preserves_stale_payload_without_poll_retry(monkeypatch):
     assert "provider detail" not in failed["sections"]["hotel"]["error"]
     fc.cached_forecast(date(2026, 10, 1), 7, force=True)
     assert len(DeferredThread.jobs) == count + 4
+
+
+def test_channel_mix_cache_fetches_once_and_shares_one_entry(monkeypatch):
+    DeferredThread.jobs = []
+    monkeypatch.setattr(fc.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(fc, "_refresh_channel", lambda key, lease: None)
+    first = fc.cached_channel()
+    assert first["refreshing"] and first["ota"] == [] and first["sources"] == []
+    assert len(DeferredThread.jobs) == 1
+    fc.cached_channel()  # same key, still leased - no second job
+    assert len(DeferredThread.jobs) == 1
+    with fc._cache_db() as conn:
+        conn.execute("UPDATE forecast_cache SET payload=?, fetched=?, started=NULL, error=NULL WHERE key=?",
+                     (json.dumps({"ota": [{"company": "Booking.com"}], "sources": []}), time.time(), fc.CHANNEL_KEY))
+    ready = fc.cached_channel()
+    assert ready["ota"] == [{"company": "Booking.com"}]
+    assert ready["loaded"] and not ready["refreshing"] and not ready["stale"]
+
+
+def test_channel_mix_failed_refresh_preserves_stale_payload_without_poll_retry(monkeypatch):
+    DeferredThread.jobs = []
+    monkeypatch.setattr(fc.threading, "Thread", DeferredThread)
+    with fc._cache_db() as conn:
+        conn.execute("INSERT INTO forecast_cache(key,payload,fetched) VALUES (?,?,?)",
+                     (fc.CHANNEL_KEY, json.dumps({"ota": [{"company": "Agoda.com"}], "sources": []}), 1))
+
+    def fail(key, lease):
+        with fc._cache_db() as conn:
+            conn.execute("UPDATE forecast_cache SET started=NULL, error=? WHERE key=? AND started=?",
+                         ("PMS report unavailable. Retry refresh; the last successful result is retained.", key, lease))
+    monkeypatch.setattr(fc, "_refresh_channel", fail)
+    first = fc.cached_channel()
+    assert first["ota"] == [{"company": "Agoda.com"}]
+    for target, args in DeferredThread.jobs: target(*args)
+    count = len(DeferredThread.jobs)
+    failed = fc.cached_channel()
+    assert len(DeferredThread.jobs) == count
+    assert failed["ota"] == first["ota"]
+    assert failed["error"]
+    fc.cached_channel(force=True)
+    assert len(DeferredThread.jobs) == count + 1
 
 
 def test_version_history_cache_does_not_leak_across_databases(tmp_path, monkeypatch):

@@ -31,8 +31,10 @@ def test_briefing_uses_matching_windows_currency_and_budget(client):
     assert response.status_code==200
     a,b=response.get_json()['periods']
     assert a['rooms']==14 and b['rooms']==60
-    assert a['occupancy']==20 and a['revenue']==14000000 and a['adr']==2000000
-    assert a['idrCoveragePct']==50 and a['budgetGap']==-7000000
+    # Row 2's USD rate (120) converts at the default usdIdrRate (16000) and counts toward revenue/ADR.
+    usd_revenue = 120*16000*7
+    assert a['occupancy']==20 and a['revenue']==14000000+usd_revenue and a['adr']==pytest.approx((14000000+usd_revenue)/14)
+    assert a['idrCoveragePct']==100 and a['budgetGap']==pytest.approx(14000000+usd_revenue-7*3000000)
     assert response.headers['Server-Timing'].startswith('report;dur=')
 
 

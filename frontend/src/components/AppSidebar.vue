@@ -173,6 +173,7 @@ import {
   EnvelopeIcon,
   PresentationChartLineIcon,
   ArrowTrendingUpIcon,
+  BuildingOffice2Icon,
 } from "@heroicons/vue/24/outline";
 
 defineProps<{ open: boolean }>();
@@ -188,6 +189,7 @@ const navigationAreas = [
       { name: "RMS", href: "/rms", icon: PresentationChartLineIcon },
       { name: "Online segment", href: "/rms/online", icon: ChartBarIcon },
       { name: "Pickup by month", href: "/rms/pick-up", icon: ArrowTrendingUpIcon },
+      { name: "Company analytics", href: "/rms/company-analytics", icon: BuildingOffice2Icon },
     ],
   },
   {

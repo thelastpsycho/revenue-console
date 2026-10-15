@@ -30,6 +30,7 @@ from datetime import date, timedelta
 
 from ..integrations.pms.api_client import PMSApiClient
 from ..integrations.pms.fast_allotment_updater import LABEL_BY_CHECKBOX_VALUE, TYPE_ID_ALIASES
+from . import booking_events as be
 
 # Every raw PMS room-type code these forecast endpoints can return: the 13
 # representative codes allotment pushes to, plus the bed-configuration
@@ -140,6 +141,38 @@ def _room_types(rows):
     return list(merged.values())
 
 
+def _ota_rows(rows):
+    """Per-OTA/online-channel MTD/YTD production, with built-in YoY (StatisticOnlineTravelAgentDistribution)."""
+    return [{
+        "companyId": r.get("CompanyId"), "company": r.get("CompanyName"),
+        "roomsMtd": r.get("RoomNightsMtd"), "revenueMtd": r.get("RevenueMtd"), "adrMtd": r.get("AverageRoomRateMtd"),
+        "roomsYtd": r.get("RoomNightsYtd"), "revenueYtd": r.get("RevenueYtd"), "adrYtd": r.get("AverageRoomRateYtd"),
+        "roomsMtdLy": r.get("RoomNightsMtdLy"), "revenueMtdLy": r.get("RevenueMtdLy"),
+        "roomsYtdLy": r.get("RoomNightsYtdLy"), "revenueYtdLy": r.get("RevenueYtdLy"),
+    } for r in rows]
+
+
+def _source_rows(rows):
+    """Reservation-source (Email, Phone, Walk-in, ...) Today/MTD/YTD production (StatisticSourceOfReservation)."""
+    return [{
+        "id": r.get("Id"), "description": r.get("Description"),
+        "rooms": r.get("RoomNights"), "revenue": r.get("RoomRevenue"),
+        "roomsMtd": r.get("RoomNightsMtd"), "revenueMtd": r.get("RoomRevenueMtd"),
+        "roomsYtd": r.get("RoomNightsYtd"), "revenueYtd": r.get("RoomRevenueYtd"),
+    } for r in rows]
+
+
+def _segment_rows(rows):
+    """Market-segment Today/MTD/YTD actuals (StatisticMarketSegmentWithBudget -
+    despite the name, this returns actuals; no budget figures are present)."""
+    return [{
+        "marketId": r.get("MarketId"), "market": r.get("MarketDescription"),
+        "rooms": r.get("RoomNights"), "revenue": r.get("RoomRevenue"),
+        "roomsMtd": r.get("RoomNightsMtd"), "revenueMtd": r.get("RoomRevenueMtd"),
+        "roomsYtd": r.get("RoomNightsYtd"), "revenueYtd": r.get("RoomRevenueYtd"),
+    } for r in rows]
+
+
 # Section cache: persistent across worker restarts, with database-backed leases.
 # All endpoints remain read-only towards the PMS.
 import json
@@ -232,3 +265,58 @@ def cached_forecast(start, days, force=False, sections=SECTIONS):
     for args in jobs:
         threading.Thread(target=_refresh, args=args, daemon=True, name="rms-forecast").start()
     return result
+
+
+CHANNEL_KEY = "channel"
+
+
+def _refresh_channel(key, lease, client_factory=PMSApiClient):
+    try:
+        client = client_factory().login()
+        trx_date = be._today()
+        ota = _ota_rows(_post(client, "StatisticOnlineTravelAgentDistribution", trx_date, 7))
+        sources = _source_rows(_post(client, "StatisticSourceOfReservation", trx_date, 7))
+        segments = _segment_rows(_post(client, "StatisticMarketSegmentWithBudget", trx_date, 7))
+        ota.sort(key=lambda r: -(r["revenueMtd"] or 0))
+        sources.sort(key=lambda r: -(r["revenueMtd"] or 0))
+        segments.sort(key=lambda r: -(r["revenueMtd"] or 0))
+        payload = json.dumps({"ota": ota, "sources": sources, "segments": segments})
+        with _cache_db() as conn:
+            conn.execute("UPDATE forecast_cache SET payload=?, fetched=?, started=NULL, error=NULL WHERE key=? AND started=?",
+                         (payload, time.time(), key, lease))
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("RMS channel mix failed")
+        with _cache_db() as conn:
+            conn.execute("UPDATE forecast_cache SET started=NULL, error=? WHERE key=? AND started=?",
+                         ("PMS report unavailable. Retry refresh; the last successful result is retained.", key, lease))
+
+
+def cached_channel(force=False):
+    """Hotel-wide OTA + reservation-source + market-segment mix, MTD/YTD as of
+    today - PMS actuals (StatisticOnlineTravelAgentDistribution/
+    StatisticSourceOfReservation/StatisticMarketSegmentWithBudget), not a
+    date-range forecast. Anchored to today rather than any requested
+    stay-date/room/market filter, so every caller shares the one cache entry."""
+    from datetime import datetime, timezone
+    now = time.time()
+    key = CHANNEL_KEY
+    start_job = False
+    with _cache_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM forecast_cache WHERE key=?", (key,)).fetchone()
+        stale = not row or not row["fetched"] or now - row["fetched"] > CACHE_TTL
+        running = bool(row and row["started"] and now - row["started"] < LEASE_SECONDS)
+        if not running and (force or (stale and not (row and row["error"]))):
+            conn.execute("INSERT INTO forecast_cache(key, started) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET started=excluded.started, error=NULL", (key, now))
+            running = True
+            start_job = True
+        payload = json.loads(row["payload"]) if row and row["payload"] else {"ota": [], "sources": [], "segments": []}
+        info = {
+            "loaded": bool(row and row["payload"] is not None), "refreshing": running, "stale": stale,
+            "fetchedAt": datetime.fromtimestamp(row["fetched"], timezone.utc).isoformat() if row and row["fetched"] else None,
+            "error": None if running else row["error"] if row else None,
+        }
+    if start_job:
+        threading.Thread(target=_refresh_channel, args=(key, now), daemon=True, name="rms-channel").start()
+    return {**payload, **info}

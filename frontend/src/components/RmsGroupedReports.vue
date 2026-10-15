@@ -130,8 +130,77 @@
         </p>
       </template>
 
+      <!-- ===== Length of stay ===== -->
+      <template v-if="group === 'lengthOfStay'">
+        <dl class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div v-for="t in lengthOfStayTiles" :key="t.label" class="stat-tile">
+            <dt>{{ t.label }}</dt>
+            <dd>{{ t.value }}</dd>
+          </div>
+        </dl>
+        <RmsCard
+          title="Length of stay"
+          description="Full reservation length in nights, active reservations."
+        >
+          <div class="h-56 p-4">
+            <Chart
+              type="bar"
+              :data="distributionChart(data.behaviour.lengthOfStay)"
+              :options="options"
+            />
+          </div>
+          <table class="data-table border-t border-slate-200">
+            <thead>
+              <tr>
+                <th>Bucket</th>
+                <th class="num">Reservations</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="b in data.behaviour.lengthOfStay" :key="b.label">
+                <td>{{ b.label }}</td>
+                <td class="num">{{ available(b.bookings) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </RmsCard>
+        <p class="text-[11px] text-slate-500">
+          History quality: {{ data.quality }}. Stay length is the full
+          reservation, even if only some nights fall in the selected range.
+        </p>
+      </template>
+
+      <!-- ===== Nationality ===== -->
+      <template v-if="group === 'nationality'">
+        <RmsCard
+          title="Nationality production"
+          description="Not available yet."
+        >
+          <p class="p-4 text-sm text-slate-600">
+            {{
+              data.unavailable.find((u) => u.report === "Nationality production")
+                ?.reason ||
+              "This dimension is not yet stored in the verified booking cache."
+            }}
+          </p>
+        </RmsCard>
+      </template>
+
       <!-- ===== Production ===== -->
       <template v-if="group === 'business'">
+        <dl class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div v-for="t in productionTiles" :key="t.label" class="stat-tile">
+            <dt>{{ t.label }}</dt>
+            <dd :title="t.title">{{ t.value }}</dd>
+            <p
+              v-for="s in t.subs"
+              :key="s.text"
+              :class="['mt-0.5 text-[11px] tabular-nums', s.tone || 'text-slate-500']"
+            >
+              {{ s.text }}
+            </p>
+          </div>
+        </dl>
         <RmsCard
           :title="`Production by ${dimensionLabel.toLowerCase()}`"
           :description="`Stay-night positions · history quality ${data.quality}. ${activeDimension !== 'ratePlan' ? 'Select a row to open its pace.' : ''}`"
@@ -328,6 +397,7 @@ import {
   addDays,
   money,
   moneyShort,
+  vsLy,
   EMPTY,
 } from "../utils/rms";
 interface Metrics {
@@ -372,7 +442,7 @@ interface ReportData {
   unavailable: { report: string; reason: string }[];
 }
 const props = defineProps<{
-  group: "behaviour" | "business";
+  group: "behaviour" | "business" | "lengthOfStay" | "nationality";
   filters: {
     start: string;
     end: string;
@@ -382,17 +452,25 @@ const props = defineProps<{
     comparison: string;
     comparisonStart: string;
     compareWith: "yoy" | "budget";
+    companyIds?: string;
   };
   basis: "gross" | "net";
   labels: Record<string, string>;
+  // Extra production groupings beyond market/rate plan/room type (e.g. company,
+  // on the company-analytics page). Left empty, the Production tab is unchanged.
+  extraDimensions?: { id: string; label: string }[];
+  // Pulls "Length of stay" out of the Booking behaviour tab's two-chart grid
+  // when it has its own dedicated tab elsewhere on the page.
+  splitLengthOfStay?: boolean;
 }>();
 const compareWithBudget = computed(() => props.filters.compareWith === "budget");
 defineEmits<{ drilldown: [dimension: string, id: string] }>();
-const dimensions = [
+const dimensions = computed(() => [
   { id: "market", label: "Market" },
   { id: "ratePlan", label: "Rate plan" },
   { id: "roomType", label: "Room type" },
-];
+  ...(props.extraDimensions || []),
+]);
 const data = ref<ReportData | null>(null),
   loading = ref(false),
   error = ref(""),
@@ -441,7 +519,7 @@ const gapClass = (v: number | null) =>
   v == null ? "" : v > 0 ? "text-emerald-700" : v < 0 ? "text-rose-700" : "";
 const activeDimension = computed(() => dimension.value);
 const dimensionLabel = computed(
-  () => dimensions.find((d) => d.id === dimension.value)?.label || "",
+  () => dimensions.value.find((d) => d.id === dimension.value)?.label || "",
 );
 // The headline pickup column follows the filter's pickup window when the
 // report has it (1/7/30 days); otherwise 7 days.
@@ -463,6 +541,55 @@ const totalRooms = computed(() =>
 );
 const revenue = (r: Metrics) =>
   props.basis === "net" ? r.netRevenue : r.revenue;
+// Budget is only ever populated for the market dimension - other groupings
+// (rate plan/room type/company) fall back to the YoY comparison, same as
+// the production table's own column headers already do.
+const showBudget = computed(() => activeDimension.value === "market" && compareWithBudget.value);
+const sumOrNull = (values: (number | null | undefined)[]) =>
+  values.some((v) => v == null)
+    ? null
+    : values.reduce((s: number, v) => s + (v || 0), 0);
+const totalIdrRooms = computed(() => sumOrNull(productionRows.value.map((r) => r.idrRooms)));
+const totalRevenue = computed(() => sumOrNull(productionRows.value.map((r) => revenue(r))));
+const totalComparisonRooms = computed(() =>
+  showBudget.value
+    ? sumOrNull(productionRows.value.map((r) => r.budget?.rooms ?? null))
+    : sumOrNull(productionRows.value.map((r) => r.comparison?.rooms ?? null)),
+);
+const totalComparisonRevenue = computed(() =>
+  showBudget.value
+    ? sumOrNull(productionRows.value.map((r) => r.budget?.revenue ?? null))
+    : sumOrNull(productionRows.value.map((r) => (r.comparison ? revenue(r.comparison) : null))),
+);
+const totalComparisonIdrRooms = computed(() =>
+  sumOrNull(productionRows.value.map((r) => r.comparison?.idrRooms ?? null)),
+);
+const totalAdr = computed(() => ratio(totalRevenue.value, totalIdrRooms.value));
+const totalComparisonAdr = computed(() =>
+  showBudget.value
+    ? ratio(totalComparisonRevenue.value, totalComparisonRooms.value)
+    : ratio(totalComparisonRevenue.value, totalComparisonIdrRooms.value),
+);
+const comparisonLabel = computed(() => (showBudget.value ? "vs budget" : "vs LY"));
+const productionTiles = computed(() => [
+  {
+    label: "OTB room nights",
+    value: number(totalRooms.value),
+    subs: [vsLy(totalRooms.value, totalComparisonRooms.value, number, comparisonLabel.value)],
+  },
+  {
+    label: props.basis === "net" ? "Est. net revenue" : "Room revenue",
+    value: moneyShort(totalRevenue.value),
+    title: money(totalRevenue.value),
+    subs: [vsLy(totalRevenue.value, totalComparisonRevenue.value, moneyShort, comparisonLabel.value)],
+  },
+  {
+    label: "ADR",
+    value: moneyShort(totalAdr.value),
+    title: money(totalAdr.value),
+    subs: [vsLy(totalAdr.value, totalComparisonAdr.value, moneyShort, comparisonLabel.value)],
+  },
+]);
 const rowName = (r: Production) =>
   activeDimension.value === "roomType" ? props.labels[r.id] || r.name : r.name;
 const behaviourTiles = computed(() => {
@@ -483,17 +610,31 @@ const behaviourTiles = computed(() => {
     },
   ];
 });
+const lengthOfStayTiles = computed(() => {
+  const b = data.value?.behaviour;
+  return [
+    { label: "Active reservations", value: available(b?.bookings ?? null) },
+    {
+      label: "Avg full stay (nights)",
+      value: available(b?.averageLengthOfStay ?? null),
+    },
+  ];
+});
 const distributions = computed(() => [
   {
     title: "Lead time",
     description: "Days between booking and arrival, active reservations.",
     rows: data.value?.behaviour.leadTime || [],
   },
-  {
-    title: "Length of stay",
-    description: "Full reservation length in nights, active reservations.",
-    rows: data.value?.behaviour.lengthOfStay || [],
-  },
+  ...(props.splitLengthOfStay
+    ? []
+    : [
+        {
+          title: "Length of stay",
+          description: "Full reservation length in nights, active reservations.",
+          rows: data.value?.behaviour.lengthOfStay || [],
+        },
+      ]),
 ]);
 const distributionChart = (rows: { label: string; bookings: number }[]) => ({
   labels: rows.map((r) => r.label),

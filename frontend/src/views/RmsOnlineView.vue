@@ -6,21 +6,6 @@
       compact
     />
 
-    <nav class="seg !flex w-full" role="tablist" aria-label="Online sections">
-      <button
-        v-for="t in tabs"
-        :key="t.id"
-        type="button"
-        role="tab"
-        class="seg-btn"
-        :aria-selected="tab === t.id"
-        @click="selectTab(t.id)"
-      >
-        <component :is="t.icon" class="h-4 w-4" />
-        {{ t.label }}
-      </button>
-    </nav>
-
     <form class="filter-bar neu-card relative flex flex-wrap items-end gap-2 p-3" @submit.prevent="apply">
       <div ref="dateMenuRef" class="relative">
         <span class="field-label">Stay dates</span>
@@ -126,6 +111,22 @@
         {{ dirty ? "Apply changes" : "Apply" }}
       </button>
     </form>
+
+    <nav class="seg !flex w-full" role="tablist" aria-label="Online sections">
+      <button
+        v-for="t in tabs"
+        :key="t.id"
+        type="button"
+        role="tab"
+        class="seg-btn"
+        :aria-selected="tab === t.id"
+        @click="selectTab(t.id)"
+      >
+        <component :is="t.icon" class="h-4 w-4" />
+        {{ t.label }}
+      </button>
+    </nav>
+
     <p v-if="error" role="alert" class="alert-error">{{ error }}</p>
 
     <RmsOnlineSourceTab v-if="tab === 'source' && loaded" :filters="loaded" />

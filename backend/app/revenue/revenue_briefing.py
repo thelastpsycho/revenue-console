@@ -1,4 +1,4 @@
-"""Whole-hotel 7/30-day briefing. No implied FX conversion or audited actuals."""
+"""Whole-hotel 7/30-day briefing. No audited actuals."""
 from datetime import timedelta
 from . import booking_events as be, rms_forecast, rms_workspace
 
@@ -51,7 +51,7 @@ def briefing():
             attention.append({'date': r['date'], 'rooms': r['rooms'], 'occupancy': occ,
                               'pickupRooms': r['pickupRooms'], 'reasons': reasons,
                               'comparisonQuality': r['comparisonQuality']})
-    return {'today': today.isoformat(), 'basis': 'Gross quoted IDR room rates; ADR excludes foreign-currency rooms',
+    return {'today': today.isoformat(), 'basis': 'Gross room-rate revenue; USD bookings converted to IDR at the configured mid rate',
             'pickupDays': 7, 'periods': [summarise(rows, capacity, today, n) for n in (7,30)],
             'attention': attention, 'bookingSync': sync['lastSuccessfulSync'], 'bookingStale': sync['stale'],
             'bookingCoverage': sync['coverageFrom'], 'capacityState': hotel_state,

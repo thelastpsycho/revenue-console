@@ -27,12 +27,13 @@ def _blank():
     return {"rooms": 0, "idrRooms": 0, "revenue": 0, "netRevenue": 0}
 
 
-def _add_night(bucket, r, day, rules):
+def _add_night(bucket, r, day, rules, fx_rate):
     bucket["rooms"] += 1
-    if r["currency"] == "IDR":
+    rate = be._idr_rate(r, fx_rate)
+    if rate is not None:
         bucket["idrRooms"] += 1
-        bucket["revenue"] += r["room_rate"]
-        bucket["netRevenue"] += net_rate(r["room_rate"], r.get("rate_type"), day, rules, r.get("rate_id"))
+        bucket["revenue"] += rate
+        bucket["netRevenue"] += net_rate(rate, r.get("rate_type"), day, rules, r.get("rate_id"))
 
 
 @cached_report
@@ -41,7 +42,8 @@ def source_breakdown(start, end, market_id=ONLINE_MARKET_ID, room_type=None, cha
     market segment (default Online) - "where is this demand coming from"."""
     today = be._today().isoformat()
     states = be.state_as_of(be.version_history([(start, end)]), today)
-    rules = get_settings()["revenueRules"]
+    settings = get_settings()
+    rules, fx_rate = settings["revenueRules"], settings["usdIdrRate"]
     totals = defaultdict(_blank)
     names = {}
     for r in states.values():
@@ -54,7 +56,7 @@ def source_breakdown(start, end, market_id=ONLINE_MARKET_ID, room_type=None, cha
         names[key] = r.get("company") or "Unassigned"
         bucket = totals[key]
         for day in nights:
-            _add_night(bucket, r, day, rules)
+            _add_night(bucket, r, day, rules, fx_rate)
     rows = [{"id": key, "name": names[key], **metrics} for key, metrics in totals.items()]
     rows.sort(key=lambda row: -row["rooms"])
     grand = _blank()
@@ -71,7 +73,8 @@ def direct_share(start, end, market_id=ONLINE_MARKET_ID, room_type=None, channel
     today = be._today().isoformat()
     s, e = date.fromisoformat(start), date.fromisoformat(end)
     history = be.version_history([(start, end)])
-    rules = get_settings()["revenueRules"]
+    settings = get_settings()
+    rules, fx_rate = settings["revenueRules"], settings["usdIdrRate"]
     states = be.state_as_of(history, today)
     with be._db_lock, be._db() as conn:
         coverage = be._get_meta(conn, "backfillFrom")
@@ -87,8 +90,8 @@ def direct_share(start, end, market_id=ONLINE_MARKET_ID, room_type=None, channel
             continue
         bucket_id, _ = channel_bucket(r.get("company"))
         for day in nights:
-            _add_night(daily[day][bucket_id], r, day, rules)
-            _add_night(totals[bucket_id], r, day, rules)
+            _add_night(daily[day][bucket_id], r, day, rules, fx_rate)
+            _add_night(totals[bucket_id], r, day, rules, fx_rate)
 
     series = [{"date": (s + timedelta(days=i)).isoformat(),
                **{bid: dict(daily[(s + timedelta(days=i)).isoformat()].get(bid, _blank())) for bid, _ in BUCKET_ORDER}}

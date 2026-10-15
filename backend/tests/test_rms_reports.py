@@ -21,8 +21,9 @@ def test_segment_and_room_type_production_reconcile_with_total():
     report = build_reports('2026-12-02', '2026-12-03')
     assert sum(r['rooms'] for r in report['production']['market']) == 4
     assert sum(r['rooms'] for r in report['production']['roomType']) == 4
-    assert sum(r['idrRooms'] for r in report['production']['market']) == 2
-    assert sum(r['revenue'] for r in report['production']['market']) == 2000000
+    assert sum(r['idrRooms'] for r in report['production']['market']) == 4
+    # Row 2's USD rate (100) converts at the default usdIdrRate (16000) over 2 nights.
+    assert sum(r['revenue'] for r in report['production']['market']) == 2000000 + 100 * 16000 * 2
     assert report['behaviour']['bookings'] == 2
     assert report['behaviour']['averageLengthOfStay'] == 3
 
@@ -134,6 +135,35 @@ def test_pickup_by_dimension_splits_new_booking_by_market_and_company():
         '2026-12-01', '2026-12-01', 'company', pickup_days=7, today=date(2026, 10, 1))}
     assert by_company['5']['name'] == 'Corporate X' and by_company['5']['pickupRooms'] == 1
     assert by_company['unassigned']['pickupRooms'] == 0
+
+
+def test_company_ids_filter_scopes_production_and_breakdown():
+    be.upsert([api_row(1, '2026-09-01', '2026-12-01', '2026-12-02', market_id=8,
+                       company_id=5, company='Corporate X'),
+               api_row(2, '2026-09-01', '2026-12-01', '2026-12-02', market_id=9,
+                       company_id=7, company='Travel Co')])
+    report = build_reports('2026-12-01', '2026-12-01', company_ids=[5])
+    assert report['behaviour']['bookings'] == 1
+    by_company = {r['id']: r for r in report['production']['company']}
+    assert by_company['5']['name'] == 'Corporate X' and by_company['5']['rooms'] == 1
+    assert '7' not in by_company
+
+    breakdown = room_rate_breakdown('2026-12-01', '2026-12-01', company_ids=[7])
+    assert breakdown['total']['rooms'] == 1
+
+    pickup = pickup_by_dimension('2026-12-01', '2026-12-01', 'market',
+                                 pickup_days=7, today=date(2026, 10, 1), company_ids=[5])
+    assert sum(r['rooms'] for r in pickup) == 1
+
+
+def test_company_ids_route_param_scopes_pace_and_reports(client):
+    be.upsert([api_row(1, '2026-09-01', '2026-12-01', '2026-12-02', company_id=5, company='Corporate X'),
+               api_row(2, '2026-09-01', '2026-12-01', '2026-12-02', company_id=7, company='Travel Co')])
+    r = client.get('/api/rms/pace?start=2026-12-01&end=2026-12-01&companyIds=5')
+    assert r.get_json()['rows'][0]['rooms'] == 1
+    r = client.get('/api/rms/reports?start=2026-12-01&end=2026-12-01&companyIds=5,7')
+    assert r.get_json()['behaviour']['bookings'] == 2
+    assert client.get('/api/rms/pace?companyIds=notanumber').status_code == 400
 
 
 def test_pickup_groups_route_validates_and_limits(client):

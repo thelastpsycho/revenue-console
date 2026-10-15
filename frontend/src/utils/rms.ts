@@ -1,3 +1,4 @@
+import type { ChartOptions, ChartTypeRegistry } from "chart.js";
 // Remembers filters/tab across visits (private browsing or a full storage
 // quota just means nothing persists - never worth surfacing as an error).
 const STORAGE_PREFIX = "rc:";
@@ -24,7 +25,6 @@ export interface PaceRow {
   idrRooms: number;
   revenue: number;
   netRevenue: number;
-  revenueUsd: number;
   pickupRooms: number | null;
   pickupRevenue: number | null;
   pickupNetRevenue: number | null;
@@ -71,6 +71,7 @@ export interface Settings {
     taxService: number;
   }[];
   budgets: Budget[];
+  usdIdrRate: number;
 }
 export interface Sync {
   stale: boolean;
@@ -148,6 +149,50 @@ export interface Forecast {
       error: string | null;
     }
   >;
+}
+export interface OtaRow {
+  companyId: number | null;
+  company: string | null;
+  roomsMtd: number | null;
+  revenueMtd: number | null;
+  adrMtd: number | null;
+  roomsYtd: number | null;
+  revenueYtd: number | null;
+  adrYtd: number | null;
+  roomsMtdLy: number | null;
+  revenueMtdLy: number | null;
+  roomsYtdLy: number | null;
+  revenueYtdLy: number | null;
+}
+export interface SourceRow {
+  id: number | null;
+  description: string | null;
+  rooms: number | null;
+  revenue: number | null;
+  roomsMtd: number | null;
+  revenueMtd: number | null;
+  roomsYtd: number | null;
+  revenueYtd: number | null;
+}
+export interface SegmentMixRow {
+  marketId: number | null;
+  market: string | null;
+  rooms: number | null;
+  revenue: number | null;
+  roomsMtd: number | null;
+  revenueMtd: number | null;
+  roomsYtd: number | null;
+  revenueYtd: number | null;
+}
+export interface ChannelMix {
+  ota: OtaRow[];
+  sources: SourceRow[];
+  segments: SegmentMixRow[];
+  loaded: boolean;
+  refreshing: boolean;
+  stale: boolean;
+  fetchedAt: string | null;
+  error: string | null;
 }
 export interface CompanyRow {
   id: string;
@@ -344,6 +389,172 @@ export const breakdownRevenue = (
   m: { revenue: number; netRevenue: number },
   basis: "gross" | "net",
 ) => (basis === "gross" ? m.revenue : m.netRevenue);
+export interface PaceBucket {
+  key: string;
+  rooms: number | null;
+  comparison: number | null;
+  revenue: number | null;
+  comparisonRevenue: number | null;
+  adr: number | null;
+  comparisonAdr: number | null;
+  budgetRooms: number | null;
+  budgetRevenue: number | null;
+  budgetAdr: number | null;
+}
+// Shared daily/weekly/monthly bucketing + chart shaping for a pace table -
+// used by both the main RMS page and any page reusing RmsPaceTab.vue.
+export function paceBuckets(
+  rows: PaceRow[],
+  chartView: string,
+  basis: "gross" | "net",
+): PaceBucket[] {
+  const m = new Map<string, PaceRow[]>();
+  for (const r of rows) {
+    let key = r.date;
+    if (chartView === "monthly") key = key.slice(0, 7);
+    if (chartView === "weekly")
+      key = addDays(key, -((new Date(`${key}T00:00:00Z`).getUTCDay() + 6) % 7));
+    m.set(key, [...(m.get(key) || []), r]);
+  }
+  return [...m].map(([key, rs]) => {
+    const bucketRevenue = sumKnown(
+        rs.map((r) => (currentRooms(r) == null ? null : revenueFor(r, basis))),
+      ),
+      bucketIdrRooms = rs.reduce((s, r) => s + r.idrRooms, 0),
+      bucketComparisonRevenue = sumKnown(
+        rs.map((r) => (basis === "gross" ? r.stlyRevenue : r.stlyNetRevenue)),
+      ),
+      bucketStlyIdrRooms = sumKnown(rs.map((r) => r.stlyIdrRooms)),
+      bucketBudgetRooms = sumKnown(rs.map((r) => r.budgetRooms)),
+      bucketBudgetRevenue = sumKnown(rs.map((r) => r.budgetRevenue));
+    return {
+      key,
+      rooms: sumKnown(rs.map(currentRooms)),
+      comparison: sumKnown(rs.map((r) => r.stlyRooms)),
+      revenue: bucketRevenue,
+      comparisonRevenue: bucketComparisonRevenue,
+      adr: ratio(bucketRevenue, bucketIdrRooms),
+      comparisonAdr: ratio(bucketComparisonRevenue, bucketStlyIdrRooms),
+      budgetRooms: bucketBudgetRooms,
+      budgetRevenue: bucketBudgetRevenue,
+      budgetAdr: ratio(bucketBudgetRevenue, bucketBudgetRooms),
+    };
+  });
+}
+export function paceChartTable(buckets: PaceBucket[], rows: PaceRow[]) {
+  const totalRevenue = sumKnown(buckets.map((x) => x.revenue)),
+    totalComparisonRevenue = sumKnown(buckets.map((x) => x.comparisonRevenue)),
+    totalIdrRooms = rows.reduce((s, r) => s + r.idrRooms, 0),
+    totalStlyIdrRooms = sumKnown(rows.map((r) => r.stlyIdrRooms)),
+    totalBudgetRooms = sumKnown(buckets.map((x) => x.budgetRooms)),
+    totalBudgetRevenue = sumKnown(buckets.map((x) => x.budgetRevenue));
+  return {
+    buckets,
+    totals: {
+      rooms: sumKnown(buckets.map((x) => x.rooms)),
+      comparison: sumKnown(buckets.map((x) => x.comparison)),
+      revenue: totalRevenue,
+      comparisonRevenue: totalComparisonRevenue,
+      adr: ratio(totalRevenue, totalIdrRooms),
+      comparisonAdr: ratio(totalComparisonRevenue, totalStlyIdrRooms),
+      budgetRooms: totalBudgetRooms,
+      budgetRevenue: totalBudgetRevenue,
+      budgetAdr: ratio(totalBudgetRevenue, totalBudgetRooms),
+    },
+  };
+}
+export function paceChartData(buckets: PaceBucket[], compareWithBudget: boolean) {
+  return {
+    labels: buckets.map((b) => b.key),
+    datasets: [
+      {
+        type: "bar" as const,
+        label: "OTB room nights",
+        data: buckets.map((b) => b.rooms),
+        backgroundColor: "#334155",
+        yAxisID: "rooms",
+        order: 2,
+      },
+      compareWithBudget
+        ? {
+            type: "bar" as const,
+            label: "Budget nights (gross)",
+            data: buckets.map((b) => b.budgetRooms),
+            backgroundColor: "#fcd34d",
+            yAxisID: "rooms",
+            order: 2,
+          }
+        : {
+            type: "bar" as const,
+            label: "Comparison nights",
+            data: buckets.map((b) => b.comparison),
+            backgroundColor: "#cbd5e1",
+            yAxisID: "rooms",
+            order: 2,
+          },
+      {
+        type: "line" as const,
+        label: "IDR ADR",
+        data: buckets.map((b) => b.adr),
+        borderColor: "#0f766e",
+        yAxisID: "adr",
+        order: 1,
+      },
+      compareWithBudget
+        ? {
+            type: "line" as const,
+            label: "Budget ADR (gross)",
+            data: buckets.map((b) => b.budgetAdr),
+            borderColor: "#b45309",
+            borderDash: [4, 4],
+            yAxisID: "adr",
+            order: 1,
+          }
+        : {
+            type: "line" as const,
+            label: "Comparison ADR",
+            data: buckets.map((b) => b.comparisonAdr),
+            borderColor: "#64748b",
+            borderDash: [4, 4],
+            yAxisID: "adr",
+            order: 1,
+          },
+    ],
+  };
+}
+export const PACE_CHART_OPTIONS: ChartOptions<keyof ChartTypeRegistry> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  interaction: { mode: "index", intersect: false },
+  scales: {
+    rooms: {
+      position: "left",
+      beginAtZero: true,
+      title: { display: true, text: "Room nights" },
+    },
+    adr: {
+      position: "right",
+      min: 1000000,
+      grid: { drawOnChartArea: false },
+      title: { display: true, text: "ADR (IDR)" },
+    },
+  },
+};
+// Shared "value vs. a comparison figure" tile sub-line (used by stat tiles
+// comparing against last year or budget).
+export function vsLy(
+  cur: number | null,
+  comparison: number | null,
+  fmt: (v: number | null) => string,
+  label = "vs LY",
+) {
+  const d = pctDiff(cur, comparison);
+  if (cur == null) return { text: `${label} \u2014` };
+  return {
+    text: `${pctLabel(d)} ${label} (${fmt(comparison)})`,
+    tone: signClass(d) || undefined,
+  };
+}
 export function csvText(rows: unknown[][]) {
   return (
     "\uFEFF" +

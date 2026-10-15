@@ -18,6 +18,24 @@
       </template>
     </PageHeader>
 
+    <RmsFilterBar
+      v-if="tab !== 'data'"
+      :filters="filters"
+      :dims="dims"
+      :loading="loading"
+      :dirty="!!dirty"
+      :loaded="loaded"
+      :comparison-label="comparisonLabel"
+      :forecast="forecast"
+      :forecast-busy="forecastBusy"
+      :report-sync="reportSync"
+      :sync="sync"
+      :today="today"
+      v-model:basis="basis"
+      @submit="loadAll"
+      @refresh-forecast="refreshForecast"
+    />
+
     <nav class="seg !flex w-full" role="tablist" aria-label="RMS sections">
       <button
         v-for="t in tabs"
@@ -36,22 +54,6 @@
     <p v-if="error" role="alert" class="alert-error">{{ error }}</p>
 
     <template v-if="tab !== 'data'">
-      <RmsFilterBar
-        :filters="filters"
-        :dims="dims"
-        :loading="loading"
-        :dirty="!!dirty"
-        :loaded="loaded"
-        :comparison-label="comparisonLabel"
-        :forecast="forecast"
-        :forecast-busy="forecastBusy"
-        :report-sync="reportSync"
-        :sync="sync"
-        :today="today"
-        v-model:basis="basis"
-        @submit="loadAll"
-        @refresh-forecast="refreshForecast"
-      />
       <RmsOverviewTab
         v-if="tab === 'overview'"
         :loading="loading"
@@ -103,6 +105,12 @@
         :basis-label="basisLabel"
         :label="label"
       />
+      <RmsChannelTab
+        v-if="tab === 'channel'"
+        :channel="channel"
+        :channel-busy="channelBusy"
+        @refresh="refreshChannel"
+      />
       <RmsInventoryTab
         v-if="tab === 'rooms'"
         :forecast="forecast"
@@ -152,6 +160,7 @@ import {
   ArrowTrendingUpIcon,
   ChartPieIcon,
   Cog6ToothIcon,
+  GlobeAltIcon,
   PresentationChartLineIcon,
   Squares2X2Icon,
   TableCellsIcon,
@@ -175,6 +184,7 @@ import axios from "../plugins/axios";
 import PageHeader from "../components/PageHeader.vue";
 import RmsGroupedReports from "../components/RmsGroupedReports.vue";
 import RmsRateBreakdown from "../components/RmsRateBreakdown.vue";
+import RmsChannelTab from "../components/RmsChannelTab.vue";
 import RmsInventoryTab from "../components/RmsInventoryTab.vue";
 import RmsFilterBar from "../components/RmsFilterBar.vue";
 import RmsOverviewTab from "../components/RmsOverviewTab.vue";
@@ -205,6 +215,7 @@ import {
   type Settings,
   type Sync,
   type Forecast,
+  type ChannelMix,
   type Breakdown,
   type Filters,
   type Curve,
@@ -237,6 +248,7 @@ const tabs = [
   { id: "forecast", label: "Forecast", icon: PresentationChartLineIcon },
   { id: "behaviour", label: "Booking behaviour", icon: UserGroupIcon },
   { id: "business", label: "Production", icon: ChartPieIcon },
+  { id: "channel", label: "Channel mix", icon: GlobeAltIcon },
   { id: "rooms", label: "Inventory", icon: TableCellsIcon },
   { id: "data", label: "Data & settings", icon: Cog6ToothIcon },
 ];
@@ -262,7 +274,8 @@ const reportSync = ref<Sync | null>(null);
 const loaded = ref<Filters | null>(null),
   rows = ref<PaceRow[]>([]),
   forecast = ref<Forecast | null>(null),
-  breakdown = ref<Breakdown | null>(null);
+  breakdown = ref<Breakdown | null>(null),
+  channel = ref<ChannelMix | null>(null);
 const dims = reactive<{
   roomTypes: string[];
   markets: { id: number; name: string }[];
@@ -289,6 +302,7 @@ const selectedDate = ref(""),
 let requestId = 0,
   curveId = 0,
   forecastTimer: ReturnType<typeof setTimeout> | undefined,
+  channelTimer: ReturnType<typeof setTimeout> | undefined,
   syncTimer: ReturnType<typeof setTimeout> | undefined,
   disposed = false;
 const label = (code: string) => dims.labels[code] || code;
@@ -296,8 +310,8 @@ const message = (e: any) =>
   e?.response?.data?.message || e?.message || "Request failed";
 const basisLabel = computed(() =>
   basis.value === "gross"
-    ? "Gross quoted room-rate revenue (IDR only)"
-    : "Estimated room-rate revenue net of breakfast and tax/service (IDR only)",
+    ? "Gross quoted room-rate revenue (USD converted to IDR)"
+    : "Estimated room-rate revenue net of breakfast and tax/service (USD converted to IDR)",
 );
 const revenue = (r: PaceRow) => revenueFor(r, basis.value);
 const dirty = computed(
@@ -317,6 +331,7 @@ const comparisonLabel = computed(() =>
 const forecastBusy = computed(() =>
   Object.values(forecast.value?.sections || {}).some((s) => s.refreshing),
 );
+const channelBusy = computed(() => !!channel.value?.refreshing);
 function saveUrl() {
   const q = { ...(loaded.value || filters), tab: tab.value, basis: basis.value };
   router.replace({ query: q });
@@ -417,6 +432,25 @@ async function loadForecast(id: number, f: Filters, refresh = false) {
 }
 function refreshForecast() {
   if (loaded.value) void loadForecast(requestId, loaded.value, true);
+}
+// Channel mix is MTD/YTD-as-of-today PMS actuals, not tied to the pace
+// filters' date range/room type/market, so it's loaded once independently
+// of loadAll rather than refetched on every Apply.
+async function loadChannel(refresh = false) {
+  clearTimeout(channelTimer);
+  try {
+    const r = await axios.get("/api/rms/channel", {
+      params: { refresh: refresh ? "1" : undefined },
+    });
+    if (disposed) return;
+    channel.value = r.data;
+    if (channel.value?.refreshing) channelTimer = setTimeout(() => loadChannel(), 2000);
+  } catch (e) {
+    if (!disposed) error.value = message(e);
+  }
+}
+function refreshChannel() {
+  void loadChannel(true);
 }
 async function pollSync() {
   try {
@@ -900,6 +934,7 @@ function exportCsv() {
 }
 onMounted(async () => {
   void pollSync();
+  void loadChannel();
   try {
     const d = await axios.get("/api/rms/room-types");
     if (disposed) return;
@@ -914,6 +949,7 @@ onBeforeUnmount(() => {
   ++requestId;
   ++curveId;
   clearTimeout(forecastTimer);
+  clearTimeout(channelTimer);
   clearTimeout(syncTimer);
 });
 </script>

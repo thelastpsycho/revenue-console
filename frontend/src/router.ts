@@ -17,6 +17,7 @@ const StopSaleView = () => import("./views/StopSaleView.vue");
 const RmsView = () => import("./views/RmsView.vue");
 const RmsOnlineView = () => import("./views/RmsOnlineView.vue");
 const RmsPickupView = () => import("./views/RmsPickupView.vue");
+const RmsCompanyAnalyticsView = () => import("./views/RmsCompanyAnalyticsView.vue");
 
 const AdministrationView = () => import("./views/AdministrationView.vue");
 
@@ -97,6 +98,11 @@ const router = createRouter({
       path: "/rms/pick-up",
       name: "rms-pickup",
       component: RmsPickupView,
+    },
+    {
+      path: "/rms/company-analytics",
+      name: "rms-company-analytics",
+      component: RmsCompanyAnalyticsView,
     },
   ],
 });

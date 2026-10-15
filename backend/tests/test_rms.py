@@ -83,9 +83,12 @@ def test_on_the_books_respects_booking_and_cancel_dates():
     assert otb("2026-10-04")["2026-10-20"]["rooms"] == 2
     assert otb("2026-10-05")["2026-10-20"]["rooms"] == 1          # cancellation counts from its day
     now = otb("2026-10-11")["2026-10-20"]
-    assert (now["rooms"], now["revenue"], now["revenueUsd"]) == (2, 1_000_000, 120)
-    # netRevenue: row 1's net rate only - the USD room is excluded, same as revenue.
-    assert now["netRevenue"] == pytest.approx((1_000_000 - be.BREAKFAST_IDR) / (1 + be.TAX_SERVICE_RATE))
+    usd_idr = 120.0 * 16000  # default usdIdrRate
+    assert (now["rooms"], now["idrRooms"], now["revenue"]) == (2, 2, pytest.approx(1_000_000 + usd_idr))
+    # netRevenue: both rooms, net of breakfast/tax - the USD room converted at the mid rate first.
+    assert now["netRevenue"] == pytest.approx(
+        (1_000_000 - be.BREAKFAST_IDR) / (1 + be.TAX_SERVICE_RATE) +
+        (usd_idr - be.BREAKFAST_IDR) / (1 + be.TAX_SERVICE_RATE))
     # Night 21 is covered by row 1 only (row 3's stay doesn't reach it, row 2 is cancelled).
     assert otb("2026-10-11")["2026-10-21"]["rooms"] == 1
     assert otb("2026-10-11")["2026-10-21"]["netRevenue"] == pytest.approx(
@@ -104,16 +107,18 @@ def test_ingest_computes_net_rate_net_of_breakfast_and_tax_excludes_usd(data_dir
     assert net_rates[2] is None
 
 
-def test_adr_basis_excludes_usd_nights_and_floors_zero_rate_rooms():
+def test_adr_basis_converts_usd_nights_and_floors_zero_rate_rooms():
     be.upsert([
         api_row(1, "2026-10-01", "2026-10-20", "2026-10-21", rate=1_560_000.0),
         api_row(2, "2026-10-01", "2026-10-20", "2026-10-21", rate=0.0),               # comp: net 0, not negative
         api_row(3, "2026-10-01", "2026-10-20", "2026-10-21", currency="USD", rate=150.0),
     ])
     day = be.pace_table("2026-10-20", "2026-10-20")[0]
-    assert (day["rooms"], day["idrRooms"]) == (3, 2)
-    assert day["netRevenue"] == pytest.approx(1_000_000)               # (1,560,000 - 350,000) / 1.21
-    assert day["netRevenue"] / day["idrRooms"] == pytest.approx(500_000)  # ADR over IDR nights only
+    assert (day["rooms"], day["idrRooms"]) == (3, 3)
+    usd_idr = 150.0 * 16000  # default usdIdrRate
+    expected_net = (1_560_000 - be.BREAKFAST_IDR) / (1 + be.TAX_SERVICE_RATE) + (usd_idr - be.BREAKFAST_IDR) / (1 + be.TAX_SERVICE_RATE)
+    assert day["netRevenue"] == pytest.approx(expected_net)               # (1,560,000 - 350,000)/1.21 + 0 + (USD converted - 350,000)/1.21
+    assert day["netRevenue"] / day["idrRooms"] == pytest.approx(expected_net / 3)
 
 
 def test_ingest_captures_company_id_and_name(data_dir):
@@ -339,3 +344,18 @@ def test_pace_routes(client):
     assert client.get("/api/rms/pace?start=2026-10-20&end=2026-10-21&roomType=DLT").get_json()["rows"][0]["rooms"] == 0
     assert client.get("/api/rms/room-types").get_json()["roomTypes"] == ["PRKG"]
     assert client.post("/api/rms/sync", json={"kind": "nope"}).status_code == 400
+
+
+def test_dimensions_lists_companies_seen_in_bookings():
+    be.upsert([api_row(1, "2026-10-01", "2026-10-20", "2026-10-22", company_id=5, company="Corporate X"),
+               api_row(2, "2026-10-01", "2026-10-20", "2026-10-22", company_id=7, company="Travel Co")])
+    companies = be.dimensions()["companies"]
+    assert {"id": 5, "name": "Corporate X"} in companies
+    assert {"id": 7, "name": "Travel Co"} in companies
+
+
+def test_matches_filters_by_company_ids():
+    row = {"company_id": 5}
+    assert be._matches(row, None, None, company_ids=[5])
+    assert not be._matches(row, None, None, company_ids=[7])
+    assert be._matches(row, None, None, company_ids=None)

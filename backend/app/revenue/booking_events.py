@@ -227,8 +227,10 @@ def _normalize(row):
         "company": row.get("CompanyName"),
         "room_rate": room_rate,
         "currency": currency,
-        # Net of breakfast and tax/service; USD rooms are left NULL since
-        # breakfast is an IDR figure and this app doesn't track an FX rate.
+        # Net of breakfast and tax/service. This stored column is legacy and
+        # unread by current reports (they call rms_workspace.net_rate() fresh
+        # against live settings instead) - left IDR-only rather than updated
+        # to match _idr_rate's USD conversion.
         # Floored at 0: zero-rate (comp/house-use) rooms have no breakfast to take off.
         "net_rate": max(room_rate - BREAKFAST_IDR, 0) / (1 + TAX_SERVICE_RATE) if currency == "IDR" else None,
         "updated_at": row.get("UpdatedDate"),
@@ -540,22 +542,38 @@ def channel_bucket(company):
     return OTHER_BUCKET
 
 
-def _matches(r, room_type, market_id, channels=None):
+def _matches(r, room_type, market_id, channels=None, company_ids=None):
     return (not room_type or r["type_id"] == room_type) and (
         market_id in (None, "") or r["market_id"] == int(market_id)) and (
-        not channels or channel_bucket(r.get("company"))[0] in channels)
+        not channels or channel_bucket(r.get("company"))[0] in channels) and (
+        not company_ids or r.get("company_id") in company_ids)
 
 
 def _empty():
-    return {"rooms": 0, "idrRooms": 0, "revenue": 0, "revenueUsd": 0, "netRevenue": 0}
+    return {"rooms": 0, "idrRooms": 0, "revenue": 0, "netRevenue": 0}
 
 
-def aggregate(states, start, end, as_of, room_type=None, market_id=None, rules=None, channels=None):
+def _idr_rate(r, fx_rate):
+    """IDR-equivalent of a booking's room_rate: as-is for IDR, converted at
+    the operator-set mid rate for USD (~4% of bookings are USD-priced - see
+    docs/rms-plan.md). Any other currency is unhandled and returns None so
+    callers keep excluding it from revenue/ADR."""
+    if r["currency"] == "IDR":
+        return r["room_rate"]
+    if r["currency"] == "USD":
+        return r["room_rate"] * fx_rate
+    return None
+
+
+def aggregate(states, start, end, as_of, room_type=None, market_id=None, rules=None, channels=None, company_ids=None, fx_rate=None):
     from .rms_workspace import net_rate, get_settings
-    rules = rules if rules is not None else get_settings()["revenueRules"]
+    if rules is None or fx_rate is None:
+        settings = get_settings()
+        rules = rules if rules is not None else settings["revenueRules"]
+        fx_rate = fx_rate if fx_rate is not None else settings["usdIdrRate"]
     out = {}
     for r in states.values():
-        if not _active(r, as_of) or not _matches(r, room_type, market_id, channels):
+        if not _active(r, as_of) or not _matches(r, room_type, market_id, channels, company_ids):
             continue
         first, last = max(start, r["arrival_date"]), min(end, (date.fromisoformat(r["departure_date"]) - timedelta(days=1)).isoformat())
         if first > last:
@@ -563,18 +581,17 @@ def aggregate(states, start, end, as_of, room_type=None, market_id=None, rules=N
         for day in _stay_dates(first, (date.fromisoformat(last) + timedelta(days=1)).isoformat()):
             bucket = out.setdefault(day, _empty())
             bucket["rooms"] += 1
-            if r["currency"] == "IDR":
+            rate = _idr_rate(r, fx_rate)
+            if rate is not None:
                 bucket["idrRooms"] += 1
-                bucket["revenue"] += r["room_rate"]
-                bucket["netRevenue"] += net_rate(r["room_rate"], r.get("rate_type"), day, rules, r.get("rate_id"))
-            elif r["currency"] == "USD":
-                bucket["revenueUsd"] += r["room_rate"]
+                bucket["revenue"] += rate
+                bucket["netRevenue"] += net_rate(rate, r.get("rate_type"), day, rules, r.get("rate_id"))
     return out
 
 
-def on_the_books(start, end, as_of, room_type=None, market_id=None, channels=None):
+def on_the_books(start, end, as_of, room_type=None, market_id=None, channels=None, company_ids=None):
     return aggregate(state_as_of(version_history([(start, end)]), as_of), start, end, as_of, room_type, market_id,
-                     channels=channels)
+                     channels=channels, company_ids=company_ids)
 
 
 LY_OFFSET = timedelta(days=364)
@@ -600,9 +617,9 @@ def _quality(as_of, coverage, history):
     return "observed" if first and as_of >= first else "estimated"
 
 
-def _occupied_days(r, start, end, as_of, room_type, market_id, channels):
+def _occupied_days(r, start, end, as_of, room_type, market_id, channels, company_ids=None):
     """ISO day strings in [start,end] where r is active and matches, as of as_of."""
-    if not r or not _active(r, as_of) or not _matches(r, room_type, market_id, channels):
+    if not r or not _active(r, as_of) or not _matches(r, room_type, market_id, channels, company_ids):
         return set()
     first, last = max(start, r["arrival_date"]), min(end, (date.fromisoformat(r["departure_date"]) - timedelta(days=1)).isoformat())
     if first > last:
@@ -610,7 +627,7 @@ def _occupied_days(r, start, end, as_of, room_type, market_id, channels):
     return set(_stay_dates(first, (date.fromisoformat(last) + timedelta(days=1)).isoformat()))
 
 
-def pickup_breakdown_series(previous, current, start, end, before, today, room_type, market_id, channels=None):
+def pickup_breakdown_series(previous, current, start, end, before, today, room_type, market_id, channels=None, company_ids=None):
     """Per-day {newRooms, cancelledRooms, amendedRooms} for the whole
     [start,end] range in one pass over reservations - replaces calling the
     old per-day pickup_breakdown() once per day, which re-diffed every
@@ -619,8 +636,8 @@ def pickup_breakdown_series(previous, current, start, end, before, today, room_t
                for d in _stay_dates(start, (date.fromisoformat(end) + timedelta(days=1)).isoformat())}
     for rid in previous.keys() | current.keys():
         old, cur = previous.get(rid), current.get(rid)
-        old_days = _occupied_days(old, start, end, before, room_type, market_id, channels)
-        cur_days = _occupied_days(cur, start, end, today, room_type, market_id, channels)
+        old_days = _occupied_days(old, start, end, before, room_type, market_id, channels, company_ids)
+        cur_days = _occupied_days(cur, start, end, today, room_type, market_id, channels, company_ids)
         added, removed = cur_days - old_days, old_days - cur_days
         if added:
             key = "newRooms" if cur["reservation_date"] > before else "amendedRooms"
@@ -659,7 +676,7 @@ def _version_segments(versions, observed_from, range_end):
     return segments
 
 
-def final_rooms_series(history, start, end, rules, room_type=None, market_id=None, channels=None):
+def final_rooms_series(history, start, end, rules, room_type=None, market_id=None, channels=None, company_ids=None, fx_rate=None):
     """Per-day actuals "as observed on that stay date itself" (no later
     cancellations/amendments counted) for every day in [start,end] - i.e.
     state_as_of(history, day) aggregated at exactly that diagonal day.
@@ -670,12 +687,13 @@ def final_rooms_series(history, start, end, rules, room_type=None, market_id=Non
     state_as_of + aggregate pass per day. This instead walks each
     reservation's version timeline once and intersects it against the
     as-of-equals-day diagonal directly."""
-    from .rms_workspace import net_rate
+    from .rms_workspace import net_rate, get_settings
+    fx_rate = fx_rate if fx_rate is not None else get_settings()["usdIdrRate"]
     range_end = (date.fromisoformat(end) + timedelta(days=1)).isoformat()
     out = {d: _empty() for d in _stay_dates(start, range_end)}
     for versions in history.values():
         for seg_start, seg_end, payload in _version_segments(versions, history.observed_from, range_end):
-            if not _matches(payload, room_type, market_id, channels):
+            if not _matches(payload, room_type, market_id, channels, company_ids):
                 continue
             lo = max(seg_start, start, payload["arrival_date"])
             hi = min(seg_end, range_end, payload["departure_date"])
@@ -686,18 +704,17 @@ def final_rooms_series(history, start, end, rules, room_type=None, market_id=Non
             for day in _stay_dates(lo, hi):
                 bucket = out[day]
                 bucket["rooms"] += 1
-                if payload["currency"] == "IDR":
+                rate = _idr_rate(payload, fx_rate)
+                if rate is not None:
                     bucket["idrRooms"] += 1
-                    bucket["revenue"] += payload["room_rate"]
-                    bucket["netRevenue"] += net_rate(payload["room_rate"], payload.get("rate_type"), day, rules, payload.get("rate_id"))
-                elif payload["currency"] == "USD":
-                    bucket["revenueUsd"] += payload["room_rate"]
+                    bucket["revenue"] += rate
+                    bucket["netRevenue"] += net_rate(rate, payload.get("rate_type"), day, rules, payload.get("rate_id"))
     return out
 
 
 @cached_report
 def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_days=7,
-               comparison="weekday", comparison_start=None, channels=None):
+               comparison="weekday", comparison_start=None, channels=None, company_ids=None):
     from .rms_workspace import get_settings
     from . import rms_budget
     today = today or _today()
@@ -705,18 +722,19 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
     ly_start = comparison_date(s, comparison, comparison_start, start).isoformat()
     ly_end = comparison_date(e, comparison, comparison_start, start).isoformat()
     history = version_history([(start, end), (ly_start, ly_end)])
-    # Segment budget has no room-type or channel dimension, so those filters
-    # leave no figure that actually matches what's being compared.
-    budget = {} if room_type or channels else rms_budget.daily_totals(start, end, market_id=market_id, basis="gross")
-    rules = get_settings()["revenueRules"]
+    # Segment budget has no room-type, channel or company dimension, so those
+    # filters leave no figure that actually matches what's being compared.
+    budget = {} if room_type or channels or company_ids else rms_budget.daily_totals(start, end, market_id=market_id, basis="gross")
+    settings = get_settings()
+    rules, fx_rate = settings["revenueRules"], settings["usdIdrRate"]
     with _db_lock, _db() as conn:
         coverage = _get_meta(conn, "backfillFrom")
     current_day, prior_day = today.isoformat(), (today - timedelta(days=pickup_days)).isoformat()
     current, previous = state_as_of(history, current_day), state_as_of(history, prior_day)
-    now = aggregate(current, start, end, current_day, room_type, market_id, rules, channels)
-    before = aggregate(previous, start, end, prior_day, room_type, market_id, rules, channels)
+    now = aggregate(current, start, end, current_day, room_type, market_id, rules, channels, company_ids, fx_rate=fx_rate)
+    before = aggregate(previous, start, end, prior_day, room_type, market_id, rules, channels, company_ids, fx_rate=fx_rate)
     breakdown_series = pickup_breakdown_series(previous, current, start, end, prior_day, current_day,
-                                               room_type, market_id, channels)
+                                               room_type, market_id, channels, company_ids)
 
     days_meta = []
     for i in range((e - s).days + 1):
@@ -740,12 +758,12 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
         if m["quality"] != "unavailable":
             as_of_groups.setdefault(m["ly_as_of"], []).append(m["ly"])
     for as_of, lys in as_of_groups.items():
-        bucket = aggregate(state_as_of(history, as_of), min(lys), max(lys), as_of, room_type, market_id, rules, channels)
+        bucket = aggregate(state_as_of(history, as_of), min(lys), max(lys), as_of, room_type, market_id, rules, channels, company_ids, fx_rate=fx_rate)
         for ly in lys:
             stly_by_day[ly] = bucket.get(ly, _empty())
 
     # final's as-of is genuinely different per day (see final_rooms_series).
-    final_by_day = final_rooms_series(history, ly_start, ly_end, rules, room_type, market_id, channels)
+    final_by_day = final_rooms_series(history, ly_start, ly_end, rules, room_type, market_id, channels, company_ids, fx_rate=fx_rate)
 
     out = []
     for m in days_meta:
@@ -778,12 +796,13 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
 
 @cached_report
 def pace_curve(stay_date, max_lead=180, room_type=None, market_id=None,
-               comparison="weekday", comparison_start=None, range_start=None, channels=None):
+               comparison="weekday", comparison_start=None, range_start=None, channels=None, company_ids=None):
     from .rms_workspace import get_settings
     d = date.fromisoformat(stay_date)
     ly = comparison_date(d, comparison, comparison_start, range_start or stay_date)
     history, today = version_history([(stay_date, stay_date), (ly.isoformat(), ly.isoformat())]), _today()
-    rules = get_settings()["revenueRules"]
+    settings = get_settings()
+    rules, fx_rate = settings["revenueRules"], settings["usdIdrRate"]
     with _db_lock, _db() as conn:
         coverage = _get_meta(conn, "backfillFrom")
     def curve(day):
@@ -794,7 +813,8 @@ def pace_curve(stay_date, max_lead=180, room_type=None, market_id=None,
                 continue
             quality = _quality(as_of.isoformat(), coverage, history)
             value = aggregate(state_as_of(history, as_of.isoformat()), day.isoformat(), day.isoformat(),
-                              as_of.isoformat(), room_type, market_id, rules, channels).get(day.isoformat(), _empty())
+                              as_of.isoformat(), room_type, market_id, rules, channels, company_ids,
+                              fx_rate=fx_rate).get(day.isoformat(), _empty())
             points.append({"lead": lead, "asOf": as_of.isoformat(), "quality": quality,
                            "rooms": value["rooms"] if quality != "unavailable" else None,
                            "revenue": value["revenue"] if quality != "unavailable" else None})
@@ -804,15 +824,18 @@ def pace_curve(stay_date, max_lead=180, room_type=None, market_id=None,
 
 
 def dimensions():
-    """Room types and markets seen in the cache, for filter dropdowns."""
+    """Room types, markets and companies seen in the cache, for filter dropdowns."""
     with _db_lock, _db() as conn:
         types = [r["type_id"] for r in conn.execute(
             "SELECT DISTINCT type_id FROM bookings WHERE type_id IS NOT NULL ORDER BY type_id")]
         markets = [{"id": r["market_id"], "name": r["market"]} for r in conn.execute(
             "SELECT market_id, MAX(market) market FROM bookings WHERE market_id IS NOT NULL "
             "GROUP BY market_id ORDER BY market")]
+        companies = [{"id": r["company_id"], "name": r["company"]} for r in conn.execute(
+            "SELECT company_id, MAX(company) company FROM bookings WHERE company_id IS NOT NULL "
+            "GROUP BY company_id ORDER BY company")]
     channels = [{"id": bucket_id, "name": label} for bucket_id, label in BUCKET_ORDER]
-    return {"roomTypes": types, "markets": markets, "channels": channels}
+    return {"roomTypes": types, "markets": markets, "channels": channels, "companies": companies}
 
 
 if __name__ == "__main__":  # python -m app.revenue.booking_events [backfill|daily|weekly] [days]
