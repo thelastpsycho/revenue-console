@@ -6,9 +6,12 @@ Endpoint behaviour confirmed by live probes (2026-10-11, revised 2026-10-15):
   report instead calls it with a `TrxDate`/`TrxDate2` date-range pair, which
   returns the whole range in one request - timed live at 396 days in 20s.
   No chunking needed; see `_post_range`.
-- ReportForecastOccupancyMarketSegment honours `Days` exactly (one row per
-  date per market segment). Not confirmed whether it also accepts a
-  TrxDate/TrxDate2 range - left chunked until that's verified.
+- ReportForecastOccupancyMarketSegment honours `Days` up to a server-side
+  cap of 100 - confirmed live 2026-10-15: `Days=200` and `Days=366` both
+  silently returned the same 100 unique dates as `Days=100`. No TrxDate2
+  range support found (unlike ReportForecastOccupancy), but 100-day chunks
+  still cut a typical 90-day load from ~7 sequential calls to 1 (~10s vs the
+  ~44s the old 14-day chunking took).
 - ReportExpectedRoomOccupied ignores `Days` entirely, but takes a separate
   `Mode` param - a string day-count ("7"/"20"/"30"...), not the enum/bool
   it looks like - that sets the window directly: floored at 7, clamped at
@@ -53,15 +56,13 @@ def _canonicalize_counts(values):
 
 # ReportExpectedRoomOccupied's Mode window, clamped server-side at 30 days.
 ROOM_CHUNK = 30
-# The segment call is slow (~27 s for 30 days, ~44 s for 90), so it's split
-# into chunks fetched in parallel too, keeping a 90-day load well under the
-# ~100 s Cloudflare tunnel request timeout.
-SEGMENT_CHUNK = 14
-# 366 covers a full rolling 12-month window (worst case a leap Feb). The
-# "hotel" section no longer needs a tighter cap now that it's one range
-# call instead of chunked ones; "segments"/"roomTypes"/"availability" still
-# chunk internally and stay slow, so avoid requesting those sections over a
-# wide range.
+# ReportForecastOccupancyMarketSegment's own server-side cap (see module
+# docstring) - a 90-day load now takes 1 chunk instead of 7.
+SEGMENT_CHUNK = 100
+# 366 covers a full rolling 12-month window (worst case a leap Feb). "hotel"
+# is one range call regardless of length; "segments" chunks every 100 days
+# (still slow per-chunk, ~10s each); "roomTypes" chunks every 30 days and
+# stays the slowest of the three - avoid requesting it over a wide range.
 MAX_DAYS = 366
 
 
