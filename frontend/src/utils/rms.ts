@@ -27,6 +27,7 @@ export interface PaceRow {
   revenueUsd: number;
   pickupRooms: number | null;
   pickupRevenue: number | null;
+  pickupNetRevenue: number | null;
   newRooms: number | null;
   cancelledRooms: number | null;
   amendedRooms: number | null;
@@ -155,6 +156,17 @@ export interface CompanyRow {
   idrRooms: number;
   revenue: number;
   netRevenue: number;
+}
+export interface GroupPickupRow {
+  id: string;
+  name: string;
+  rooms: number;
+  idrRooms: number;
+  revenue: number;
+  netRevenue: number;
+  pickupRooms: number;
+  pickupRevenue: number;
+  pickupNetRevenue: number;
 }
 export interface SourceBreakdown {
   start: string;
@@ -322,6 +334,12 @@ export const currentRooms = (r: PaceRow) =>
   r.currentQuality === "unavailable" ? null : r.rooms;
 export const revenueFor = (r: PaceRow, basis: "gross" | "net") =>
   basis === "gross" ? r.revenue : r.netRevenue;
+export const pickupRevenueFor = (r: PaceRow, basis: "gross" | "net") =>
+  basis === "gross" ? r.pickupRevenue : r.pickupNetRevenue;
+export const groupRevenueFor = (r: GroupPickupRow, basis: "gross" | "net") =>
+  basis === "gross" ? r.revenue : r.netRevenue;
+export const groupPickupRevenueFor = (r: GroupPickupRow, basis: "gross" | "net") =>
+  basis === "gross" ? r.pickupRevenue : r.pickupNetRevenue;
 export const breakdownRevenue = (
   m: { revenue: number; netRevenue: number },
   basis: "gross" | "net",

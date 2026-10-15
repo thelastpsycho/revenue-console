@@ -762,6 +762,7 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
             "budgetRevenue": day_budget["revenue"] if day_budget else None,
             "pickupRooms": cur["rooms"] - prev["rooms"] if pickup_quality != "unavailable" else None,
             "pickupRevenue": cur["revenue"] - prev["revenue"] if pickup_quality != "unavailable" else None,
+            "pickupNetRevenue": cur["netRevenue"] - prev["netRevenue"] if pickup_quality != "unavailable" else None,
             **{k: v if pickup_quality != "unavailable" else None for k, v in breakdown.items()},
             "comparisonQuality": m["quality"], "pickupQuality": pickup_quality,
             "currentQuality": _quality(current_day, coverage, history),

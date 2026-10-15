@@ -20,6 +20,8 @@ def _key(r, dimension):
         return str(r['market_id']) if r.get('market_id') is not None else 'unassigned'
     if dimension == 'roomType':
         return r.get('type_id') or 'unassigned'
+    if dimension == 'company':
+        return str(r['company_id']) if r.get('company_id') is not None else (r.get('company') or 'unassigned')
     return r.get('rate_id') or r.get('rate_type') or 'unassigned'
 
 
@@ -97,6 +99,39 @@ def room_rate_breakdown(start, end, room_type=None, market_id=None, channels=Non
             grand[k] += rt[k]
         rt['ratePlans'].sort(key=lambda r: -r['rooms'])
     return {'roomTypes': sorted(room_types.values(), key=lambda r: -r['rooms']), 'total': grand}
+
+
+@cached_report
+def pickup_by_dimension(start, end, dimension, pickup_days=7, today=None, room_type=None, market_id=None, channels=None):
+    """Net pickup by market segment or company over [start,end]: the same
+    before/now OTB split pace_table() uses for its one flattened total,
+    grouped by `dimension` instead - "which segments/companies brought the
+    pickup" rather than just the whole-hotel number."""
+    today = today or be._today()
+    history = be.version_history([(start, end)])
+    rules = get_settings()['revenueRules']
+    current_day, prior_day = today.isoformat(), (today - timedelta(days=pickup_days)).isoformat()
+    current, previous = be.state_as_of(history, current_day), be.state_as_of(history, prior_day)
+    now = _group(current, start, end, current_day, dimension, room_type, market_id, rules, channels)
+    before = _group(previous, start, end, prior_day, dimension, room_type, market_id, rules, channels)
+    names = {}
+    for r in list(current.values()) + list(previous.values()):
+        key = _key(r, dimension)
+        if key in names:
+            continue
+        label = r.get('company') if dimension == 'company' else r.get('market')
+        names[key] = label or ('Unassigned' if key == 'unassigned' else key)
+    rows = []
+    for key in set(now) | set(before):
+        n, b = now.get(key, _blank()), before.get(key, _blank())
+        rows.append({
+            'id': key, 'name': names.get(key, 'Unassigned' if key == 'unassigned' else key),
+            'rooms': n['rooms'], 'idrRooms': n['idrRooms'], 'revenue': n['revenue'], 'netRevenue': n['netRevenue'],
+            'pickupRooms': n['rooms'] - b['rooms'], 'pickupRevenue': n['revenue'] - b['revenue'],
+            'pickupNetRevenue': n['netRevenue'] - b['netRevenue'],
+        })
+    rows.sort(key=lambda row: (-row['pickupRooms'], -row['pickupRevenue']))
+    return rows
 
 
 @cached_report

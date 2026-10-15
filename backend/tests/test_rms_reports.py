@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 
 from app.revenue import booking_events as be
-from app.revenue.rms_reports import build_reports, room_rate_breakdown
+from app.revenue.rms_reports import build_reports, pickup_by_dimension, room_rate_breakdown
 from test_rms import api_row, client
 
 
@@ -119,3 +119,30 @@ def test_breakdown_route_validates_and_returns_totals(client):
     r = client.get('/api/rms/pace/breakdown?start=2026-12-01&end=2026-12-01')
     assert r.status_code == 200 and r.get_json()['total']['rooms'] == 1
     assert client.get('/api/rms/pace/breakdown?start=2026-12-01&end=2026-12-01&marketId=bad').status_code == 400
+
+
+def test_pickup_by_dimension_splits_new_booking_by_market_and_company():
+    be.upsert([api_row(1, '2026-09-01', '2026-12-01', '2026-12-02', market_id=8),
+               api_row(2, '2026-09-30', '2026-12-01', '2026-12-02', market_id=9,
+                       company_id=5, company='Corporate X')])
+    by_market = {r['id']: r for r in pickup_by_dimension(
+        '2026-12-01', '2026-12-01', 'market', pickup_days=7, today=date(2026, 10, 1))}
+    assert by_market['8']['rooms'] == 1 and by_market['8']['pickupRooms'] == 0
+    assert by_market['9']['rooms'] == 1 and by_market['9']['pickupRooms'] == 1
+
+    by_company = {r['id']: r for r in pickup_by_dimension(
+        '2026-12-01', '2026-12-01', 'company', pickup_days=7, today=date(2026, 10, 1))}
+    assert by_company['5']['name'] == 'Corporate X' and by_company['5']['pickupRooms'] == 1
+    assert by_company['unassigned']['pickupRooms'] == 0
+
+
+def test_pickup_groups_route_validates_and_limits(client):
+    be.upsert([api_row(1, '2026-09-01', '2026-12-01', '2026-12-02', market_id=8),
+               api_row(2, '2026-09-30', '2026-12-01', '2026-12-02', market_id=9,
+                       company_id=5, company='Corporate X')])
+    url = '/api/rms/pace/pickup-groups?start=2026-12-01&end=2026-12-01&pickupDays=7&asOf=2026-10-01'
+    r = client.get(url + '&dimension=company&limit=1')
+    assert r.status_code == 200
+    rows = r.get_json()['rows']
+    assert len(rows) == 1 and rows[0]['id'] == '5'
+    assert client.get(url + '&dimension=bad').status_code == 400

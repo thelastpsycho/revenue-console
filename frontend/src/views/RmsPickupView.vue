@@ -70,6 +70,13 @@
           </div>
         </div>
       </div>
+      <label>
+        <span class="field-label">Revenue basis</span>
+        <select v-model="basis" class="neu-input">
+          <option value="gross">Gross IDR</option>
+          <option value="net">Estimated net IDR</option>
+        </select>
+      </label>
       <button :class="['btn-primary px-3 py-1.5 text-xs', dirty && 'ring-2 ring-amber-300']">
         {{ dirty ? "Apply changes" : "Apply" }}
       </button>
@@ -127,10 +134,68 @@
         Apply a pickup start date to load data.
       </template>
     </RmsCard>
+
+    <div class="grid gap-4 lg:grid-cols-2">
+      <RmsCard
+        title="Pickup by segment"
+        :description="`Net pickup ${loadedPickupLabel}, by market segment.`"
+      >
+        <RmsSkeleton v-if="loading" variant="table" :count="6" :columns="3" />
+        <table v-else-if="segmentRows.length" class="data-table">
+          <thead>
+            <tr>
+              <th>Segment</th>
+              <th class="num">Current rooms</th>
+              <th class="num">Pickup rooms</th>
+              <th class="num">Pickup revenue</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in segmentRows" :key="s.id">
+              <td class="whitespace-nowrap font-semibold text-slate-900">{{ s.name }}</td>
+              <td class="num">{{ num(s.rooms) }}</td>
+              <td :class="['num', signClass(s.pickupRooms)]">{{ signed(s.pickupRooms) }}</td>
+              <td class="num" :title="money(groupPickupRevenueFor(s, basis))">
+                {{ signedMoney(groupPickupRevenueFor(s, basis)) }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <template v-if="!loading && !segmentRows.length" #empty>No segment data yet.</template>
+      </RmsCard>
+
+      <RmsCard
+        title="Top 10 company pickup"
+        :description="`Net pickup ${loadedPickupLabel}, by booking company.`"
+      >
+        <RmsSkeleton v-if="loading" variant="table" :count="10" :columns="3" />
+        <table v-else-if="companyRows.length" class="data-table">
+          <thead>
+            <tr>
+              <th>Company</th>
+              <th class="num">Current rooms</th>
+              <th class="num">Pickup rooms</th>
+              <th class="num">Pickup revenue</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="c in companyRows" :key="c.id">
+              <td class="whitespace-nowrap font-semibold text-slate-900">{{ c.name }}</td>
+              <td class="num">{{ num(c.rooms) }}</td>
+              <td :class="['num', signClass(c.pickupRooms)]">{{ signed(c.pickupRooms) }}</td>
+              <td class="num" :title="money(groupPickupRevenueFor(c, basis))">
+                {{ signedMoney(groupPickupRevenueFor(c, basis)) }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <template v-if="!loading && !companyRows.length" #empty>No company data yet.</template>
+      </RmsCard>
+    </div>
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { CalendarDaysIcon } from "@heroicons/vue/24/outline";
 import axios from "../plugins/axios";
@@ -141,12 +206,16 @@ import {
   EMPTY,
   money,
   moneyShort,
+  num,
   percent,
   signed,
   signClass,
   sumKnown,
   ratio,
   currentRooms,
+  revenueFor,
+  pickupRevenueFor,
+  groupPickupRevenueFor,
   hotelToday,
   addDays,
   shortDayYear,
@@ -154,6 +223,7 @@ import {
   saveStoredFilters,
   type PaceRow,
   type Forecast,
+  type GroupPickupRow,
 } from "../utils/rms";
 
 const today = hotelToday(),
@@ -185,6 +255,7 @@ const filters = reactive<PickupFilters>({
   pickupStart: query("pickupStart", addDays(today, -7)) || addDays(today, -7),
   pickupEnd: query("pickupEnd", today) || today,
 });
+const basis = ref<"gross" | "net">(query("basis") === "net" ? "net" : "gross");
 const pickupDays = computed(() => daysBetween(filters.pickupStart, filters.pickupEnd));
 const pickupDaysLabel = computed(
   () => `${pickupDays.value} ${pickupDays.value === 1 ? "day" : "days"}`,
@@ -244,6 +315,8 @@ onBeforeUnmount(() =>
 );
 
 const paceRows = ref<PaceRow[]>([]);
+const segmentRows = ref<GroupPickupRow[]>([]);
+const companyRows = ref<GroupPickupRow[]>([]);
 const forecast = ref<Forecast | null>(null);
 const forecastBusy = computed(() =>
   Object.values(forecast.value?.sections || {}).some((s) => s.refreshing),
@@ -256,9 +329,10 @@ interface MonthRow {
   otbRevenue: number | null;
   occupancy: number | null;
 }
-// Gross OTB revenue for a stay date, gated the same way currentRooms() gates
-// rooms - null while that date's pace data is still "unavailable" quality.
-const currentRevenue = (r: PaceRow) => (currentRooms(r) == null ? null : r.revenue);
+// OTB revenue for a stay date in the selected basis, gated the same way
+// currentRooms() gates rooms - null while that date's pace data is still
+// "unavailable" quality.
+const currentRevenue = (r: PaceRow) => (currentRooms(r) == null ? null : revenueFor(r, basis.value));
 const months = computed<MonthRow[]>(() => {
   const capacities: Record<string, number> = {};
   for (const h of forecast.value?.hotel || []) {
@@ -276,7 +350,7 @@ const months = computed<MonthRow[]>(() => {
     return {
       month,
       pickupRooms: sumKnown(rs.map((r) => r.pickupRooms)),
-      pickupRevenue: sumKnown(rs.map((r) => r.pickupRevenue)),
+      pickupRevenue: sumKnown(rs.map((r) => pickupRevenueFor(r, basis.value))),
       otbRevenue: sumKnown(rs.map(currentRevenue)),
       occupancy: occ == null ? null : occ * 100,
     };
@@ -307,9 +381,11 @@ function stayRange() {
 
 function saveUrl() {
   const f = loaded.value || filters;
-  router.replace({ query: { pickupStart: f.pickupStart, pickupEnd: f.pickupEnd } });
-  saveStoredFilters(STORAGE_KEY, { pickupStart: f.pickupStart, pickupEnd: f.pickupEnd });
+  const q = { pickupStart: f.pickupStart, pickupEnd: f.pickupEnd, basis: basis.value };
+  router.replace({ query: q });
+  saveStoredFilters(STORAGE_KEY, q);
 }
+watch(basis, saveUrl);
 
 let requestId = 0;
 let forecastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -346,20 +422,29 @@ async function apply() {
   void loadForecast(id);
   try {
     const { start, end } = stayRange();
-    const r = await axios.get("/api/rms/pace", {
-      params: {
-        start,
-        end,
-        pickupDays: daysBetween(filters.pickupStart, filters.pickupEnd),
-        asOf: filters.pickupEnd,
-      },
-    });
+    const common = {
+      start,
+      end,
+      pickupDays: daysBetween(filters.pickupStart, filters.pickupEnd),
+      asOf: filters.pickupEnd,
+    };
+    const [pace, segments, companies] = await Promise.all([
+      axios.get("/api/rms/pace", { params: common }),
+      axios.get("/api/rms/pace/pickup-groups", { params: { ...common, dimension: "market" } }),
+      axios.get("/api/rms/pace/pickup-groups", {
+        params: { ...common, dimension: "company", limit: 10 },
+      }),
+    ]);
     if (disposed || id !== requestId) return;
-    paceRows.value = r.data.rows;
+    paceRows.value = pace.data.rows;
+    segmentRows.value = segments.data.rows;
+    companyRows.value = companies.data.rows;
   } catch (e: any) {
     if (id === requestId) {
       error.value = e?.response?.data?.message || "Could not load pickup data";
       paceRows.value = [];
+      segmentRows.value = [];
+      companyRows.value = [];
     }
   } finally {
     if (id === requestId) loading.value = false;

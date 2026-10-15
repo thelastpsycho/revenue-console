@@ -93,6 +93,35 @@ def pace():
                     "bar": rms_workspace.bar_context(start.isoformat(), end.isoformat())})
 
 
+@bp.route('/api/rms/pace/pickup-groups', methods=['GET'])
+def pace_pickup_groups():
+    from ..revenue.rms_reports import pickup_by_dimension
+    try:
+        start = _date_arg("start", booking_events._today())
+        end = _date_arg("end", start + timedelta(days=29))
+        pickup_days = int(request.args.get("pickupDays", 7))
+        as_of = _date_arg("asOf", booking_events._today())
+        limit = request.args.get("limit")
+        limit = int(limit) if limit else None
+    except ValueError:
+        return _error("start/end/asOf must be YYYY-MM-DD, pickupDays/limit numbers", 400)
+    dimension = request.args.get("dimension", "market")
+    if dimension not in ("market", "company"):
+        return _error("dimension must be market or company", 400)
+    if end < start or (end - start).days >= MAX_PACE_DAYS:
+        return _error(f"Pick an end date on or after the start, at most {MAX_PACE_DAYS} days", 400)
+    try:
+        options = _pace_options()
+        rows = pickup_by_dimension(start.isoformat(), end.isoformat(), dimension, today=as_of,
+                                   pickup_days=max(1, min(pickup_days, 90)), room_type=options["room_type"],
+                                   market_id=options["market_id"], channels=options["channels"])
+    except (ValueError, TypeError) as exc:
+        return _error(str(exc), 400)
+    if limit:
+        rows = rows[:limit]
+    return jsonify({"status": "success", "rows": rows})
+
+
 @bp.route('/api/rms/pace/curve', methods=['GET'])
 def pace_curve():
     try:
