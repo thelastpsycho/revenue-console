@@ -55,8 +55,15 @@ def forecast():
     except ValueError:
         return _error("start must be YYYY-MM-DD and days a number", 400)
     if not 1 <= days <= rms_forecast.MAX_DAYS:
-        return _error("days must be between 1 and 90", 400)
-    result = rms_forecast.cached_forecast(start, days, force=request.args.get("refresh") == "1")
+        return _error(f"days must be between 1 and {rms_forecast.MAX_DAYS}", 400)
+    sections_arg = request.args.get("sections")
+    if sections_arg:
+        sections = tuple(s for s in sections_arg.split(",") if s)
+        if not sections or any(s not in rms_forecast.SECTIONS for s in sections):
+            return _error(f"sections must be a subset of {', '.join(rms_forecast.SECTIONS)}", 400)
+    else:
+        sections = rms_forecast.SECTIONS
+    result = rms_forecast.cached_forecast(start, days, force=request.args.get("refresh") == "1", sections=sections)
     return jsonify({"status": "success", **result})
 
 

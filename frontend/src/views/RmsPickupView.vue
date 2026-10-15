@@ -23,7 +23,7 @@
 
     <RmsCard
       title="Pickup by stay month"
-      :description="`Net pickup over the last ${loaded?.pickupDays ?? filters.pickupDays} days = new − cancelled + amendments, in room nights. Occupancy is current OTB divided by room capacity as reported by the PMS (only available ${forecastHorizonDays} days out).`"
+      :description="`Net pickup over the last ${loaded?.pickupDays ?? filters.pickupDays} days = new − cancelled + amendments, in room nights. OTB occupancy and revenue reflect what's currently on the books.`"
     >
       <RmsSkeleton v-if="loading" variant="table" :count="12" :columns="4" />
       <table v-else-if="months.length" class="data-table">
@@ -33,6 +33,7 @@
             <th class="num">Pickup room nights</th>
             <th class="num">Pickup room revenue</th>
             <th class="num">OTB occupancy</th>
+            <th class="num">OTB revenue</th>
           </tr>
         </thead>
         <tbody>
@@ -47,6 +48,9 @@
               {{ m.pickupRevenue == null ? EMPTY : signedMoney(m.pickupRevenue) }}
             </td>
             <td class="num">{{ percent(m.occupancy) }}</td>
+            <td class="num" :title="money(m.otbRevenue)">
+              {{ m.otbRevenue == null ? EMPTY : moneyShort(m.otbRevenue) }}
+            </td>
           </tr>
         </tbody>
       </table>
@@ -84,8 +88,6 @@ const today = hotelToday(),
   route = useRoute(),
   router = useRouter();
 
-const FORECAST_DAYS = 90;
-
 const STORAGE_KEY = "rms-pickup";
 const stored = loadStoredFilters(STORAGE_KEY) || {};
 const query = (k: string, f = "") =>
@@ -103,7 +105,6 @@ const dirty = computed(
 );
 const error = ref("");
 const loading = ref(false);
-const forecastHorizonDays = FORECAST_DAYS;
 
 const paceRows = ref<PaceRow[]>([]);
 const forecast = ref<Forecast | null>(null);
@@ -115,8 +116,12 @@ interface MonthRow {
   month: string;
   pickupRooms: number | null;
   pickupRevenue: number | null;
+  otbRevenue: number | null;
   occupancy: number | null;
 }
+// Gross OTB revenue for a stay date, gated the same way currentRooms() gates
+// rooms - null while that date's pace data is still "unavailable" quality.
+const currentRevenue = (r: PaceRow) => (currentRooms(r) == null ? null : r.revenue);
 const months = computed<MonthRow[]>(() => {
   const capacities: Record<string, number> = {};
   for (const h of forecast.value?.hotel || []) {
@@ -135,6 +140,7 @@ const months = computed<MonthRow[]>(() => {
       month,
       pickupRooms: sumKnown(rs.map((r) => r.pickupRooms)),
       pickupRevenue: sumKnown(rs.map((r) => r.pickupRevenue)),
+      otbRevenue: sumKnown(rs.map(currentRevenue)),
       occupancy: occ == null ? null : occ * 100,
     };
   });
@@ -150,14 +156,14 @@ function monthLabel(month: string) {
 const signedMoney = (v: number) => `${v > 0 ? "+" : ""}${moneyShort(v)}`;
 
 // Rolling 12 months: this stay month plus the next 11. A 12-calendar-month
-// span never exceeds 365 days, staying under the API's 366-day limit.
+// span never exceeds 366 days, matching the forecast API's cap - also used
+// for the forecast request so occupancy covers the same months pace does.
 function stayRange() {
   const start = `${today.slice(0, 7)}-01`;
   const d = new Date(`${start}T00:00:00Z`);
-  const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 12, 0))
-    .toISOString()
-    .slice(0, 10);
-  return { start, end };
+  const endDate = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 12, 0));
+  const days = Math.round((endDate.getTime() - d.getTime()) / 86400000) + 1;
+  return { start, end: endDate.toISOString().slice(0, 10), days };
 }
 
 function saveUrl() {
@@ -176,8 +182,12 @@ let disposed = false;
 async function loadForecast(id: number) {
   clearTimeout(forecastTimer);
   try {
+    const { start, days } = stayRange();
     const r = await axios.get<{ status: string } & Forecast>("/api/rms/forecast", {
-      params: { start: today, days: FORECAST_DAYS },
+      // Occupancy only needs room capacity, which lives in the "hotel"
+      // section - skip the segments/roomTypes/availability reports this
+      // page never reads.
+      params: { start, days, sections: "hotel" },
     });
     if (disposed || id !== requestId) return;
     forecast.value = r.data;

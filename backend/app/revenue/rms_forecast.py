@@ -1,10 +1,14 @@
 """PMS forecast sections with a persistent stale-while-refresh cache.
 
-Endpoint behaviour confirmed by live probes (2026-10-11):
-- ReportForecastOccupancy always returns 7 days whatever `Days` says, but
-  honours any TrxDate, so longer horizons are fetched in 7-day chunks.
+Endpoint behaviour confirmed by live probes (2026-10-11, revised 2026-10-15):
+- ReportForecastOccupancy was earlier assumed capped at 7 days per call
+  (true for the `Days` param), but the PMS UI's own "Forecast Occupancy"
+  report instead calls it with a `TrxDate`/`TrxDate2` date-range pair, which
+  returns the whole range in one request - timed live at 396 days in 20s.
+  No chunking needed; see `_post_range`.
 - ReportForecastOccupancyMarketSegment honours `Days` exactly (one row per
-  date per market segment).
+  date per market segment). Not confirmed whether it also accepts a
+  TrxDate/TrxDate2 range - left chunked until that's verified.
 - ReportExpectedRoomOccupied ignores `Days` entirely, but takes a separate
   `Mode` param - a string day-count ("7"/"20"/"30"...), not the enum/bool
   it looks like - that sets the window directly: floored at 7, clamped at
@@ -47,22 +51,31 @@ def _canonicalize_counts(values):
     return out
 
 
-CHUNK = 7
 # ReportExpectedRoomOccupied's Mode window, clamped server-side at 30 days.
 ROOM_CHUNK = 30
 # The segment call is slow (~27 s for 30 days, ~44 s for 90), so it's split
 # into chunks fetched in parallel too, keeping a 90-day load well under the
 # ~100 s Cloudflare tunnel request timeout.
 SEGMENT_CHUNK = 14
-MAX_DAYS = 90
+# 366 covers a full rolling 12-month window (worst case a leap Feb). The
+# "hotel" section no longer needs a tighter cap now that it's one range
+# call instead of chunked ones; "segments"/"roomTypes"/"availability" still
+# chunk internally and stay slow, so avoid requesting those sections over a
+# wide range.
+MAX_DAYS = 366
 
 
-def _starts(start, days, chunk=CHUNK):
+def _starts(start, days, chunk):
     return [start + timedelta(days=i) for i in range(0, days, chunk)]
 
 
-def _post(client, name, trx_date, days=CHUNK):
+def _post(client, name, trx_date, days):
     return client._api_post(name, {"TrxDate": trx_date.isoformat(), "Days": days,
+                                   "HotelId": client.hotel_id, "UserId": client.user_id})
+
+
+def _post_range(client, name, start, end):
+    return client._api_post(name, {"TrxDate": start.isoformat(), "TrxDate2": end.isoformat(),
                                    "HotelId": client.hotel_id, "UserId": client.user_id})
 
 
@@ -167,13 +180,13 @@ def fetch_section(start, days, section, client_factory=PMSApiClient):
         rows = [{"date": r["Date"][:10] if "Date" in r else r["TrxDate"][:10], "values": _canonicalize_counts(
             {k: v for k, v in r.items() if isinstance(v, (int, float)) and k not in ("HotelId", "ROW_ID")})}
             for r in client.get_available_room_inventory(start.isoformat(), days)]
+    elif section == "hotel":
+        rows = _hotel(_post_range(client, "ReportForecastOccupancy", start, end))
     else:
-        chunk = CHUNK if section == "hotel" else SEGMENT_CHUNK
-        name = "ReportForecastOccupancy" if section == "hotel" else "ReportForecastOccupancyMarketSegment"
         # A single session stays on its owning thread; sections run concurrently.
-        raw = [r for s in _starts(start, days, chunk)
-               for r in _post(client, name, s, min(chunk, (end - s).days + 1))]
-        rows = (_hotel if section == "hotel" else _segments)(raw)
+        raw = [r for s in _starts(start, days, SEGMENT_CHUNK)
+               for r in _post(client, "ReportForecastOccupancyMarketSegment", s, min(SEGMENT_CHUNK, (end - s).days + 1))]
+        rows = _segments(raw)
     return sorted((r for r in rows if start.isoformat() <= r["date"] <= end.isoformat()), key=lambda r: r["date"])
 
 
