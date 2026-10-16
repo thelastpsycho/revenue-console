@@ -63,7 +63,9 @@
               :title="
                 item.href === SCHEDULE_PAGE && scheduleBadge
                   ? `${item.name} — ${scheduleBadge.title}`
-                  : item.name
+                  : item.shortcut
+                    ? `${item.name} (${item.shortcut})`
+                    : item.name
               "
               @click="$emit('close')"
               :class="[
@@ -174,6 +176,7 @@ import {
   PresentationChartLineIcon,
   ArrowTrendingUpIcon,
   BuildingOffice2Icon,
+  TableCellsIcon,
 } from "@heroicons/vue/24/outline";
 
 defineProps<{ open: boolean }>();
@@ -181,7 +184,19 @@ defineEmits<{ (e: "close"): void }>();
 
 const route = useRoute();
 
-const navigationAreas = [
+interface NavItem {
+  name: string;
+  href: string;
+  icon: typeof HomeIcon;
+  // Shown as a title-tooltip hint, e.g. "g i" for the global "go to" chord.
+  shortcut?: string;
+  children?: { name: string; href: string }[];
+}
+interface NavArea {
+  name: string;
+  items: NavItem[];
+}
+const navigationAreas: NavArea[] = [
   {
     name: "Revenue Insights",
     items: [
@@ -195,6 +210,7 @@ const navigationAreas = [
   {
     name: "Distribution Operations",
     items: [
+      { name: "Inventory tables", href: "/data?tab=combined", icon: TableCellsIcon, shortcut: "g i" },
       { name: "Automation", href: "/fast-api-pipeline", icon: BoltIcon },
       { name: "Run history", href: "/fast-pipeline-history", icon: ClockIcon },
       { name: "Stop sale", href: "/stop-sale", icon: EnvelopeIcon },

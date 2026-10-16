@@ -129,6 +129,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import axios from '../plugins/axios'
 import * as XLSX from 'xlsx'
 import {
@@ -171,7 +172,13 @@ const tabs = [
   { id: 'combined', name: 'Combined', icon: ArrowsRightLeftIcon, description: 'Combined inventory from all available sources.' },
   { id: 'allocation', name: 'Allocation', icon: CalculatorIcon, description: 'Calculated daily inventory allocation and BAR rates.' }
 ]
-const activeTab = ref('pms-raw')
+// Deep-linkable via ?tab=<id> (e.g. /data?tab=combined), so a sidebar link
+// or bookmark can jump straight to a specific tab instead of always PMS Raw.
+const route = useRoute()
+const requestedTab = route.query.tab
+const activeTab = ref(
+  tabs.some((t) => t.id === requestedTab) ? (requestedTab as string) : 'pms-raw',
+)
 
 // Sorting refs
 const sortColumn = ref('')
