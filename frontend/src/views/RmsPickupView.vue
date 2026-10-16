@@ -323,19 +323,24 @@ function daysBetween(startIso: string, endIso: string) {
   const days = Math.round((Date.parse(endIso) - Date.parse(startIso)) / 86400000);
   return Math.max(1, Math.min(MAX_PICKUP_DAYS, days));
 }
-// "Previous period" shifts the pickup window back by its own length; "last
-// year" shifts both ends back 364 days (weekday-aligned, matching the LY
-// convention booking_events.comparison_date uses elsewhere) - either way the
-// comparison window is the same length, so its pace rows line up 1:1 by
-// date with the primary window's rows (same stay-date range, different asOf).
+// "Previous period" shifts the pickup window back by its own length and
+// keeps looking at the same forward-looking stay dates (it's about recent
+// booking momentum). "Last year" shifts both the pickup window *and* the
+// stay-date range back 364 days (weekday-aligned, matching the LY convention
+// booking_events.comparison_date uses elsewhere) - without shifting the stay
+// range too, "last year" would mean "bookings captured a year ago for stay
+// dates that, back then, were over a year away" - always ~zero, since no one
+// books that far ahead. shiftDays carries that stay-range offset so callers
+// can shift the stay range and later realign comparison rows back onto the
+// current calendar.
 function comparisonWindow(mode: CompareMode, start: string, end: string) {
   if (mode === "previous") {
     const len = daysBetween(start, end);
     const cmpEnd = addDays(start, -1);
-    return { start: addDays(cmpEnd, -(len - 1)), end: cmpEnd };
+    return { start: addDays(cmpEnd, -(len - 1)), end: cmpEnd, shiftDays: 0 };
   }
   if (mode === "last_year") {
-    return { start: addDays(start, -364), end: addDays(end, -364) };
+    return { start: addDays(start, -364), end: addDays(end, -364), shiftDays: 364 };
   }
   return null;
 }
@@ -410,6 +415,11 @@ const paceRowsCompare = ref<PaceRow[]>([]);
 const segmentCompareById = ref<Map<string, GroupPickupRow>>(new Map());
 const companyCompareById = ref<Map<string, GroupPickupRow>>(new Map());
 const loadedCompareWindow = ref<{ start: string; end: string } | null>(null);
+// How far back the comparison's stay-date range was shifted (0 for
+// "previous period", 364 for "last year") - needed to realign comparison
+// pace rows, whose dates are themselves shifted, back onto the current
+// calendar's month buckets.
+const loadedCompareShiftDays = ref(0);
 const loadedCompare = computed(() => loaded.value?.compare ?? "none");
 const comparisonLabel = computed(() =>
   loadedCompare.value === "previous" ? "vs previous period" : "vs last year",
@@ -442,14 +452,19 @@ interface MonthRow {
 // currentRooms() gates rooms - null while that date's pace data is still
 // "unavailable" quality.
 const currentRevenue = (r: PaceRow) => (currentRooms(r) == null ? null : revenueFor(r, basis.value));
-// The comparison window shares the primary window's stay-date range (start,
-// end) and only shifts asOf, so its pace rows land on the exact same dates -
-// a single map lets months below pull in the matching comparison figures.
+// For "last year", the comparison's stay-date range is itself shifted back
+// 364 days, so its pace rows land on dates 364 days earlier than the
+// primary rows they correspond to - look up a primary date's match by
+// applying that same shift, rather than a literal date match.
 const compareByDate = computed(() => {
   const m = new Map<string, PaceRow>();
   for (const r of paceRowsCompare.value) m.set(r.date, r);
   return m;
 });
+function compareRowFor(date: string) {
+  const key = loadedCompareShiftDays.value ? addDays(date, -loadedCompareShiftDays.value) : date;
+  return compareByDate.value.get(key);
+}
 const months = computed<MonthRow[]>(() => {
   const capacities: Record<string, number> = {};
   for (const h of forecast.value?.hotel || []) {
@@ -464,9 +479,7 @@ const months = computed<MonthRow[]>(() => {
     const otbRooms = sumKnown(rs.map(currentRooms)),
       capacity = sumKnown(rs.map((r) => capacities[r.date] ?? null)),
       occ = ratio(otbRooms, capacity);
-    const cmpRs = rs
-      .map((r) => compareByDate.value.get(r.date))
-      .filter((r): r is PaceRow => !!r);
+    const cmpRs = rs.map((r) => compareRowFor(r.date)).filter((r): r is PaceRow => !!r);
     return {
       month,
       pickupRooms: sumKnown(rs.map((r) => r.pickupRooms)),
@@ -576,9 +589,15 @@ async function apply() {
     };
     const cmp = comparisonWindow(filters.compare, filters.pickupStart, filters.pickupEnd);
     const cmpCommon = cmp
-      ? { start, end, pickupDays: daysBetween(cmp.start, cmp.end), asOf: cmp.end }
+      ? {
+          start: cmp.shiftDays ? addDays(start, -cmp.shiftDays) : start,
+          end: cmp.shiftDays ? addDays(end, -cmp.shiftDays) : end,
+          pickupDays: daysBetween(cmp.start, cmp.end),
+          asOf: cmp.end,
+        }
       : null;
     loadedCompareWindow.value = cmp;
+    loadedCompareShiftDays.value = cmp?.shiftDays ?? 0;
     const requests = [
       axios.get("/api/rms/pace", { params: common }),
       axios.get("/api/rms/pace/pickup-groups", { params: { ...common, dimension: "market" } }),
