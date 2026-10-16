@@ -77,10 +77,22 @@
           <option value="net">Estimated net IDR</option>
         </select>
       </label>
+      <label>
+        <span class="field-label">Compare with</span>
+        <select v-model="filters.compare" class="neu-input">
+          <option value="none">None</option>
+          <option value="previous">Previous period</option>
+          <option value="last_year">Same period last year</option>
+        </select>
+      </label>
       <button :class="['btn-primary px-3 py-1.5 text-xs', dirty && 'ring-2 ring-amber-300']">
         {{ dirty ? "Apply changes" : "Apply" }}
       </button>
     </form>
+    <p v-if="loadedCompareWindow" class="text-xs text-slate-500">
+      Comparing against {{ shortDayYear(loadedCompareWindow.start) }} –
+      {{ shortDayYear(loadedCompareWindow.end) }}
+    </p>
     <p v-if="error" role="alert" class="alert-error">{{ error }}</p>
 
     <RmsSkeleton v-if="loading" variant="tiles" :count="2" />
@@ -88,12 +100,24 @@
       <div class="stat-tile">
         <dt>Total room nights pickup</dt>
         <dd :class="signClass(totalPickupRooms)">{{ signed(totalPickupRooms) }}</dd>
+        <p
+          v-if="loadedCompare !== 'none'"
+          :class="['mt-0.5 text-[11px] tabular-nums', roomsVsCompare.tone || 'text-slate-500']"
+        >
+          {{ roomsVsCompare.text }}
+        </p>
       </div>
       <div class="stat-tile">
         <dt>Total revenue pickup</dt>
         <dd :title="money(totalPickupRevenue)">
           {{ totalPickupRevenue == null ? EMPTY : signedMoney(totalPickupRevenue) }}
         </dd>
+        <p
+          v-if="loadedCompare !== 'none'"
+          :class="['mt-0.5 text-[11px] tabular-nums', revenueVsCompare.tone || 'text-slate-500']"
+        >
+          {{ revenueVsCompare.text }}
+        </p>
       </div>
     </dl>
 
@@ -108,6 +132,12 @@
             <th>Month</th>
             <th class="num">Pickup room nights</th>
             <th class="num">Pickup room revenue</th>
+            <th v-if="loadedCompare !== 'none'" class="num">
+              {{ comparisonShortLabel }} room nights
+            </th>
+            <th v-if="loadedCompare !== 'none'" class="num">
+              {{ comparisonShortLabel }} room revenue
+            </th>
             <th class="num">OTB occupancy</th>
             <th class="num">OTB revenue</th>
           </tr>
@@ -122,6 +152,12 @@
             </td>
             <td class="num" :title="money(m.pickupRevenue)">
               {{ m.pickupRevenue == null ? EMPTY : signedMoney(m.pickupRevenue) }}
+            </td>
+            <td v-if="loadedCompare !== 'none'" :class="['num', signClass(m.pickupRoomsCompare)]">
+              {{ signed(m.pickupRoomsCompare) }}
+            </td>
+            <td v-if="loadedCompare !== 'none'" class="num" :title="money(m.pickupRevenueCompare)">
+              {{ m.pickupRevenueCompare == null ? EMPTY : signedMoney(m.pickupRevenueCompare) }}
             </td>
             <td class="num">{{ percent(m.occupancy) }}</td>
             <td class="num" :title="money(m.otbRevenue)">
@@ -148,6 +184,8 @@
               <th class="num">Current rooms</th>
               <th class="num">Pickup rooms</th>
               <th class="num">Pickup revenue</th>
+              <th v-if="loadedCompare !== 'none'" class="num">{{ comparisonShortLabel }} rooms</th>
+              <th v-if="loadedCompare !== 'none'" class="num">{{ comparisonShortLabel }} revenue</th>
             </tr>
           </thead>
           <tbody>
@@ -157,6 +195,19 @@
               <td :class="['num', signClass(s.pickupRooms)]">{{ signed(s.pickupRooms) }}</td>
               <td class="num" :title="money(groupPickupRevenueFor(s, basis))">
                 {{ signedMoney(groupPickupRevenueFor(s, basis)) }}
+              </td>
+              <td
+                v-if="loadedCompare !== 'none'"
+                :class="['num', signClass(compareRoomsFor(segmentCompareById, s.id))]"
+              >
+                {{ signed(compareRoomsFor(segmentCompareById, s.id)) }}
+              </td>
+              <td v-if="loadedCompare !== 'none'" class="num">
+                {{
+                  compareRevenueFor(segmentCompareById, s.id, basis) == null
+                    ? EMPTY
+                    : signedMoney(compareRevenueFor(segmentCompareById, s.id, basis)!)
+                }}
               </td>
             </tr>
           </tbody>
@@ -176,6 +227,8 @@
               <th class="num">Current rooms</th>
               <th class="num">Pickup rooms</th>
               <th class="num">Pickup revenue</th>
+              <th v-if="loadedCompare !== 'none'" class="num">{{ comparisonShortLabel }} rooms</th>
+              <th v-if="loadedCompare !== 'none'" class="num">{{ comparisonShortLabel }} revenue</th>
             </tr>
           </thead>
           <tbody>
@@ -185,6 +238,19 @@
               <td :class="['num', signClass(c.pickupRooms)]">{{ signed(c.pickupRooms) }}</td>
               <td class="num" :title="money(groupPickupRevenueFor(c, basis))">
                 {{ signedMoney(groupPickupRevenueFor(c, basis)) }}
+              </td>
+              <td
+                v-if="loadedCompare !== 'none'"
+                :class="['num', signClass(compareRoomsFor(companyCompareById, c.id))]"
+              >
+                {{ signed(compareRoomsFor(companyCompareById, c.id)) }}
+              </td>
+              <td v-if="loadedCompare !== 'none'" class="num">
+                {{
+                  compareRevenueFor(companyCompareById, c.id, basis) == null
+                    ? EMPTY
+                    : signedMoney(compareRevenueFor(companyCompareById, c.id, basis)!)
+                }}
               </td>
             </tr>
           </tbody>
@@ -221,6 +287,7 @@ import {
   shortDayYear,
   loadStoredFilters,
   saveStoredFilters,
+  vsLy,
   type PaceRow,
   type Forecast,
   type GroupPickupRow,
@@ -243,17 +310,39 @@ const stored = loadStoredFilters(STORAGE_KEY) || {};
 const query = (k: string, f = "") =>
   typeof route.query[k] === "string" ? String(route.query[k]) : (stored[k] ?? f);
 
+type CompareMode = "none" | "previous" | "last_year";
+function validCompareMode(v: string): CompareMode {
+  return v === "previous" || v === "last_year" ? v : "none";
+}
 interface PickupFilters {
   pickupStart: string;
   pickupEnd: string;
+  compare: CompareMode;
 }
 function daysBetween(startIso: string, endIso: string) {
   const days = Math.round((Date.parse(endIso) - Date.parse(startIso)) / 86400000);
   return Math.max(1, Math.min(MAX_PICKUP_DAYS, days));
 }
+// "Previous period" shifts the pickup window back by its own length; "last
+// year" shifts both ends back 364 days (weekday-aligned, matching the LY
+// convention booking_events.comparison_date uses elsewhere) - either way the
+// comparison window is the same length, so its pace rows line up 1:1 by
+// date with the primary window's rows (same stay-date range, different asOf).
+function comparisonWindow(mode: CompareMode, start: string, end: string) {
+  if (mode === "previous") {
+    const len = daysBetween(start, end);
+    const cmpEnd = addDays(start, -1);
+    return { start: addDays(cmpEnd, -(len - 1)), end: cmpEnd };
+  }
+  if (mode === "last_year") {
+    return { start: addDays(start, -364), end: addDays(end, -364) };
+  }
+  return null;
+}
 const filters = reactive<PickupFilters>({
   pickupStart: query("pickupStart", addDays(today, -7)) || addDays(today, -7),
   pickupEnd: query("pickupEnd", today) || today,
+  compare: validCompareMode(query("compare")),
 });
 const basis = ref<"gross" | "net">(query("basis") === "net" ? "net" : "gross");
 const pickupDays = computed(() => daysBetween(filters.pickupStart, filters.pickupEnd));
@@ -317,6 +406,24 @@ onBeforeUnmount(() =>
 const paceRows = ref<PaceRow[]>([]);
 const segmentRows = ref<GroupPickupRow[]>([]);
 const companyRows = ref<GroupPickupRow[]>([]);
+const paceRowsCompare = ref<PaceRow[]>([]);
+const segmentCompareById = ref<Map<string, GroupPickupRow>>(new Map());
+const companyCompareById = ref<Map<string, GroupPickupRow>>(new Map());
+const loadedCompareWindow = ref<{ start: string; end: string } | null>(null);
+const loadedCompare = computed(() => loaded.value?.compare ?? "none");
+const comparisonLabel = computed(() =>
+  loadedCompare.value === "previous" ? "vs previous period" : "vs last year",
+);
+const comparisonShortLabel = computed(() =>
+  loadedCompare.value === "previous" ? "Previous period" : "Last year",
+);
+function compareRoomsFor(map: Map<string, GroupPickupRow>, id: string) {
+  return map.get(id)?.pickupRooms ?? null;
+}
+function compareRevenueFor(map: Map<string, GroupPickupRow>, id: string, basis: "gross" | "net") {
+  const row = map.get(id);
+  return row ? groupPickupRevenueFor(row, basis) : null;
+}
 const forecast = ref<Forecast | null>(null);
 const forecastBusy = computed(() =>
   Object.values(forecast.value?.sections || {}).some((s) => s.refreshing),
@@ -326,6 +433,8 @@ interface MonthRow {
   month: string;
   pickupRooms: number | null;
   pickupRevenue: number | null;
+  pickupRoomsCompare: number | null;
+  pickupRevenueCompare: number | null;
   otbRevenue: number | null;
   occupancy: number | null;
 }
@@ -333,6 +442,14 @@ interface MonthRow {
 // currentRooms() gates rooms - null while that date's pace data is still
 // "unavailable" quality.
 const currentRevenue = (r: PaceRow) => (currentRooms(r) == null ? null : revenueFor(r, basis.value));
+// The comparison window shares the primary window's stay-date range (start,
+// end) and only shifts asOf, so its pace rows land on the exact same dates -
+// a single map lets months below pull in the matching comparison figures.
+const compareByDate = computed(() => {
+  const m = new Map<string, PaceRow>();
+  for (const r of paceRowsCompare.value) m.set(r.date, r);
+  return m;
+});
 const months = computed<MonthRow[]>(() => {
   const capacities: Record<string, number> = {};
   for (const h of forecast.value?.hotel || []) {
@@ -347,10 +464,17 @@ const months = computed<MonthRow[]>(() => {
     const otbRooms = sumKnown(rs.map(currentRooms)),
       capacity = sumKnown(rs.map((r) => capacities[r.date] ?? null)),
       occ = ratio(otbRooms, capacity);
+    const cmpRs = rs
+      .map((r) => compareByDate.value.get(r.date))
+      .filter((r): r is PaceRow => !!r);
     return {
       month,
       pickupRooms: sumKnown(rs.map((r) => r.pickupRooms)),
       pickupRevenue: sumKnown(rs.map((r) => pickupRevenueFor(r, basis.value))),
+      pickupRoomsCompare: cmpRs.length ? sumKnown(cmpRs.map((r) => r.pickupRooms)) : null,
+      pickupRevenueCompare: cmpRs.length
+        ? sumKnown(cmpRs.map((r) => pickupRevenueFor(r, basis.value)))
+        : null,
       otbRevenue: sumKnown(rs.map(currentRevenue)),
       occupancy: occ == null ? null : occ * 100,
     };
@@ -358,6 +482,23 @@ const months = computed<MonthRow[]>(() => {
 });
 const totalPickupRooms = computed(() => sumKnown(months.value.map((m) => m.pickupRooms)));
 const totalPickupRevenue = computed(() => sumKnown(months.value.map((m) => m.pickupRevenue)));
+const totalPickupRoomsCompare = computed(() =>
+  sumKnown(months.value.map((m) => m.pickupRoomsCompare)),
+);
+const totalPickupRevenueCompare = computed(() =>
+  sumKnown(months.value.map((m) => m.pickupRevenueCompare)),
+);
+const roomsVsCompare = computed(() =>
+  vsLy(totalPickupRooms.value, totalPickupRoomsCompare.value, signed, comparisonLabel.value),
+);
+const revenueVsCompare = computed(() =>
+  vsLy(
+    totalPickupRevenue.value,
+    totalPickupRevenueCompare.value,
+    (v) => (v == null ? EMPTY : signedMoney(v)),
+    comparisonLabel.value,
+  ),
+);
 
 function monthLabel(month: string) {
   return new Date(`${month}-01T00:00:00Z`).toLocaleDateString("en-GB", {
@@ -381,7 +522,12 @@ function stayRange() {
 
 function saveUrl() {
   const f = loaded.value || filters;
-  const q = { pickupStart: f.pickupStart, pickupEnd: f.pickupEnd, basis: basis.value };
+  const q = {
+    pickupStart: f.pickupStart,
+    pickupEnd: f.pickupEnd,
+    basis: basis.value,
+    compare: f.compare,
+  };
   router.replace({ query: q });
   saveStoredFilters(STORAGE_KEY, q);
 }
@@ -428,23 +574,59 @@ async function apply() {
       pickupDays: daysBetween(filters.pickupStart, filters.pickupEnd),
       asOf: filters.pickupEnd,
     };
-    const [pace, segments, companies] = await Promise.all([
+    const cmp = comparisonWindow(filters.compare, filters.pickupStart, filters.pickupEnd);
+    const cmpCommon = cmp
+      ? { start, end, pickupDays: daysBetween(cmp.start, cmp.end), asOf: cmp.end }
+      : null;
+    loadedCompareWindow.value = cmp;
+    const requests = [
       axios.get("/api/rms/pace", { params: common }),
       axios.get("/api/rms/pace/pickup-groups", { params: { ...common, dimension: "market" } }),
       axios.get("/api/rms/pace/pickup-groups", {
         params: { ...common, dimension: "company", limit: 10 },
       }),
-    ]);
+    ];
+    if (cmpCommon) {
+      // No limit on the comparison company fetch: the primary call's top 10
+      // is ranked by its own window, so a company could rank outside the
+      // top 10 in the comparison window yet still need to appear here.
+      requests.push(
+        axios.get("/api/rms/pace", { params: cmpCommon }),
+        axios.get("/api/rms/pace/pickup-groups", {
+          params: { ...cmpCommon, dimension: "market" },
+        }),
+        axios.get("/api/rms/pace/pickup-groups", {
+          params: { ...cmpCommon, dimension: "company" },
+        }),
+      );
+    }
+    const results = await Promise.all(requests);
     if (disposed || id !== requestId) return;
-    paceRows.value = pace.data.rows;
-    segmentRows.value = segments.data.rows;
-    companyRows.value = companies.data.rows;
+    paceRows.value = results[0].data.rows;
+    segmentRows.value = results[1].data.rows;
+    companyRows.value = results[2].data.rows;
+    if (cmpCommon) {
+      paceRowsCompare.value = results[3].data.rows;
+      segmentCompareById.value = new Map(
+        results[4].data.rows.map((r: GroupPickupRow) => [r.id, r]),
+      );
+      companyCompareById.value = new Map(
+        results[5].data.rows.map((r: GroupPickupRow) => [r.id, r]),
+      );
+    } else {
+      paceRowsCompare.value = [];
+      segmentCompareById.value = new Map();
+      companyCompareById.value = new Map();
+    }
   } catch (e: any) {
     if (id === requestId) {
       error.value = e?.response?.data?.message || "Could not load pickup data";
       paceRows.value = [];
       segmentRows.value = [];
       companyRows.value = [];
+      paceRowsCompare.value = [];
+      segmentCompareById.value = new Map();
+      companyCompareById.value = new Map();
     }
   } finally {
     if (id === requestId) loading.value = false;
