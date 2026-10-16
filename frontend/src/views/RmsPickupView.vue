@@ -21,7 +21,7 @@
         </button>
         <div
           v-if="dateMenuOpen"
-          class="neu-card absolute left-0 top-full z-30 mt-1 w-64 space-y-3 p-3 shadow-lg"
+          class="neu-card absolute left-0 top-full z-30 mt-1 w-72 space-y-3 p-3 shadow-lg"
         >
           <div class="grid grid-cols-2 gap-1.5">
             <button type="button" class="btn-flat px-2 py-1 text-xs" @click="presetYesterday">
@@ -42,22 +42,11 @@
           </div>
           <div class="border-t border-slate-200 pt-3">
             <span class="field-label">Custom range</span>
-            <div class="flex items-center gap-1.5">
-              <input
-                v-model="filters.pickupStart"
-                type="date"
-                :max="filters.pickupEnd"
-                class="neu-input w-full"
-              />
-              <span class="text-slate-400">–</span>
-              <input
-                v-model="filters.pickupEnd"
-                type="date"
-                :min="filters.pickupStart"
-                :max="maxPickupEnd"
-                class="neu-input w-full"
-              />
-            </div>
+            <DateRangeCalendar
+              v-model:start="filters.pickupStart"
+              v-model:end="filters.pickupEnd"
+              :max="maxPickupEnd"
+            />
             <div class="mt-2 flex justify-end">
               <button
                 type="button"
@@ -268,6 +257,7 @@ import axios from "../plugins/axios";
 import PageHeader from "../components/PageHeader.vue";
 import RmsCard from "../components/RmsCard.vue";
 import RmsSkeleton from "../components/RmsSkeleton.vue";
+import DateRangeCalendar from "../components/DateRangeCalendar.vue";
 import {
   EMPTY,
   money,

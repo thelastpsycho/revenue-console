@@ -14,7 +14,8 @@
       <button
         type="button"
         @click="shiftMonth(1)"
-        class="rounded-lg p-1 text-slate-500 hover:bg-slate-100"
+        :disabled="!canGoForward"
+        class="rounded-lg p-1 text-slate-500 hover:bg-slate-100 disabled:opacity-30"
         aria-label="Next month"
       >
         <ChevronRightIcon class="h-4 w-4" />
@@ -66,6 +67,7 @@ const props = defineProps<{
   start: string
   end: string
   min?: string
+  max?: string
   // Days to flag with a dot, e.g. dates already on hold.
   marked?: Set<string>
 }>()
@@ -101,6 +103,11 @@ const canGoBack = computed(() => {
   const min = parse(props.min)
   return view.value.year * 12 + view.value.month > min.getFullYear() * 12 + min.getMonth()
 })
+const canGoForward = computed(() => {
+  if (!props.max) return true
+  const max = parse(props.max)
+  return view.value.year * 12 + view.value.month < max.getFullYear() * 12 + max.getMonth()
+})
 
 function shiftMonth(delta: number) {
   const d = new Date(view.value.year, view.value.month + delta, 1)
@@ -124,7 +131,7 @@ const days = computed(() => {
       iso: value,
       date: i + 1,
       label: date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
-      disabled: !!props.min && value < props.min,
+      disabled: (!!props.min && value < props.min) || (!!props.max && value > props.max),
       isStart,
       isEnd,
       isEdge: isStart || (!!props.end && value === props.end),
