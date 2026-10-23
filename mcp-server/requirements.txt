@@ -1,0 +1,4 @@
+# mcp 2.x renamed FastMCP to MCPServer; server.py is written against 2.x.
+mcp>=2.3,<3
+httpx>=0.28,<1
+uvicorn>=0.30

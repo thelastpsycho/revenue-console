@@ -22,6 +22,19 @@ jobs:
         env:
           PYTHONPATH: backend
         run: pytest -q backend/tests
+  mcp-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install MCP server, backend and test dependencies
+        run: pip install -r mcp-server/requirements-dev.txt -r backend/requirements.txt
+      - name: Run MCP server tests
+        working-directory: mcp-server
+        run: pytest -q tests
   frontend:
     runs-on: ubuntu-latest
     steps:

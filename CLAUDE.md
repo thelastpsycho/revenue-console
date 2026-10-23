@@ -82,6 +82,10 @@ PMS scrape → D-EDGE scrape → combine → yield → verify → PMS allotment 
 
 `revenue/rms_forecast.py` + `revenue/booking_events.py` + `routes/rms_routes.py` + `RmsView.vue` (`/rms`). Forecast uses independently refreshed, persistent PMS report sections. Pace reads append-only observed versions in `booking_events.db` (PII-free master folios; cancelled = `L`); earlier reconstructed history is labeled estimated. After initial backfill, daily and weekly syncs revisit future and in-house arrivals. Local settings provide revenue rules, attention thresholds and monthly targets; notes and exports support meetings. Current behavior and limitations: `docs/rms-improvements.md`; original endpoint findings: `docs/rms-plan.md`.
 
+### MCP server
+
+`mcp-server/` is a read-only MCP server (separate `mcp` compose service, opt-in via `COMPOSE_PROFILES=mcp`) so Claude can query the console's data. It is a thin HTTP client of the backend's GET endpoints, logged in with the operator PIN - it never opens the SQLite files directly. When adding or renaming a GET endpoint that answers a data question, consider adding a tool in `mcp-server/server.py`; its tests verify every called path exists. Setup: `mcp-server/README.md`.
+
 ### Progress streaming
 
 Long-running operations run in background threads and use SSE for live logs.
