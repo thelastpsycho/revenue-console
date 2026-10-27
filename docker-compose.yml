@@ -58,6 +58,26 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Read-only MCP server so Claude can query the console's data. A thin client
+  # of the backend API (logs in with the operator PIN); see mcp-server/README.md.
+  # No published port - reach it through the Cloudflare tunnel.
+  # Opt-in: starts only with COMPOSE_PROFILES=mcp in the root .env, so a
+  # deploy before mcp-server/.env exists doesn't break the rest of the stack.
+  mcp:
+    profiles: ["mcp"]
+    build:
+      context: ./mcp-server
+    env_file:
+      - path: ./mcp-server/.env
+        required: false
+    environment:
+      REVENUE_CONSOLE_URL: "http://backend:5666"
+      TZ: Asia/Makassar
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     command: tunnel --config /etc/cloudflared/config.yml run
