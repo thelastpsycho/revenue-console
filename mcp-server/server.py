@@ -362,9 +362,13 @@ def http_app(server: MCPServer, token: str, allowed_hosts: list[str]):
     if len(token) < 32:
         raise SystemExit("MCP_ACCESS_TOKEN must be at least 32 characters for --http "
                          "(python -c \"import secrets; print(secrets.token_urlsafe(32))\")")
+    if not allowed_hosts:
+        raise SystemExit("MCP_ALLOWED_HOSTS must be set for --http (comma-separated public "
+                         "hostname(s) the tunnel routes to this service) - without it, DNS "
+                         "rebinding protection is disabled")
     local = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
     security = TransportSecuritySettings(
-        enable_dns_rebinding_protection=bool(allowed_hosts),
+        enable_dns_rebinding_protection=True,
         allowed_hosts=allowed_hosts + local,
         allowed_origins=[f"https://{h}" for h in allowed_hosts] + ["http://" + h for h in local])
     app = server.streamable_http_app(stateless_http=True, json_response=True,

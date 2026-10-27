@@ -31,7 +31,8 @@ pipeline runs.
 ## Option A — claude.ai / mobile (remote, via the tunnel)
 
 1. On the server, create `mcp-server/.env` from `.env.example`: the backend PIN, a new
-   `MCP_ACCESS_TOKEN`, and the public hostname (e.g. `mcp.krisnatha.com`).
+   `MCP_ACCESS_TOKEN`, and `MCP_ALLOWED_HOSTS` set to the public hostname (e.g.
+   `mcp.krisnatha.com`) - the server refuses to start `--http` without it.
 2. Add `COMPOSE_PROFILES=mcp` to the root `.env`, then deploy as usual
    (`git pull` + `schtasks /run /tn revenue-console-deploy`).
 3. Add a public hostname to the console's Cloudflare tunnel pointing at `http://mcp:8765`

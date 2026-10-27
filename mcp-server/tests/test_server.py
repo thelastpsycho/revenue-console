@@ -149,6 +149,12 @@ def test_short_token_refused():
         server.http_app(mcp, "short", [])
 
 
+def test_missing_allowed_hosts_refused():
+    _, mcp = make()
+    with pytest.raises(SystemExit):
+        server.http_app(mcp, "t" * 40, [])
+
+
 def test_backend_paths_exist_as_get_routes():
     backend_dir = os.path.join(HERE, "..", "..", "backend")
     if not os.path.isdir(backend_dir):
