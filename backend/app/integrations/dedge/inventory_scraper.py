@@ -70,16 +70,25 @@ fetch(arguments[2], {
 """
 
 
-def _fetch_export(driver, start_str, end_str, timeout=60):
+def _fetch_export(driver, start_str, end_str, timeout=60, max_attempts=3):
     driver.set_script_timeout(timeout)
-    try:
-        result = driver.execute_async_script(_FETCH_EXPORT_SCRIPT, start_str, end_str, EXPORT_URL)
-    except UnexpectedAlertPresentException:
-        # Same D-EDGE native alert wait_for_page_load retries around - if it
-        # fires mid-export instead of mid-navigation, this is where it surfaces.
-        if not _dismiss_unexpected_alert(driver):
-            raise
-        result = driver.execute_async_script(_FETCH_EXPORT_SCRIPT, start_str, end_str, EXPORT_URL)
+    # Same D-EDGE native alert wait_for_page_load retries around - if it fires
+    # mid-export instead of mid-navigation, this is where it surfaces. Chrome's
+    # default unhandledPromptBehavior already dismisses the alert itself as
+    # part of raising the exception, so just retry regardless of whether
+    # _dismiss_unexpected_alert finds anything left to accept.
+    result = None
+    last_err = None
+    for _attempt in range(max_attempts):
+        try:
+            result = driver.execute_async_script(_FETCH_EXPORT_SCRIPT, start_str, end_str, EXPORT_URL)
+            last_err = None
+            break
+        except UnexpectedAlertPresentException as e:
+            last_err = e
+            _dismiss_unexpected_alert(driver)
+    if last_err is not None:
+        raise last_err
     if result is None:
         # Seen in production: execute_async_script returning None instead of
         # raising, apparently when a native alert interrupts the script

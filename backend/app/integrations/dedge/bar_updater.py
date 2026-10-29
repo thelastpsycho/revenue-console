@@ -193,17 +193,24 @@ def _dismiss_unexpected_alert(driver):
         return False
 
 
-def wait_for_page_load(driver, timeout=20):
-    for attempt in range(2):
+def wait_for_page_load(driver, timeout=20, max_attempts=3):
+    # Chrome's default unhandledPromptBehavior is "dismiss and notify": it
+    # already dismisses the alert itself as part of raising
+    # UnexpectedAlertPresentException, so by the time we look there's usually
+    # nothing left for _dismiss_unexpected_alert to actually find/accept - the
+    # obstruction is already gone either way, so just retry regardless of its
+    # return value instead of treating "no alert found" as "still blocked".
+    last_err = None
+    for _attempt in range(max_attempts):
         try:
             WebDriverWait(driver, timeout).until(
                 lambda d: d.execute_script("return document.readyState") == "complete"
             )
             return
-        except UnexpectedAlertPresentException:
-            if attempt == 0 and _dismiss_unexpected_alert(driver):
-                continue
-            raise
+        except UnexpectedAlertPresentException as e:
+            last_err = e
+            _dismiss_unexpected_alert(driver)
+    raise last_err
 
 
 # --- Login / device authorisation -------------------------------------------
