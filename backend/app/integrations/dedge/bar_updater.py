@@ -49,7 +49,10 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, StaleElementReferenceException, NoSuchElementException
+from selenium.common.exceptions import (
+    TimeoutException, StaleElementReferenceException, NoSuchElementException,
+    UnexpectedAlertPresentException, NoAlertPresentException,
+)
 
 from .bar_checkpoint import BarCheckpoint
 from . import bar_holds, device_auth
@@ -173,10 +176,34 @@ def setup_driver(user_data_dir=DEFAULT_PROFILE_DIR, headless=None):
     return webdriver.Chrome(options=chrome_options)
 
 
+def _dismiss_unexpected_alert(driver):
+    """D-EDGE occasionally pops a native JS alert (observed text: "timeout" -
+    looks like their own client-side session/request-timeout watchdog, not
+    anything we triggered) that blocks every subsequent WebDriver command with
+    UnexpectedAlertPresentException until it's dismissed. Swallow it, log what
+    it said, and let the caller retry. Returns True if an alert was actually
+    there to dismiss, False otherwise (so the caller knows not to retry)."""
+    try:
+        alert = driver.switch_to.alert
+        text = alert.text
+        alert.accept()
+        log(driver, f"Dismissed an unexpected D-EDGE alert ({text!r}) and retrying", type="error")
+        return True
+    except NoAlertPresentException:
+        return False
+
+
 def wait_for_page_load(driver, timeout=20):
-    WebDriverWait(driver, timeout).until(
-        lambda d: d.execute_script("return document.readyState") == "complete"
-    )
+    for attempt in range(2):
+        try:
+            WebDriverWait(driver, timeout).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+            return
+        except UnexpectedAlertPresentException:
+            if attempt == 0 and _dismiss_unexpected_alert(driver):
+                continue
+            raise
 
 
 # --- Login / device authorisation -------------------------------------------

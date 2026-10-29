@@ -26,10 +26,13 @@ import base64
 import os
 from datetime import datetime, timedelta
 
+from selenium.common.exceptions import UnexpectedAlertPresentException
+
 from ...inventory.channel_manager_processor import process_cm_inventory
 from .bar_updater import (
     DEFAULT_PROFILE_DIR,
     HOTEL_ID,
+    _dismiss_unexpected_alert,
     _wait_for_device_authorization,
     ensure_logged_in,
     log,
@@ -69,7 +72,22 @@ fetch(arguments[2], {
 
 def _fetch_export(driver, start_str, end_str, timeout=60):
     driver.set_script_timeout(timeout)
-    result = driver.execute_async_script(_FETCH_EXPORT_SCRIPT, start_str, end_str, EXPORT_URL)
+    try:
+        result = driver.execute_async_script(_FETCH_EXPORT_SCRIPT, start_str, end_str, EXPORT_URL)
+    except UnexpectedAlertPresentException:
+        # Same D-EDGE native alert wait_for_page_load retries around - if it
+        # fires mid-export instead of mid-navigation, this is where it surfaces.
+        if not _dismiss_unexpected_alert(driver):
+            raise
+        result = driver.execute_async_script(_FETCH_EXPORT_SCRIPT, start_str, end_str, EXPORT_URL)
+    if result is None:
+        # Seen in production: execute_async_script returning None instead of
+        # raising, apparently when a native alert interrupts the script
+        # mid-flight without surfacing as UnexpectedAlertPresentException.
+        raise RuntimeError(
+            "CM export script returned no result (likely interrupted by an "
+            "unexpected D-EDGE dialog or page navigation)"
+        )
     if result.get("error"):
         raise RuntimeError(f"CM export fetch failed: {result['error']}")
     if result.get("status") != 200:
