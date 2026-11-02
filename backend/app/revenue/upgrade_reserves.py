@@ -32,6 +32,7 @@ DEFAULT_ROUTES['Beach Front Private Suite Room'] = []
 DEFAULT_ROUTES['Premiere Room Lagoon Access'] = [
     'The Anvaya Suite Whirpool', 'Beach Front Private Suite Room',
 ]
+DEFAULT_ROUTES['Deluxe Pool Access'] = ['Premiere Room Lagoon Access']
 
 
 def room_count(value, name, signed=False):
