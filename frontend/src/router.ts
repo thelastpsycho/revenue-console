@@ -20,6 +20,7 @@ const RmsPickupView = () => import("./views/RmsPickupView.vue");
 const RmsCompanyAnalyticsView = () => import("./views/RmsCompanyAnalyticsView.vue");
 
 const AdministrationView = () => import("./views/AdministrationView.vue");
+const DocumentationView = () => import("./views/DocumentationView.vue");
 
 declare module "vue-router" {
   interface RouteMeta {
@@ -31,6 +32,16 @@ declare module "vue-router" {
 const router = createRouter({
   history: createWebHistory(),
   routes: [
+    {
+      path: "/documentation",
+      name: "documentation",
+      component: DocumentationView,
+      meta: {
+        title: "Documentation",
+        description:
+          "What Revenue Console does, how data flows through the pipeline, and where every setting lives.",
+      },
+    },
     {
       path: "/administration",
       name: "administration",

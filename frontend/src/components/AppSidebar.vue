@@ -177,6 +177,7 @@ import {
   ArrowTrendingUpIcon,
   BuildingOffice2Icon,
   TableCellsIcon,
+  BookOpenIcon,
 } from "@heroicons/vue/24/outline";
 
 defineProps<{ open: boolean }>();
@@ -258,6 +259,12 @@ const navigationAreas: NavArea[] = [
           { name: "Legacy pipeline", href: "/pipeline" },
         ],
       },
+    ],
+  },
+  {
+    name: "Help",
+    items: [
+      { name: "Documentation", href: "/documentation", icon: BookOpenIcon },
     ],
   },
 ];
