@@ -372,6 +372,20 @@ const configSummary = computed(() => {
   if (!form.value.live) lines.push('BAR: off (preview mode)')
   else if (steps.bar === false || barRooms.length === 0) lines.push('BAR: off')
   else lines.push(`BAR: ${barRooms.join(', ')} — LIVE`)
+
+  const yc = c.yieldConfig as Record<string, any> | undefined
+  if (yc) {
+    lines.push(`Demand bins: ${JSON.stringify(yc.demand_bins)} → ${JSON.stringify(yc.demand_labels)}`)
+    lines.push(`Demand thresholds: very low ≤${yc.very_low_threshold_pct}%, low ≤${yc.low_threshold_pct}%`)
+    const caps = yc.room_caps || {}
+    lines.push(`Room caps: Deluxe ${caps['Deluxe Room'] ?? '—'}, Premiere ${caps['Premiere Room'] ?? '—'}`)
+    lines.push(`Deluxe override: occupancy ≥${yc.deluxe_override_occupancy}% & Premiere ≥${yc.deluxe_override_premiere} → +${yc.deluxe_override_amount}`)
+    lines.push(`BAR level shift: ${yc.bar_level_shift ?? 0}`)
+    lines.push(yc.include_simple_rooms ? 'Yield: all room categories' : 'Yield: Deluxe/Premiere only')
+  }
+  lines.push(`Skip unchanged: allotment ${c.skipUnchanged === false ? 'off' : 'on'}, BAR ${c.barSkipUnchanged === false ? 'off' : 'on'}`)
+  if (c.allotmentConcurrency != null) lines.push(`Allotment concurrency: ${c.allotmentConcurrency}`)
+  if (c.companyId != null) lines.push(`Company ID: ${c.companyId}`)
   return lines
 })
 
