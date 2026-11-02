@@ -203,6 +203,32 @@ def test_verify_pushed_jobs_treats_missing_date_as_a_match_when_closed(monkeypat
     assert mismatches == []
 
 
+def test_verify_pushed_jobs_treats_missing_column_as_a_match_when_closed(monkeypatch):
+    """Some room types' columns are omitted from an otherwise-present grid
+    row rather than zeroed - same "closed" signal as a missing row entirely,
+    so it must not be flagged when we pushed number_of_rooms<=0."""
+    def fake_grid(self, company_id, start_date, days):
+        return [{'TrxDate': '2026-10-01T00:00:00', 'DLK': 5}]  # no 'DLT' key at all
+    monkeypatch.setattr(PMSApiClient, 'get_allotment_room_inventory', fake_grid)
+
+    closed_job = _single_day_job(number_of_rooms=0)
+    mismatches = verify_pushed_jobs([_pushed_result(closed_job)], username='u', password='p', settle_seconds=0)
+    assert mismatches == []
+
+
+def test_verify_pushed_jobs_flags_missing_column_when_rooms_expected(monkeypatch):
+    """The same missing-column row, but for a job that expected an open
+    allotment - this must still be flagged."""
+    def fake_grid(self, company_id, start_date, days):
+        return [{'TrxDate': '2026-10-01T00:00:00', 'DLK': 5}]  # no 'DLT' key at all
+    monkeypatch.setattr(PMSApiClient, 'get_allotment_room_inventory', fake_grid)
+
+    mismatches = verify_pushed_jobs([_pushed_result()], username='u', password='p', settle_seconds=0)
+    assert len(mismatches) == 1
+    assert mismatches[0]['expected'] == 5
+    assert mismatches[0]['actual'] is None
+
+
 def test_verify_pushed_jobs_covers_every_date_in_a_multi_day_job(monkeypatch):
     def fake_grid(self, company_id, start_date, days):
         return [
