@@ -103,6 +103,29 @@ def test_transient_failure_is_retried_and_can_succeed(monkeypatch):
     assert retries_seen == [(2, 1, 3)]
 
 
+def test_read_timeout_is_retried_instead_of_crashing_the_run(monkeypatch):
+    """A socket-level read timeout (the PMS never responding, not an
+    IsSuccess:false response) is the same "PMS backend buckled under
+    concurrency" symptom as a PMSApiError - it must be retried like one,
+    not propagate out of run_one and crash the whole pipeline run."""
+    import requests
+
+    calls = {'n': 0}
+
+    def flaky_save_allotment(self, **kwargs):
+        calls['n'] += 1
+        if calls['n'] < 2:
+            raise requests.exceptions.ReadTimeout('Read timed out. (read timeout=60)')
+        return {'IsSuccess': True}
+    monkeypatch.setattr(PMSApiClient, 'save_allotment', flaky_save_allotment)
+
+    result = push_jobs_concurrent(
+        [_job()], dry_run=False, username='u', password='p', max_retries=2, retry_delay=0,
+    )
+    assert result['success_count'] == 1
+    assert result['results'][0]['attempts'] == 2
+
+
 def test_persistent_failure_is_reported_only_after_exhausting_retries(monkeypatch):
     def always_fail(self, **kwargs):
         return {'IsSuccess': False, 'Message': 'still broken'}

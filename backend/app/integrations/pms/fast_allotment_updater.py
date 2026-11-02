@@ -32,6 +32,8 @@ import concurrent.futures
 import time
 from datetime import datetime, timedelta
 
+import requests
+
 from ...inventory.allocation_repository import load_allocation_rows
 from ...inventory.cm_repository import load_cm_current_values
 from .api_client import PMSApiClient, PMSApiError
@@ -293,7 +295,11 @@ def push_jobs_concurrent(jobs, company_id=1001, dry_run=True, max_workers=4, use
             result['success'] = bool(resp.get('IsSuccess'))
             if not result['success']:
                 result['error'] = resp.get('Message') or resp.get('ReturnMessage')
-        except PMSApiError as e:
+        except (PMSApiError, requests.exceptions.RequestException) as e:
+            # A read timeout/connection error is the same "PMS backend
+            # buckling under concurrent requests" symptom as a PMSApiError
+            # response (see module docstring) - treat it the same way so it
+            # gets retried instead of crashing the whole run.
             result['success'] = False
             result['error'] = str(e)
         return result
