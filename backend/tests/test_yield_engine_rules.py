@@ -14,6 +14,8 @@ import pytest
 
 from app import create_app
 from app.pipeline import fast_runner
+from app.revenue import allotment_rules
+from app.revenue import season_calendar
 from app.revenue import yield_engine as engine
 from app.routes import main as main_routes
 
@@ -24,6 +26,20 @@ PS = 'Premiere Suite Room'
 WHIRL = 'The Anvaya Suite Whirpool'
 SUITES_ABOVE_WHIRL = ['Beach Front Private Suite Room', 'The Anvaya Suite With Pool',
                       'The Anvaya Residence', 'The Anvaya Villa']
+
+
+@pytest.fixture(autouse=True)
+def data_dir(tmp_path, monkeypatch):
+    # Isolate the season calendar DB from the real runtime data dir. The
+    # table auto-seeds with the pre-editable-calendar Jul-Aug/Christmas-New-
+    # Year ranges (see season_calendar.SEED_YEARS), which is what the season
+    # boundary tests below pin.
+    monkeypatch.setattr(season_calendar, "get_data_path", lambda name: str(tmp_path / name))
+    # Same isolation for the allotment-rules DB (release rules, suite
+    # routing default) - auto-seeds with the old hardcoded dispatch's
+    # equivalent, which is what the release/suite tests below pin.
+    monkeypatch.setattr(allotment_rules, "get_data_path", lambda name: str(tmp_path / name))
+    return tmp_path
 
 
 def online_column(room):
@@ -58,7 +74,8 @@ def load(tmp_path, rows):
     (500, 30),
 ])
 def test_deluxe_premiere_release_buckets(remaining, online):
-    assert engine.get_online_allotment(remaining, 260) == online
+    rule = allotment_rules.DEFAULT_SETTINGS['releaseRules']['Deluxe Room']
+    assert allotment_rules.compute_release(rule, remaining, 260) == online
 
 
 @pytest.mark.parametrize('room,by_remaining', [
@@ -106,8 +123,11 @@ def test_demand_level_boundaries_are_right_inclusive_and_overbooking_is_high(tmp
 
 @pytest.mark.parametrize('date,season', [
     ('2026-12-22', 'Normal'), ('2026-12-23', 'High'), ('2026-12-26', 'High'),
+    # The seeded Year-end Peak row for 2026 spans into early January 2027.
     ('2026-12-27', 'Peak'), ('2027-01-03', 'Peak'), ('2027-01-04', 'Normal'),
-    ('2027-06-30', 'Normal'), ('2027-07-01', 'High'), ('2027-08-31', 'High'),
+    # The migration seed only covers through 2026 (season_calendar.SEED_YEARS)
+    # - 2027's Jul-Aug High season has no row until the operator adds one.
+    ('2027-06-30', 'Normal'), ('2027-07-01', 'Normal'), ('2027-08-31', 'Normal'),
     ('2027-09-01', 'Normal'),
 ])
 def test_season_boundaries(tmp_path, date, season):
@@ -128,10 +148,17 @@ def test_bar_escalates_with_scarcity(remaining, expected):
     assert calculate({D: remaining, P: 200})['Deluxe BAR Rate'] == expected
 
 
-@pytest.mark.parametrize('season,ceiling', [('Normal', 'BAR3'), ('High', 'BAR2'), ('Peak', 'BAR2')])
-def test_bar2_is_reserved_for_high_and_peak_seasons(season, ceiling):
+@pytest.mark.parametrize('season,ceiling', [
+    ('Normal', 'BAR3'), ('Shoulder', 'BAR2'), ('High', 'BAR2'), ('Peak', 'BAR2'),
+])
+def test_bar2_ceiling_by_season(season, ceiling):
     row = calculate({D: 0, P: 0}, season=season, demand='High', bar_level_shift=5)
     assert row['Deluxe BAR Rate'] == row['Premiere BAR Rate'] == ceiling
+
+
+def test_shoulder_base_bar_sits_between_normal_and_high():
+    row = calculate({D: 200, P: 200}, season='Shoulder', demand='Medium')
+    assert row['Deluxe BAR Rate'] == row['Premiere BAR Rate'] == 'BAR4'
 
 
 def test_bar_level_shift_is_clamped_at_bar7():
@@ -163,7 +190,8 @@ def test_deluxe_override_borrows_from_premiere_before_premiere_release():
                     deluxe_override_premiere=61, deluxe_override_amount=2)
     assert row['Deluxe Online Inventory'] == 2
     assert row[f'{P} Override Reserve'] == 2
-    assert row['Premiere Online Inventory'] == engine.get_online_allotment(10, 260)
+    rule = allotment_rules.DEFAULT_SETTINGS['releaseRules']['Premiere Room']
+    assert row['Premiere Online Inventory'] == allotment_rules.compute_release(rule, 10, 260)
 
 
 def test_deluxe_override_cannot_borrow_from_blocked_premiere():

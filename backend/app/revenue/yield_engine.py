@@ -3,6 +3,8 @@ from tabulate import tabulate
 import os
 import sqlite3
 from ..infrastructure.paths import get_data_dir
+from . import allotment_rules
+from . import season_calendar
 from .upgrade_reserves import load_policy, prepare_capacity, reserve_offer, room_count
 
 # Demand level configuration
@@ -41,44 +43,6 @@ DELUXE_OVERRIDE_AMOUNT = 2      # Amount of Deluxe rooms to open in override
 
 # Get the absolute path to the data directory within the scraper folder
 DATA_DIR = get_data_dir()
-
-def get_online_allotment(remaining, room_cap):
-    """Tiered bucket allotment: how many rooms to open online given how many remain."""
-    if remaining <= 0:
-        return 0
-    elif 1 <= remaining <= 5:
-        return min(2, remaining, room_cap)
-    elif 6 <= remaining <= 10:
-        return min(5, remaining, room_cap)
-    elif 11 <= remaining <= 50:
-        return min(10, remaining, room_cap)
-    else:  # remaining > 50
-        return min(30, remaining, room_cap)
-
-def allot_minus_one(remaining):
-    return max(0, remaining - 1)
-
-def allot_minus_one_except_one(remaining):
-    if remaining <= 0:
-        return 0
-    if remaining == 1:
-        return 1
-    return remaining - 1
-
-def allot_as_remaining(remaining):
-    return max(0, remaining)
-
-def allot_deluxe_suite(remaining, premiere_suite_remaining):
-    if remaining >= 5:
-        return 4
-    elif remaining == 4:
-        return 3
-    elif remaining in (2, 3):
-        return 2
-    elif remaining == 1:
-        return 1
-    else:  # remaining <= 0
-        return 1 if premiere_suite_remaining > 3 else 0
 
 def should_override_deluxe(occupancy, premiere_inventory, deluxe_inventory,
                            occupancy_threshold=DELUXE_OVERRIDE_OCCUPANCY,
@@ -175,17 +139,8 @@ def load_and_clean_data(db_path=None, demand_bins=None, demand_labels=None, requ
         print(f"Error: Invalid date format. {e}")
         return None
     
-    def assign_season(date):
-        # Compare (month, day) so 29 February works - rebuilding the date in
-        # a fixed non-leap year raised for it.
-        day = (date.month, date.day)
-        if day <= (1, 3) or day >= (12, 27):
-            return 'Peak'
-        if (7, 1) <= day <= (8, 31) or (12, 23) <= day <= (12, 26):
-            return 'High'
-        return 'Normal'
-    
-    data['Season'] = data['Date'].apply(assign_season)
+    season_periods = season_calendar.build_lookup()
+    data['Season'] = data['Date'].apply(lambda d: season_calendar.tier_for_date(d, season_periods))
     
     try:
         # Overbooked dates (more rooms sold than capacity) can push Occupancy
@@ -223,6 +178,7 @@ def apply_yield_matrix(data, very_low_threshold_pct=None, low_threshold_pct=None
         low_threshold_pct = LOW_THRESHOLD_PCT
     room_caps = {**ROOM_CAPS, **(room_caps or {})}
     policy = load_policy(ROOM_CAPS, allocation_policy)
+    rules = allotment_rules.get_settings()
     allocation_scope = ['Deluxe Room', 'Premiere Room']
     if include_simple_rooms:
         allocation_scope += SIMPLE_ROOM_TYPES
@@ -252,6 +208,11 @@ def apply_yield_matrix(data, very_low_threshold_pct=None, low_threshold_pct=None
                 'Medium': {'bar': 'BAR5'},
                 'Low': {'bar': 'BAR7'}
             },
+            'Shoulder': {
+                'High': {'bar': 'BAR3'},
+                'Medium': {'bar': 'BAR4'},
+                'Low': {'bar': 'BAR6'}
+            },
             'High': {
                 'High': {'bar': 'BAR2'},
                 'Medium': {'bar': 'BAR3'},
@@ -268,6 +229,11 @@ def apply_yield_matrix(data, very_low_threshold_pct=None, low_threshold_pct=None
                 'High': {'bar': 'BAR4'},
                 'Medium': {'bar': 'BAR5'},
                 'Low': {'bar': 'BAR7'}
+            },
+            'Shoulder': {
+                'High': {'bar': 'BAR3'},
+                'Medium': {'bar': 'BAR4'},
+                'Low': {'bar': 'BAR6'}
             },
             'High': {
                 'High': {'bar': 'BAR2'},
@@ -294,7 +260,7 @@ def apply_yield_matrix(data, very_low_threshold_pct=None, low_threshold_pct=None
         if not bar_level_shift:
             return base_bar
         rank = bar_rate_order.get(base_bar, 4)
-        min_rank = 1 if season in ('Peak', 'High') else 2
+        min_rank = 1 if season in ('Peak', 'High', 'Shoulder') else 2
         max_rank = 6
         new_rank = max(min_rank, min(max_rank, rank - bar_level_shift))
         return bar_rate_reverse.get(new_rank, base_bar)
@@ -336,9 +302,9 @@ def apply_yield_matrix(data, very_low_threshold_pct=None, low_threshold_pct=None
             low_threshold = capacity * low_threshold_pct
             
             base_rank = bar_rate_order.get(base_bar, 4)  # Default to BAR5 if invalid
-            # BAR2 (rank 1) is reserved for Peak/High seasons; Normal season
-            # scarcity escalation is capped at BAR3 (rank 2).
-            min_rank = 1 if season in ('Peak', 'High') else 2
+            # BAR2 (rank 1) is reserved for Peak/High/Shoulder seasons; Normal
+            # season scarcity escalation is capped at BAR3 (rank 2).
+            min_rank = 1 if season in ('Peak', 'High', 'Shoulder') else 2
             if remaining_inventory <= very_low_threshold:
                 new_rank = max(min_rank, base_rank - 2)  # Shift up 2 levels, seasonal ceiling
                 print(f"{row['Date'].strftime('%Y-%m-%d')} {room_type}: Remaining {remaining_inventory} (Very Low) → {base_bar} to {bar_rate_reverse[new_rank]}")
@@ -401,27 +367,26 @@ def apply_yield_matrix(data, very_low_threshold_pct=None, low_threshold_pct=None
                 {'Deluxe Room': ['Premiere Room']} if 'Premiere Room' in policy['routes']['Deluxe Room'] else {},
                 override_reserves)
         else:
-            allocations['Deluxe Room'] = get_online_allotment(sellable['Deluxe Room'], room_caps['Deluxe Room'])
+            allocations['Deluxe Room'] = allotment_rules.compute_release(
+                rules['releaseRules']['Deluxe Room'], sellable['Deluxe Room'], room_caps['Deluxe Room'])
 
         if include_simple_rooms:
-            if remaining_by_room['Deluxe Suite Room'] <= 0 and sellable['Premiere Suite Room'] > 3:
+            borrow = rules['deluxeSuiteBorrow']
+            if remaining_by_room['Deluxe Suite Room'] <= 0 and sellable[borrow['fromRoomType']] > borrow['threshold']:
                 allocations['Deluxe Suite Room'] = reserve_offer(
-                    'Deluxe Suite Room', min(1, online_caps.get('Deluxe Suite Room', 1)),
+                    'Deluxe Suite Room', min(borrow['amount'], online_caps.get('Deluxe Suite Room', borrow['amount'])),
                     sellable, policy['routes'], override_reserves)
             for room_type in SIMPLE_ROOM_TYPES:
                 remaining = sellable[room_type]
-                if room_type in ('Deluxe Pool Access', 'Premiere Room Lagoon Access', 'Premiere Suite Room'):
-                    allocations[room_type] = get_online_allotment(remaining, room_caps[room_type])
-                elif room_type == 'Deluxe Suite Room':
+                if room_type == 'Deluxe Suite Room':
                     if remaining_by_room[room_type] > 0:
-                        allocations[room_type] = allot_deluxe_suite(remaining, 0)
-                elif room_type == 'Beach Front Private Suite Room':
-                    allocations[room_type] = allot_minus_one_except_one(remaining)
-                elif room_type in ('Family Premiere Room', 'The Anvaya Suite Whirpool', 'The Anvaya Suite No Pool'):
-                    allocations[room_type] = allot_minus_one(remaining)
+                        allocations[room_type] = allotment_rules.compute_release(
+                            rules['releaseRules'][room_type], remaining, room_caps[room_type])
                 else:
-                    allocations[room_type] = allot_as_remaining(remaining)
-        allocations['Premiere Room'] = get_online_allotment(sellable['Premiere Room'], room_caps['Premiere Room'])
+                    allocations[room_type] = allotment_rules.compute_release(
+                        rules['releaseRules'][room_type], remaining, room_caps[room_type])
+        allocations['Premiere Room'] = allotment_rules.compute_release(
+            rules['releaseRules']['Premiere Room'], sellable['Premiere Room'], room_caps['Premiere Room'])
         for room_type in blocked:
             allocations[room_type] = 0
         if unresolved:

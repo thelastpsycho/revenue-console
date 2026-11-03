@@ -178,6 +178,8 @@ import {
   BuildingOffice2Icon,
   TableCellsIcon,
   BookOpenIcon,
+  CalendarDaysIcon,
+  AdjustmentsHorizontalIcon,
 } from "@heroicons/vue/24/outline";
 
 defineProps<{ open: boolean }>();
@@ -245,6 +247,16 @@ const navigationAreas: NavArea[] = [
         name: "Backups",
         href: "/administration?section=backups",
         icon: CircleStackIcon,
+      },
+      {
+        name: "Season calendar",
+        href: "/season-calendar",
+        icon: CalendarDaysIcon,
+      },
+      {
+        name: "Allotment rules",
+        href: "/allotment-rules",
+        icon: AdjustmentsHorizontalIcon,
       },
       {
         name: "Advanced",

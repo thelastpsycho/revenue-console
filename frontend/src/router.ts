@@ -19,6 +19,9 @@ const RmsOnlineView = () => import("./views/RmsOnlineView.vue");
 const RmsPickupView = () => import("./views/RmsPickupView.vue");
 const RmsCompanyAnalyticsView = () => import("./views/RmsCompanyAnalyticsView.vue");
 
+const SeasonCalendarView = () => import("./views/SeasonCalendarView.vue");
+const AllotmentRulesView = () => import("./views/AllotmentRulesView.vue");
+
 const AdministrationView = () => import("./views/AdministrationView.vue");
 const DocumentationView = () => import("./views/DocumentationView.vue");
 
@@ -154,6 +157,26 @@ const router = createRouter({
         title: "Stop Sale",
         description:
           "Email a stop sale on all static rates to partners when inventory shows the hotel or a room type is full.",
+      },
+    },
+    {
+      path: "/season-calendar",
+      name: "season-calendar",
+      component: SeasonCalendarView,
+      meta: {
+        title: "Season Calendar",
+        description:
+          "Named date ranges (Nyepi, Lebaran, Lunar New Year, Easter, Australian school holidays, events) that set the yield engine's season tier.",
+      },
+    },
+    {
+      path: "/allotment-rules",
+      name: "allotment-rules",
+      component: AllotmentRulesView,
+      meta: {
+        title: "Allotment Rules",
+        description:
+          "Release rules per room type, the Deluxe Suite borrow trigger, and suite upgrade routing/buffers/holds.",
       },
     },
     {

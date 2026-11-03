@@ -66,13 +66,21 @@ Use `infrastructure/paths.py` instead of constructing these paths manually.
 3. `integrations/dedge/inventory_scraper.py` — exports D-EDGE room planning data and runs CM processing.
 4. `inventory/channel_manager_processor.py` — writes `cm_inventory_processed.db`.
 5. `inventory/inventory_combiner.py` — writes `combined_inventory.db`.
-6. `revenue/yield_engine.py` — writes `inventory_allocation.db` (table `daily_inventory_allocation`).
+6. `revenue/yield_engine.py` — writes `inventory_allocation.db` (table `daily_inventory_allocation`); season tier comes from the editable season calendar, and per-room release/suite routing from the editable allotment rules (see below).
 7. `integrations/pms/allotment_updater.py` and `other_room_allotment_updater.py` — push calculated allotments into the PMS.
 8. `integrations/dedge/bar_updater.py` — pushes BAR levels into D-EDGE.
 
 `pipeline/runner.py` orchestrates the automated seven-step workflow:
 
 PMS scrape → D-EDGE scrape → combine → yield → verify → PMS allotment → D-EDGE BAR.
+
+### Season calendar
+
+`revenue/season_calendar.py` + `routes/season_calendar_routes.py` + `SeasonCalendarView.vue` (`/season-calendar`). Step 6 of the pipeline (`revenue/yield_engine.py`) assigns each date a season tier (`Peak`/`High`/`Shoulder`/`Normal`, which sets the BAR floor - Shoulder shares Peak/High's BAR2 scarcity ceiling) by looking up operator-edited named date ranges in `season_calendar.db`, instead of a hardcoded Jul–Aug/Christmas-New-Year rule. Entries are specific dated ranges, not recurring annual rules - the operator adds next year's Nyepi, Lunar New Year, Lebaran, Easter, Australian school holidays, events, etc. by hand, the same way the table's migrated-in Jul-Aug/Christmas rows (seeded 2020-2026 only, `season_calendar.SEED_YEARS`) need yearly extension past that. When ranges overlap, the higher tier wins.
+
+### Allotment rules
+
+`revenue/allotment_rules.py` + `routes/allotment_rules_routes.py` + `AllotmentRulesView.vue` (`/allotment-rules`). Replaces what used to be hardcoded per-room-type dispatch in `yield_engine.py` with a settings document in `allotment_rules.db`: a release rule per room type (`tiered` bucket schedule, `keepBack` a fixed amount, or `sellAsRemaining`), the Deluxe-Suite-borrows-from-Premiere-Suite trigger (threshold/amount), and suite upgrade routing/buffers/holds (the same shape `upgrade_reserves.load_policy` already validated, previously only loadable from a JSON file via the `ALLOCATION_POLICY_PATH` env var with no UI). The env var still takes precedence when set - `load_policy`'s fallback, when neither an explicit policy nor that env var apply, now reads the saved suite-routing settings instead of hardcoded defaults.
 
 ### Stop sale emails
 

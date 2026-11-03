@@ -59,7 +59,11 @@ def load_policy(room_types, policy=None):
             with open(path, encoding='utf-8') as stream:
                 policy = json.load(stream)
         else:
-            policy = {}
+            # Deferred import: allotment_rules validates its suiteRouting
+            # field by calling this function, so importing it at module
+            # load time would cycle.
+            from . import allotment_rules
+            policy = allotment_rules.get_settings()['suiteRouting']
     if not isinstance(policy, dict) or set(policy) - {'routes', 'buffers', 'holds'}:
         raise ValueError('Allocation policy accepts routes, buffers and holds only')
     rooms = set(room_types)

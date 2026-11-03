@@ -4,6 +4,7 @@ import sqlite3
 import pandas as pd
 import pytest
 
+from app.revenue import allotment_rules
 from app.revenue import yield_engine as engine
 from app.revenue.upgrade_reserves import (
     _reserve_with_blocked, load_policy, prepare_capacity, reserve_shortages)
@@ -14,6 +15,14 @@ S = 'Premiere Suite Room'
 L = 'Premiere Room Lagoon Access'
 DS = 'Deluxe Suite Room'
 POLICY = {'routes': {D: [P, L, S], DS: [S], P: [L, S]}}
+
+
+@pytest.fixture(autouse=True)
+def data_dir(tmp_path, monkeypatch):
+    # load_policy's None-and-no-env-var fallback now reads allotment_rules'
+    # suiteRouting default; isolate it from the real runtime data dir.
+    monkeypatch.setattr(allotment_rules, "get_data_path", lambda name: str(tmp_path / name))
+    return tmp_path
 
 
 def snapshot(values, occupancy=90):
