@@ -49,6 +49,40 @@
     <p v-if="sync?.job.error" class="alert-error mt-3">{{ sync.job.error }}</p>
   </RmsCard>
 
+  <RmsCard
+    v-if="sync?.runs.length"
+    title="Sync history"
+    description="The last 10 sync runs, most recent first."
+    padded
+  >
+    <div class="overflow-auto">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Kind</th>
+            <th>Started</th>
+            <th>Finished</th>
+            <th class="num">Rows</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="run in sync.runs" :key="run.id">
+            <td class="capitalize">{{ run.kind }}</td>
+            <td>{{ timestamp(run.started_at) }}</td>
+            <td>{{ run.finished_at ? timestamp(run.finished_at) : "—" }}</td>
+            <td class="num">{{ num(run.rows) }}</td>
+            <td>
+              <span v-if="!run.finished_at" class="pill pill-muted">Running</span>
+              <span v-else-if="run.error" class="pill pill-bad" :title="run.error">Failed</span>
+              <span v-else class="pill pill-ok">Success</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </RmsCard>
+
   <form v-if="settings" class="space-y-4" @submit.prevent="save">
     <RmsCard
       title="Review thresholds"
@@ -271,7 +305,7 @@ import { onMounted, ref } from "vue";
 import { PlusIcon, TrashIcon } from "@heroicons/vue/24/outline";
 import axios from "../plugins/axios";
 import RmsCard from "./RmsCard.vue";
-import { num, type Settings, type Sync } from "../utils/rms";
+import { num, timestamp, type Settings, type Sync } from "../utils/rms";
 
 defineProps<{ today: string }>();
 const emit = defineEmits<{ synced: [] }>();

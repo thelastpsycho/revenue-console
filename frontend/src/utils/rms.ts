@@ -73,6 +73,14 @@ export interface Settings {
   budgets: Budget[];
   usdIdrRate: number;
 }
+export interface SyncRun {
+  id: number;
+  kind: string;
+  started_at: string;
+  finished_at: string | null;
+  rows: number;
+  error: string | null;
+}
 export interface Sync {
   stale: boolean;
   coverageFrom: string | null;
@@ -88,6 +96,7 @@ export interface Sync {
     rows: number;
     error: string | null;
   };
+  runs: SyncRun[];
 }
 export interface Filters {
   start: string;
