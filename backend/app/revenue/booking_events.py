@@ -140,21 +140,22 @@ def _connect():
     # company/company_id are static per reservation (the booking channel never
     # changes after creation), but pace/YoY reconstruction reads whichever
     # booking_versions snapshot was active "as of" a past date - for
-    # reservations first observed before these columns existed, that snapshot
-    # predates company tracking and has no company key, so channel filters
-    # silently drop them (only the *current* row, not history, got backfilled
-    # earlier). Patch every such snapshot with the reservation's now-known,
-    # time-invariant company once.
-    if not _get_meta(conn, "companyBackfilledIntoVersions"):
-        conn.execute("""
-            UPDATE booking_versions
-            SET payload = json_set(payload,
-                '$.company_id', (SELECT company_id FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id),
-                '$.company', (SELECT company FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id))
-            WHERE json_extract(payload, '$.company') IS NULL
-              AND EXISTS (SELECT 1 FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id AND b.company IS NOT NULL)
-        """)
-        _set_meta(conn, "companyBackfilledIntoVersions", "1")
+    # reservations first observed before company was known for them, that
+    # snapshot has no company key, so channel/company filters silently drop
+    # them (only the *current* row, not history, got backfilled). Patch every
+    # such snapshot with the reservation's now-known, time-invariant company.
+    # Not gated to run once: a reservation's bookings.company_id can still be
+    # NULL the first time this runs (its historical PMS backfill hasn't
+    # reached it yet) and only gets filled in later, so this needs to keep
+    # retrying - the WHERE clause already makes it a cheap no-op once caught up.
+    conn.execute("""
+        UPDATE booking_versions
+        SET payload = json_set(payload,
+            '$.company_id', (SELECT company_id FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id),
+            '$.company', (SELECT company FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id))
+        WHERE json_extract(payload, '$.company') IS NULL
+          AND EXISTS (SELECT 1 FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id AND b.company IS NOT NULL)
+    """)
     # Seed an existing installation once, preserving only the same PII-free fields.
     seeded = conn.execute("SELECT value FROM meta WHERE key='versionsSeeded'").fetchone()
     if not seeded:
