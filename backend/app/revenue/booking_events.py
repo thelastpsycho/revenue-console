@@ -60,6 +60,10 @@ SCHEDULED_HOUR = 4
 
 _db_lock = threading.Lock()
 _sync_lock = threading.Lock()
+# _connect() runs on every request (schema setup is cheap and idempotent), but
+# the company backfill below is a full-table UPDATE - too slow to repeat per
+# request. Gate it to once per process instead of once ever (see its comment).
+_company_backfill_attempted = False
 _status = {"running": False, "kind": None, "startedAt": None, "finishedAt": None,
            "done": 0, "total": 0, "rows": 0, "error": None}
 
@@ -144,18 +148,22 @@ def _connect():
     # snapshot has no company key, so channel/company filters silently drop
     # them (only the *current* row, not history, got backfilled). Patch every
     # such snapshot with the reservation's now-known, time-invariant company.
-    # Not gated to run once: a reservation's bookings.company_id can still be
-    # NULL the first time this runs (its historical PMS backfill hasn't
-    # reached it yet) and only gets filled in later, so this needs to keep
-    # retrying - the WHERE clause already makes it a cheap no-op once caught up.
-    conn.execute("""
-        UPDATE booking_versions
-        SET payload = json_set(payload,
-            '$.company_id', (SELECT company_id FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id),
-            '$.company', (SELECT company FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id))
-        WHERE json_extract(payload, '$.company') IS NULL
-          AND EXISTS (SELECT 1 FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id AND b.company IS NOT NULL)
-    """)
+    # Retried once per process (not once ever, and not every request): a
+    # reservation's bookings.company_id can still be NULL the first time this
+    # runs (its historical PMS backfill hasn't reached it yet) and only gets
+    # filled in later, so a permanent one-shot flag can miss it forever - but
+    # the UPDATE is a full-table scan, too slow to repeat on every request.
+    global _company_backfill_attempted
+    if not _company_backfill_attempted:
+        conn.execute("""
+            UPDATE booking_versions
+            SET payload = json_set(payload,
+                '$.company_id', (SELECT company_id FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id),
+                '$.company', (SELECT company FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id))
+            WHERE json_extract(payload, '$.company') IS NULL
+              AND EXISTS (SELECT 1 FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id AND b.company IS NOT NULL)
+        """)
+        _company_backfill_attempted = True
     # Seed an existing installation once, preserving only the same PII-free fields.
     seeded = conn.execute("SELECT value FROM meta WHERE key='versionsSeeded'").fetchone()
     if not seeded:

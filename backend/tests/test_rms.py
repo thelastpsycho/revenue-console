@@ -18,6 +18,7 @@ TODAY = date(2026, 10, 11)
 def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(be, "get_data_path", lambda name: str(tmp_path / name))
     monkeypatch.setattr(be, "_today", lambda: TODAY)
+    monkeypatch.setattr(be, "_company_backfill_attempted", False)
     return tmp_path
 
 
