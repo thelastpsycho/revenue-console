@@ -23,7 +23,10 @@ def _key(r, dimension):
     if dimension == 'company':
         return str(r['company_id']) if r.get('company_id') is not None else (r.get('company') or 'unassigned')
     if dimension == 'nationality':
-        return str(r['nationality_id']) if r.get('nationality_id') is not None else 'unassigned'
+        # 0 is the PMS's own "not specified" sentinel (same convention as
+        # GroupId 0), confirmed to always pair with an empty
+        # NationalityDescription - not a real nationality id.
+        return str(r['nationality_id']) if r.get('nationality_id') else 'unassigned'
     if dimension == 'group':
         return 'group' if be.is_group(r) else 'fit'
     return r.get('rate_id') or r.get('rate_type') or 'unassigned'

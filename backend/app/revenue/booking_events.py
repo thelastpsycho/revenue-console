@@ -889,8 +889,11 @@ def dimensions():
         companies = [{"id": r["company_id"], "name": r["company"]} for r in conn.execute(
             "SELECT company_id, MAX(company) company FROM bookings WHERE company_id IS NOT NULL "
             "GROUP BY company_id ORDER BY company")]
+        # nationality_id 0 is the PMS's own "not specified" sentinel (always
+        # paired with an empty NationalityDescription), not a real nationality.
         nationalities = [{"id": r["nationality_id"], "name": r["nationality"]} for r in conn.execute(
-            "SELECT nationality_id, MAX(nationality) nationality FROM bookings WHERE nationality_id IS NOT NULL "
+            "SELECT nationality_id, MAX(nationality) nationality FROM bookings "
+            "WHERE nationality_id IS NOT NULL AND nationality_id != 0 "
             "GROUP BY nationality_id ORDER BY nationality")]
     channels = [{"id": bucket_id, "name": label} for bucket_id, label in BUCKET_ORDER]
     return {"roomTypes": types, "markets": markets, "channels": channels, "companies": companies,

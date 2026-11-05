@@ -407,6 +407,13 @@ def test_dimensions_lists_nationalities_seen_in_bookings(data_dir):
     assert {"id": 13, "name": "Australia"} in nationalities
 
 
+def test_dimensions_excludes_nationality_zero_sentinel(data_dir):
+    """NationalityId 0 is the PMS's own "not specified" sentinel (always paired
+    with an empty NationalityDescription) - not a real, selectable nationality."""
+    be.upsert([api_row(1, "2026-10-01", "2026-10-20", "2026-10-22", nationality_id=0, nationality="")])
+    assert be.dimensions()["nationalities"] == []
+
+
 def test_migration_backfills_group_into_pre_existing_version_snapshots(data_dir):
     """Same gap as company (see test_migration_backfills_company_into_pre_existing_version_snapshots):
     group is static per reservation, so an old snapshot missing it should be
@@ -465,6 +472,16 @@ def test_build_reports_includes_nationality_and_group_production(data_dir):
     assert group_rows["group"]["rooms"] == 1  # reservation 2 is the group booking
     assert group_rows["fit"]["name"] == "FIT"
     assert group_rows["fit"]["rooms"] == 1  # reservation 1 is FIT
+
+
+def test_build_reports_nationality_zero_sentinel_is_unassigned(data_dir):
+    be.upsert([api_row(1, "2026-10-01", "2026-10-20", "2026-10-21", nationality_id=0, nationality="")])
+    with be._db_lock, be._db() as conn:
+        be._set_meta(conn, "backfillFrom", "2023-01-01")
+    from app.revenue.rms_reports import build_reports
+    result = build_reports("2026-10-20", "2026-10-21")
+    ids = {r["id"] for r in result["production"]["nationality"]}
+    assert ids == {"unassigned"}
 
 
 def test_pace_route_accepts_nationality_and_group_filters(client):
