@@ -74,7 +74,14 @@ import {
 } from "../utils/rms";
 
 const props = defineProps<{
-  filters: { start: string; end: string; roomType: string; channels: string[] };
+  filters: {
+    start: string;
+    end: string;
+    roomType: string;
+    channels: string[];
+    nationalityIds?: string;
+    group?: "fit" | "group" | "";
+  };
 }>();
 
 const rows = ref<CompanyRow[]>([]),

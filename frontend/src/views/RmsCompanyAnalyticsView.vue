@@ -68,6 +68,15 @@
         </select>
       </label>
       <RmsCompanyFilter v-model="filters.companyIds" :companies="dims.companies" />
+      <RmsNationalityFilter v-model="filters.nationalityIds" :nationalities="dims.nationalities" />
+      <label>
+        <span class="field-label">Booking type</span>
+        <select v-model="filters.group" class="neu-input">
+          <option value="">FIT + Group</option>
+          <option value="fit">FIT only</option>
+          <option value="group">Group only</option>
+        </select>
+      </label>
       <label>
         <span class="field-label">Compare with</span>
         <select v-model="compareSelection" class="neu-input">
@@ -138,7 +147,10 @@
       :filters="reportFilters"
       :basis="basis"
       :labels="dims.labels"
-      :extra-dimensions="[{ id: 'company', label: 'Company' }]"
+      :extra-dimensions="[
+        { id: 'company', label: 'Company' },
+        { id: 'group', label: 'FIT / Group' },
+      ]"
       :split-length-of-stay="true"
       @drilldown="drilldownGroup"
     />
@@ -164,6 +176,7 @@ import axios from "../plugins/axios";
 import PageHeader from "../components/PageHeader.vue";
 import DateRangeCalendar from "../components/DateRangeCalendar.vue";
 import RmsCompanyFilter from "../components/RmsCompanyFilter.vue";
+import RmsNationalityFilter from "../components/RmsNationalityFilter.vue";
 import RmsPaceTab from "../components/RmsPaceTab.vue";
 import RmsGroupedReports from "../components/RmsGroupedReports.vue";
 import {
@@ -215,6 +228,8 @@ interface CompanyFilters {
   roomType: string;
   marketId: string;
   companyIds: number[];
+  nationalityIds: number[];
+  group: "fit" | "group" | "";
   comparison: "weekday" | "calendar" | "custom";
   comparisonStart: string;
   compareWith: "yoy" | "budget";
@@ -228,6 +243,10 @@ const filters = reactive<CompanyFilters>({
   companyIds: query("companyIds")
     ? query("companyIds").split(",").filter(Boolean).map(Number)
     : [],
+  nationalityIds: query("nationalityIds")
+    ? query("nationalityIds").split(",").filter(Boolean).map(Number)
+    : [],
+  group: (query("group") as CompanyFilters["group"]) || "",
   comparison: (query("comparison", "weekday") as CompanyFilters["comparison"]) || "weekday",
   comparisonStart: query("comparisonStart"),
   compareWith: query("compareWith") === "budget" ? "budget" : "yoy",
@@ -239,8 +258,9 @@ const dims = reactive<{
   roomTypes: string[];
   markets: { id: number; name: string }[];
   companies: { id: number; name: string }[];
+  nationalities: { id: number; name: string }[];
   labels: Record<string, string>;
-}>({ roomTypes: [], markets: [], companies: [], labels: {} });
+}>({ roomTypes: [], markets: [], companies: [], nationalities: [], labels: {} });
 
 const dirty = computed(
   () => loaded.value && JSON.stringify(filters) !== JSON.stringify(loaded.value),
@@ -270,6 +290,8 @@ function saveUrl() {
     roomType: f.roomType,
     marketId: f.marketId,
     companyIds: f.companyIds.length ? f.companyIds.join(",") : undefined,
+    nationalityIds: f.nationalityIds.length ? f.nationalityIds.join(",") : undefined,
+    group: f.group || undefined,
     comparison: f.comparison,
     comparisonStart: f.comparison === "custom" ? f.comparisonStart : undefined,
     compareWith: f.compareWith,
@@ -300,26 +322,31 @@ function apply() {
     return;
   }
   error.value = "";
-  loaded.value = { ...filters, companyIds: [...filters.companyIds] };
+  loaded.value = { ...filters, companyIds: [...filters.companyIds], nationalityIds: [...filters.nationalityIds] };
   saveUrl();
 }
 function drilldownGroup(dimension: string, id: string) {
   if (loaded.value) Object.assign(filters, loaded.value);
   if (dimension === "market") filters.marketId = id;
   else if (dimension === "company") filters.companyIds = [Number(id)];
+  else if (dimension === "nationality") filters.nationalityIds = [Number(id)];
+  else if (dimension === "group") filters.group = id as CompanyFilters["group"];
   else filters.roomType = id;
   tab.value = "pace";
   apply();
 }
 
-// "Pace & pickups" params for RmsGroupedReports (comma-joined company ids,
-// matching how roomType/marketId are already passed as plain scalar params).
+// "Pace & pickups" params for RmsGroupedReports (comma-joined company/
+// nationality ids, matching how roomType/marketId are already passed as
+// plain scalar params).
 const reportFilters = computed(() => ({
   start: loaded.value?.start || filters.start,
   end: loaded.value?.end || filters.end,
   roomType: loaded.value?.roomType || "",
   marketId: loaded.value?.marketId || "",
   companyIds: loaded.value?.companyIds.length ? loaded.value.companyIds.join(",") : undefined,
+  nationalityIds: loaded.value?.nationalityIds.length ? loaded.value.nationalityIds.join(",") : undefined,
+  group: loaded.value?.group || filters.group,
   pickupDays: loaded.value?.pickupDays ?? filters.pickupDays,
   comparison: loaded.value?.comparison || filters.comparison,
   comparisonStart: loaded.value?.comparisonStart || "",
@@ -341,6 +368,8 @@ async function loadPace(f: CompanyFilters) {
         roomType: f.roomType || undefined,
         marketId: f.marketId || undefined,
         companyIds: f.companyIds.length ? f.companyIds.join(",") : undefined,
+        nationalityIds: f.nationalityIds.length ? f.nationalityIds.join(",") : undefined,
+        group: f.group || undefined,
         pickupDays: f.pickupDays,
         comparison: f.comparison,
         comparisonStart: f.comparisonStart || undefined,

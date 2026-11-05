@@ -174,15 +174,42 @@
       <template v-if="group === 'nationality'">
         <RmsCard
           title="Nationality production"
-          description="Not available yet."
+          description="Stay-night positions by guest nationality. 'Unassigned' is blank until check-in - advance bookings don't carry a nationality yet."
+          scroll
         >
-          <p class="p-4 text-sm text-slate-600">
-            {{
-              data.unavailable.find((u) => u.report === "Nationality production")
-                ?.reason ||
-              "This dimension is not yet stored in the verified booking cache."
-            }}
-          </p>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="sticky-col">Nationality</th>
+                <th class="num">OTB nights</th>
+                <th class="num">Share</th>
+                <th class="num">Revenue</th>
+                <th class="num">ADR</th>
+                <th class="num">LY nights</th>
+                <th class="num">vs LY</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in nationalityRows" :key="r.id">
+                <td class="sticky-col whitespace-nowrap">
+                  {{ r.id === "unassigned" ? "Unknown / not yet checked in" : r.name }}
+                </td>
+                <td class="num">{{ number(r.rooms) }}</td>
+                <td class="num">{{ percent(ratio(r.rooms, nationalityTotalRooms)) }}</td>
+                <td class="num" :title="money(revenue(r))">{{ moneyShort(revenue(r)) }}</td>
+                <td class="num" :title="money(ratio(revenue(r), r.idrRooms))">
+                  {{ moneyShort(ratio(revenue(r), r.idrRooms)) }}
+                </td>
+                <td class="num">{{ number(r.comparison?.rooms) }}</td>
+                <td :class="['num', gapClass(difference(r.rooms, r.comparison?.rooms ?? null))]">
+                  {{ signed(difference(r.rooms, r.comparison?.rooms ?? null)) }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <template v-if="!nationalityRows.length" #empty>
+            No production for this selection.
+          </template>
         </RmsCard>
       </template>
 
@@ -453,6 +480,8 @@ const props = defineProps<{
     comparisonStart: string;
     compareWith: "yoy" | "budget";
     companyIds?: string;
+    nationalityIds?: string;
+    group?: "fit" | "group" | "";
   };
   basis: "gross" | "net";
   labels: Record<string, string>;
@@ -538,6 +567,16 @@ const totalRooms = computed(() =>
   productionRows.value.some((r) => r.rooms == null)
     ? null
     : productionRows.value.reduce((s, r) => s + (r.rooms || 0), 0),
+);
+const nationalityRows = computed(() =>
+  [...(data.value?.production["nationality"] || [])].sort(
+    (a, b) => (b.rooms || 0) - (a.rooms || 0),
+  ),
+);
+const nationalityTotalRooms = computed(() =>
+  nationalityRows.value.some((r) => r.rooms == null)
+    ? null
+    : nationalityRows.value.reduce((s, r) => s + (r.rooms || 0), 0),
 );
 const revenue = (r: Metrics) =>
   props.basis === "net" ? r.netRevenue : r.revenue;

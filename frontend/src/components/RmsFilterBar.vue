@@ -76,6 +76,15 @@
           </option>
         </select>
       </label>
+      <RmsNationalityFilter v-model="nationalityIdsArray" :nationalities="dims.nationalities" />
+      <label>
+        <span class="field-label">Booking type</span>
+        <select v-model="filters.group" class="neu-input">
+          <option value="">FIT + Group</option>
+          <option value="fit">FIT only</option>
+          <option value="group">Group only</option>
+        </select>
+      </label>
       <label>
         <span class="field-label">Compare with</span>
         <select v-model="compareSelection" class="neu-input">
@@ -201,6 +210,7 @@ import {
   InformationCircleIcon,
 } from "@heroicons/vue/24/outline";
 import DateRangeCalendar from "./DateRangeCalendar.vue";
+import RmsNationalityFilter from "./RmsNationalityFilter.vue";
 import { addDays, shortDayYear, timestamp } from "../utils/rms";
 import type { Filters, Forecast, Sync } from "../utils/rms";
 
@@ -212,6 +222,7 @@ const props = defineProps<{
     roomTypes: string[];
     markets: { id: number; name: string }[];
     labels: Record<string, string>;
+    nationalities: { id: number; name: string }[];
   };
   loading: boolean;
   dirty: boolean;
@@ -231,6 +242,19 @@ const basis = defineModel<"gross" | "net">("basis", { required: true });
 
 const marketName = (id: string) =>
   props.dims.markets.find((m) => String(m.id) === id)?.name || id;
+
+// RmsNationalityFilter works with an id array; filters.nationalityIds is the
+// comma-joined string form so it can be spread straight into axios params
+// the same way companyIds already is elsewhere.
+const nationalityIdsArray = computed<number[]>({
+  get: () =>
+    props.filters.nationalityIds
+      ? props.filters.nationalityIds.split(",").filter(Boolean).map(Number)
+      : [],
+  set: (ids) => {
+    props.filters.nationalityIds = ids.length ? ids.join(",") : undefined;
+  },
+});
 
 // filters.comparison always keeps a valid YoY submode (pickup/LY-final
 // depend on it regardless of what's displayed); "Budget" is a separate

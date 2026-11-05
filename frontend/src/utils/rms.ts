@@ -110,6 +110,10 @@ export interface Filters {
   // backend's matching mode (pickup, LY-final, etc. depend on it even when
   // the operator is looking at budget); this picks which one is displayed.
   compareWith: "yoy" | "budget";
+  // Comma-joined ids, like companyIds elsewhere - spreads straight into axios
+  // params without a custom serializer.
+  nationalityIds?: string;
+  group?: "fit" | "group" | "";
 }
 export interface CurvePoint {
   lead: number;

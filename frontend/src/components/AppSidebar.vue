@@ -180,6 +180,7 @@ import {
   BookOpenIcon,
   CalendarDaysIcon,
   AdjustmentsHorizontalIcon,
+  GlobeAltIcon,
 } from "@heroicons/vue/24/outline";
 
 defineProps<{ open: boolean }>();
@@ -208,6 +209,7 @@ const navigationAreas: NavArea[] = [
       { name: "Online segment", href: "/rms/online", icon: ChartBarIcon },
       { name: "Pickup by month", href: "/rms/pick-up", icon: ArrowTrendingUpIcon },
       { name: "Company analytics", href: "/rms/company-analytics", icon: BuildingOffice2Icon },
+      { name: "Nationality analytics", href: "/rms/nationality-analytics", icon: GlobeAltIcon },
     ],
   },
   {

@@ -37,7 +37,7 @@ def _add_night(bucket, r, day, rules, fx_rate):
 
 
 @cached_report
-def source_breakdown(start, end, market_id=ONLINE_MARKET_ID, room_type=None, channels=None):
+def source_breakdown(start, end, market_id=ONLINE_MARKET_ID, room_type=None, channels=None, nationality_ids=None, group=None):
     """Current on-the-books nights/revenue by booking company within a
     market segment (default Online) - "where is this demand coming from"."""
     today = be._today().isoformat()
@@ -47,7 +47,7 @@ def source_breakdown(start, end, market_id=ONLINE_MARKET_ID, room_type=None, cha
     totals = defaultdict(_blank)
     names = {}
     for r in states.values():
-        if not be._active(r, today) or not be._matches(r, room_type, market_id, channels):
+        if not be._active(r, today) or not be._matches(r, room_type, market_id, channels, nationality_ids=nationality_ids, group=group):
             continue
         nights = rr._nights(r, start, end)
         if not nights:
@@ -67,7 +67,7 @@ def source_breakdown(start, end, market_id=ONLINE_MARKET_ID, room_type=None, cha
 
 
 @cached_report
-def direct_share(start, end, market_id=ONLINE_MARKET_ID, room_type=None, channels=None):
+def direct_share(start, end, market_id=ONLINE_MARKET_ID, room_type=None, channels=None, nationality_ids=None, group=None):
     """Daily Santika Online (direct) vs named-OTA vs other channel split,
     plus period totals and the direct-channel share of known-channel rooms."""
     today = be._today().isoformat()
@@ -83,7 +83,7 @@ def direct_share(start, end, market_id=ONLINE_MARKET_ID, room_type=None, channel
     daily = defaultdict(lambda: defaultdict(_blank))
     totals = defaultdict(_blank)
     for r in states.values():
-        if not be._active(r, today) or not be._matches(r, room_type, market_id, channels):
+        if not be._active(r, today) or not be._matches(r, room_type, market_id, channels, nationality_ids=nationality_ids, group=group):
             continue
         nights = rr._nights(r, start, end)
         if not nights:

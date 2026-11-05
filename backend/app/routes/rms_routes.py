@@ -106,8 +106,8 @@ def pace_pickup_groups():
     except ValueError:
         return _error("start/end/asOf must be YYYY-MM-DD, pickupDays/limit numbers", 400)
     dimension = request.args.get("dimension", "market")
-    if dimension not in ("market", "company"):
-        return _error("dimension must be market or company", 400)
+    if dimension not in ("market", "company", "nationality", "group"):
+        return _error("dimension must be market, company, nationality or group", 400)
     if end < start or (end - start).days >= MAX_PACE_DAYS:
         return _error(f"Pick an end date on or after the start, at most {MAX_PACE_DAYS} days", 400)
     try:
@@ -115,7 +115,8 @@ def pace_pickup_groups():
         rows = pickup_by_dimension(start.isoformat(), end.isoformat(), dimension, today=as_of,
                                    pickup_days=max(1, min(pickup_days, 90)), room_type=options["room_type"],
                                    market_id=options["market_id"], channels=options["channels"],
-                                   company_ids=options["company_ids"])
+                                   company_ids=options["company_ids"], nationality_ids=options["nationality_ids"],
+                                   group=options["group"])
     except (ValueError, TypeError) as exc:
         return _error(str(exc), 400)
     if limit:
@@ -182,6 +183,23 @@ def _company_ids_arg():
     return values or None
 
 
+def _nationality_ids_arg():
+    raw = request.args.get("nationalityIds")
+    if not raw:
+        return None
+    values = [int(v) for v in raw.split(",") if v]
+    return values or None
+
+
+def _group_arg():
+    raw = request.args.get("group")
+    if not raw:
+        return None
+    if raw not in ("fit", "group"):
+        raise ValueError("group must be fit or group")
+    return raw
+
+
 def _pace_options():
     market = request.args.get("marketId")
     if market:
@@ -196,7 +214,8 @@ def _pace_options():
         date.fromisoformat(custom)
     return {"room_type": request.args.get("roomType") or None, "market_id": market,
             "comparison": mode, "comparison_start": custom, "channels": _channels_arg(),
-            "company_ids": _company_ids_arg()}
+            "company_ids": _company_ids_arg(), "nationality_ids": _nationality_ids_arg(),
+            "group": _group_arg()}
 
 
 @bp.route('/api/rms/settings', methods=['GET', 'PUT'])
@@ -254,7 +273,8 @@ def pace_breakdown():
             market = int(market)
         result = room_rate_breakdown(start.isoformat(), end.isoformat(),
                                      room_type=request.args.get('roomType') or None, market_id=market,
-                                     channels=_channels_arg(), company_ids=_company_ids_arg())
+                                     channels=_channels_arg(), company_ids=_company_ids_arg(),
+                                     nationality_ids=_nationality_ids_arg(), group=_group_arg())
     except (ValueError, TypeError) as exc:
         return _error(str(exc), 400)
     return jsonify({'status': 'success', **result})
@@ -276,7 +296,8 @@ def online_source():
         start, end, market = _online_range()
         result = rms_online.source_breakdown(start.isoformat(), end.isoformat(), market_id=market,
                                              room_type=request.args.get('roomType') or None,
-                                             channels=_channels_arg())
+                                             channels=_channels_arg(), nationality_ids=_nationality_ids_arg(),
+                                             group=_group_arg())
     except (ValueError, TypeError) as exc:
         return _error(str(exc), 400)
     return jsonify({'status': 'success', **result})
@@ -288,7 +309,8 @@ def online_direct_share():
         start, end, market = _online_range()
         result = rms_online.direct_share(start.isoformat(), end.isoformat(), market_id=market,
                                          room_type=request.args.get('roomType') or None,
-                                         channels=_channels_arg())
+                                         channels=_channels_arg(), nationality_ids=_nationality_ids_arg(),
+                                         group=_group_arg())
     except (ValueError, TypeError) as exc:
         return _error(str(exc), 400)
     return jsonify({'status': 'success', **result})

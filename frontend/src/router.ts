@@ -18,6 +18,7 @@ const RmsView = () => import("./views/RmsView.vue");
 const RmsOnlineView = () => import("./views/RmsOnlineView.vue");
 const RmsPickupView = () => import("./views/RmsPickupView.vue");
 const RmsCompanyAnalyticsView = () => import("./views/RmsCompanyAnalyticsView.vue");
+const RmsNationalityAnalyticsView = () => import("./views/RmsNationalityAnalyticsView.vue");
 
 const SeasonCalendarView = () => import("./views/SeasonCalendarView.vue");
 const AllotmentRulesView = () => import("./views/AllotmentRulesView.vue");
@@ -216,6 +217,16 @@ const router = createRouter({
         title: "Company Analytics",
         description:
           "Length of stay, nationality, booking behaviour, pace & pickups and production by company.",
+      },
+    },
+    {
+      path: "/rms/nationality-analytics",
+      name: "rms-nationality-analytics",
+      component: RmsNationalityAnalyticsView,
+      meta: {
+        title: "Nationality Analytics",
+        description:
+          "Length of stay, company, booking behaviour, pace & pickups and production by guest nationality.",
       },
     },
   ],

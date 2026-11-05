@@ -23,7 +23,8 @@ def data_dir(tmp_path, monkeypatch):
 
 
 def api_row(rid, booked, arrival, departure, status="D", folio=None, master=True, rate=1_000_000.0,
-            currency="IDR", type_id="DLT", market_id=8, updated=None, company_id=None, company=None):
+            currency="IDR", type_id="DLT", market_id=8, updated=None, company_id=None, company=None,
+            group_id=None, group_description=None, nationality_id=None, nationality=None):
     return {
         "ReservationId": rid, "FolioId": folio or rid * 10, "IsMasterFolio": master,
         "ReservationDate": f"{booked}T00:00:00", "ArrivalDate": f"{arrival}T00:00:00",
@@ -31,6 +32,8 @@ def api_row(rid, booked, arrival, departure, status="D", folio=None, master=True
         "Nights": (date.fromisoformat(departure) - date.fromisoformat(arrival)).days,
         "ReservationStatus": status, "TypeId": type_id, "RateType": "BAR", "MarketId": market_id,
         "MarketDescription": "Online", "CompanyId": company_id, "CompanyName": company,
+        "GroupId": group_id, "GroupDescription": group_description,
+        "NationalityId": nationality_id, "NationalityDescription": nationality,
         "RoomRate": rate, "Currency": currency, "TimeZone": 8,
         "UpdatedDate": updated or f"{booked}T03:00:00.1234567+00:00",
         # PII the API returns that must never reach disk:
@@ -360,3 +363,118 @@ def test_matches_filters_by_company_ids():
     assert be._matches(row, None, None, company_ids=[5])
     assert not be._matches(row, None, None, company_ids=[7])
     assert be._matches(row, None, None, company_ids=None)
+
+
+def test_ingest_captures_group_and_nationality(data_dir):
+    be.upsert([api_row(1, "2026-10-01", "2026-10-20", "2026-10-21",
+                       group_id=55898, group_description="BI DSDM (04 - 07 Oct 2026)",
+                       nationality_id=78, nationality="Indonesia")])
+    conn = sqlite3.connect(data_dir / be.DB_FILE)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT group_id, group_description, nationality_id, nationality FROM bookings WHERE reservation_id = 1"
+    ).fetchone()
+    assert (row["group_id"], row["group_description"]) == (55898, "BI DSDM (04 - 07 Oct 2026)")
+    assert (row["nationality_id"], row["nationality"]) == (78, "Indonesia")
+    version = json.loads(conn.execute(
+        "SELECT payload FROM booking_versions WHERE reservation_id = 1 ORDER BY id DESC LIMIT 1").fetchone()[0])
+    assert version["group_description"] == "BI DSDM (04 - 07 Oct 2026)"
+    assert version["nationality"] == "Indonesia"
+
+
+def test_is_group_matches_group_description_presence():
+    assert be.is_group({"group_id": 55898, "group_description": "BI DSDM (04 - 07 Oct 2026)"})
+    assert not be.is_group({"group_id": 0, "group_description": ""})
+    assert not be.is_group({"group_id": None, "group_description": None})
+
+
+def test_matches_filters_by_nationality_and_group():
+    fit = {"nationality_id": 78, "group_description": ""}
+    group = {"nationality_id": 1, "group_description": "Some Group"}
+    assert be._matches(fit, None, None, nationality_ids=[78])
+    assert not be._matches(fit, None, None, nationality_ids=[1])
+    assert be._matches(fit, None, None, group="fit")
+    assert not be._matches(fit, None, None, group="group")
+    assert be._matches(group, None, None, group="group")
+    assert not be._matches(group, None, None, group="fit")
+
+
+def test_dimensions_lists_nationalities_seen_in_bookings(data_dir):
+    be.upsert([api_row(1, "2026-10-01", "2026-10-20", "2026-10-22", nationality_id=78, nationality="Indonesia"),
+               api_row(2, "2026-10-01", "2026-10-20", "2026-10-22", nationality_id=13, nationality="Australia")])
+    nationalities = be.dimensions()["nationalities"]
+    assert {"id": 78, "name": "Indonesia"} in nationalities
+    assert {"id": 13, "name": "Australia"} in nationalities
+
+
+def test_migration_backfills_group_into_pre_existing_version_snapshots(data_dir):
+    """Same gap as company (see test_migration_backfills_company_into_pre_existing_version_snapshots):
+    group is static per reservation, so an old snapshot missing it should be
+    patched from the bookings row. Nationality is deliberately NOT backfilled
+    this way - see the comment in _connect()."""
+    conn = sqlite3.connect(data_dir / be.DB_FILE)
+    conn.execute("""CREATE TABLE bookings (
+        reservation_id INTEGER PRIMARY KEY, reservation_date TEXT, arrival_date TEXT, departure_date TEXT,
+        nights INTEGER, status TEXT, market_id INTEGER, company_id INTEGER, company TEXT,
+        group_id INTEGER, group_description TEXT, nationality_id INTEGER, nationality TEXT,
+        room_rate REAL, currency TEXT, cancelled_on TEXT, updated_at TEXT, synced_at TEXT)""")
+    conn.execute("""CREATE TABLE booking_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, reservation_id INTEGER NOT NULL,
+        observed_on TEXT NOT NULL, observed_at TEXT NOT NULL, payload TEXT NOT NULL)""")
+    conn.execute("""INSERT INTO bookings (reservation_id, reservation_date, arrival_date, departure_date,
+        nights, status, market_id, company_id, company, group_id, group_description, nationality_id, nationality,
+        room_rate, currency)
+        VALUES (1, '2025-09-01', '2025-10-01', '2025-10-02', 1, 'D', 8, 11647, 'Booking.com',
+                55898, 'BI DSDM (04 - 07 Oct 2026)', 78, 'Indonesia', 1000000, 'IDR')""")
+    old_payload = json.dumps({"reservation_id": 1, "reservation_date": "2025-09-01",
+                              "arrival_date": "2025-10-01", "departure_date": "2025-10-02",
+                              "status": "D", "market_id": 8, "room_rate": 1000000, "currency": "IDR"})
+    conn.execute("INSERT INTO booking_versions (reservation_id, observed_on, observed_at, payload) VALUES (1, '2025-09-01', '2025-09-01T00:00:00', ?)",
+                (old_payload,))
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT INTO meta (key, value) VALUES ('versionsSeeded', '1')")
+    conn.commit()
+    conn.close()
+    with be._db():  # _connect() runs the migration as a side effect
+        pass
+    conn = sqlite3.connect(data_dir / be.DB_FILE)
+    payload = json.loads(conn.execute(
+        "SELECT payload FROM booking_versions WHERE reservation_id = 1").fetchone()[0])
+    assert (payload["group_id"], payload["group_description"]) == (55898, "BI DSDM (04 - 07 Oct 2026)")
+    # Nationality is not part of the backfill - the old snapshot stays as it was observed.
+    assert "nationality" not in payload
+
+
+def test_build_reports_includes_nationality_and_group_production(data_dir):
+    be.upsert([
+        api_row(1, "2026-10-01", "2026-10-20", "2026-10-21", nationality_id=78, nationality="Indonesia"),
+        api_row(2, "2026-10-01", "2026-10-20", "2026-10-21", nationality_id=13, nationality="Australia",
+               group_id=55898, group_description="BI DSDM (04 - 07 Oct 2026)"),
+    ])
+    with be._db_lock, be._db() as conn:
+        be._set_meta(conn, "backfillFrom", "2023-01-01")
+    from app.revenue.rms_reports import build_reports
+    result = build_reports("2026-10-20", "2026-10-21")
+    assert not any(u["report"] == "Nationality production" for u in result["unavailable"])
+    nationality_rows = {r["id"]: r for r in result["production"]["nationality"]}
+    assert nationality_rows["78"]["name"] == "Indonesia"
+    assert nationality_rows["78"]["rooms"] == 1  # reservation 1: a 1-night stay (20th -> 21st)
+    assert nationality_rows["13"]["name"] == "Australia"
+    group_rows = {r["id"]: r for r in result["production"]["group"]}
+    assert group_rows["group"]["name"] == "Group"
+    assert group_rows["group"]["rooms"] == 1  # reservation 2 is the group booking
+    assert group_rows["fit"]["name"] == "FIT"
+    assert group_rows["fit"]["rooms"] == 1  # reservation 1 is FIT
+
+
+def test_pace_route_accepts_nationality_and_group_filters(client):
+    be.upsert([
+        api_row(1, "2026-10-01", "2026-10-20", "2026-10-22", nationality_id=78, nationality="Indonesia"),
+        api_row(2, "2026-10-01", "2026-10-20", "2026-10-22", group_id=1, group_description="Some Group"),
+    ])
+    res = client.get("/api/rms/pace?start=2026-10-20&end=2026-10-21&nationalityIds=78").get_json()
+    assert [r["rooms"] for r in res["rows"]] == [1, 1]
+    res = client.get("/api/rms/pace?start=2026-10-20&end=2026-10-21&group=group").get_json()
+    assert [r["rooms"] for r in res["rows"]] == [1, 1]
+    assert client.get("/api/rms/pace?start=2026-10-20&end=2026-10-21&group=bogus").status_code == 400
+    assert client.get("/api/rms/room-types").get_json()["nationalities"] == [{"id": 78, "name": "Indonesia"}]

@@ -91,7 +91,14 @@ import {
 ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend);
 
 const props = defineProps<{
-  filters: { start: string; end: string; roomType: string; channels: string[] };
+  filters: {
+    start: string;
+    end: string;
+    roomType: string;
+    channels: string[];
+    nationalityIds?: string;
+    group?: "fit" | "group" | "";
+  };
 }>();
 
 // Ocean gradient: direct (the brand/hero channel) anchors the deep end,

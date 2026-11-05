@@ -95,6 +95,15 @@
           </div>
         </div>
       </div>
+      <RmsNationalityFilter v-model="nationalityIdsArray" :nationalities="dims.nationalities" />
+      <label>
+        <span class="field-label">Booking type</span>
+        <select v-model="filters.group" class="neu-input">
+          <option value="">FIT + Group</option>
+          <option value="fit">FIT only</option>
+          <option value="group">Group only</option>
+        </select>
+      </label>
       <label>
         <span class="field-label">Compare with</span>
         <select v-model="filters.comparison" class="neu-input">
@@ -152,6 +161,7 @@ import RmsOnlineSourceTab from "../components/RmsOnlineSourceTab.vue";
 import RmsOnlinePaceTab from "../components/RmsOnlinePaceTab.vue";
 import RmsOnlineBehaviourTab from "../components/RmsOnlineBehaviourTab.vue";
 import RmsOnlineDirectShareTab from "../components/RmsOnlineDirectShareTab.vue";
+import RmsNationalityFilter from "../components/RmsNationalityFilter.vue";
 import { addDays, hotelToday, loadStoredFilters, saveStoredFilters, shortDayYear } from "../utils/rms";
 
 const today = hotelToday(),
@@ -177,6 +187,8 @@ interface OnlineFilters {
   channels: string[];
   comparison: "weekday" | "calendar" | "custom";
   comparisonStart: string;
+  nationalityIds?: string;
+  group?: "fit" | "group" | "";
 }
 const filters = reactive<OnlineFilters>({
   start: query("start", today),
@@ -185,6 +197,8 @@ const filters = reactive<OnlineFilters>({
   channels: query("channels") ? query("channels").split(",").filter(Boolean) : [],
   comparison: (query("comparison", "weekday") as OnlineFilters["comparison"]) || "weekday",
   comparisonStart: query("comparisonStart"),
+  nationalityIds: query("nationalityIds") || undefined,
+  group: (query("group") as OnlineFilters["group"]) || "",
 });
 const loaded = ref<OnlineFilters | null>(null);
 const error = ref("");
@@ -192,10 +206,21 @@ const dims = reactive<{
   roomTypes: string[];
   labels: Record<string, string>;
   channels: { id: string; name: string }[];
+  nationalities: { id: number; name: string }[];
 }>({
   roomTypes: [],
   labels: {},
   channels: [],
+  nationalities: [],
+});
+// RmsNationalityFilter works with an id array; filters.nationalityIds is the
+// comma-joined string form so it can be spread straight into axios params.
+const nationalityIdsArray = computed<number[]>({
+  get: () =>
+    filters.nationalityIds ? filters.nationalityIds.split(",").filter(Boolean).map(Number) : [],
+  set: (ids) => {
+    filters.nationalityIds = ids.length ? ids.join(",") : undefined;
+  },
 });
 
 const dirty = computed(
@@ -218,6 +243,8 @@ function saveUrl() {
     channels: f.channels.length ? f.channels.join(",") : undefined,
     comparison: f.comparison,
     comparisonStart: f.comparison === "custom" ? f.comparisonStart : undefined,
+    nationalityIds: f.nationalityIds,
+    group: f.group || undefined,
     tab: tab.value,
   };
   router.replace({ query: q });

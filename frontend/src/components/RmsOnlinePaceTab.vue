@@ -120,6 +120,8 @@ const props = defineProps<{
     channels: string[];
     comparison: string;
     comparisonStart: string;
+    nationalityIds?: string;
+    group?: "fit" | "group" | "";
   };
 }>();
 

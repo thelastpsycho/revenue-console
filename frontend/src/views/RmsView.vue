@@ -95,6 +95,10 @@
         :filters="loaded"
         :basis="basis"
         :labels="dims.labels"
+        :extra-dimensions="[
+          { id: 'nationality', label: 'Nationality' },
+          { id: 'group', label: 'FIT / Group' },
+        ]"
         @drilldown="drilldownGroup"
       />
       <RmsRateBreakdown
@@ -269,6 +273,8 @@ const filters = reactive<Filters>({
   comparison: query("comparison", "calendar"),
   comparisonStart: query("comparisonStart"),
   compareWith: query("compareWith") === "budget" ? "budget" : "yoy",
+  nationalityIds: query("nationalityIds") || undefined,
+  group: (query("group") as Filters["group"]) || "",
 });
 const reportSync = ref<Sync | null>(null);
 const loaded = ref<Filters | null>(null),
@@ -280,7 +286,8 @@ const dims = reactive<{
   roomTypes: string[];
   markets: { id: number; name: string }[];
   labels: Record<string, string>;
-}>({ roomTypes: [], markets: [], labels: {} });
+  nationalities: { id: number; name: string }[];
+}>({ roomTypes: [], markets: [], labels: {}, nationalities: [] });
 const sync = ref<Sync | null>(null),
   appliedSettings = ref<Settings | null>(null);
 const notes = ref<Record<string, { text: string; updatedAt: string }>>({}),
@@ -340,6 +347,8 @@ function saveUrl() {
 function drilldownGroup(dimension: string, id: string) {
   if (loaded.value) Object.assign(filters, loaded.value);
   if (dimension === "market") filters.marketId = id;
+  else if (dimension === "nationality") filters.nationalityIds = id;
+  else if (dimension === "group") filters.group = id as Filters["group"];
   else filters.roomType = id;
   tab.value = "pace";
   void loadAll();

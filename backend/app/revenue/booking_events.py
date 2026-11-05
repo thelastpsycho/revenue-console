@@ -141,13 +141,27 @@ def _connect():
         conn.execute("ALTER TABLE bookings ADD COLUMN company_id INTEGER")
     if "company" not in columns:
         conn.execute("ALTER TABLE bookings ADD COLUMN company TEXT")
-    # company/company_id are static per reservation (the booking channel never
-    # changes after creation), but pace/YoY reconstruction reads whichever
+    if "group_id" not in columns:
+        conn.execute("ALTER TABLE bookings ADD COLUMN group_id INTEGER")
+    if "group_description" not in columns:
+        conn.execute("ALTER TABLE bookings ADD COLUMN group_description TEXT")
+    if "nationality_id" not in columns:
+        conn.execute("ALTER TABLE bookings ADD COLUMN nationality_id INTEGER")
+    if "nationality" not in columns:
+        conn.execute("ALTER TABLE bookings ADD COLUMN nationality TEXT")
+    # company/company_id (and, the same way, group_id/group_description) are
+    # static per reservation (the booking channel and group assignment never
+    # change after creation), but pace/YoY reconstruction reads whichever
     # booking_versions snapshot was active "as of" a past date - for
-    # reservations first observed before company was known for them, that
-    # snapshot has no company key, so channel/company filters silently drop
-    # them (only the *current* row, not history, got backfilled). Patch every
-    # such snapshot with the reservation's now-known, time-invariant company.
+    # reservations first observed before company/group was known for them,
+    # that snapshot has no company/group key, so channel/company/group
+    # filters silently drop them (only the *current* row, not history, got
+    # backfilled). Patch every such snapshot with the reservation's now-known,
+    # time-invariant company/group. Nationality is deliberately NOT included
+    # here: unlike company/group it genuinely changes over a reservation's
+    # life (unknown pre-check-in, known after), so forcing today's value into
+    # an old snapshot would misrepresent that past point in time - it's left
+    # to arrive naturally through ordinary version diffing in upsert().
     # Retried once per process (not once ever, and not every request): a
     # reservation's bookings.company_id can still be NULL the first time this
     # runs (its historical PMS backfill hasn't reached it yet) and only gets
@@ -159,7 +173,9 @@ def _connect():
             UPDATE booking_versions
             SET payload = json_set(payload,
                 '$.company_id', (SELECT company_id FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id),
-                '$.company', (SELECT company FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id))
+                '$.company', (SELECT company FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id),
+                '$.group_id', (SELECT group_id FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id),
+                '$.group_description', (SELECT group_description FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id))
             WHERE json_extract(payload, '$.company') IS NULL
               AND EXISTS (SELECT 1 FROM bookings b WHERE b.reservation_id = booking_versions.reservation_id AND b.company IS NOT NULL)
         """)
@@ -173,6 +189,8 @@ def _connect():
           'arrival_date', b.arrival_date, 'departure_date', b.departure_date,
           'status', b.status, 'type_id', b.type_id, 'rate_type', b.rate_type, 'rate_id', b.rate_id,
           'market_id', b.market_id, 'market', b.market, 'company_id', b.company_id, 'company', b.company,
+          'group_id', b.group_id, 'group_description', b.group_description,
+          'nationality_id', b.nationality_id, 'nationality', b.nationality,
           'room_rate', b.room_rate, 'currency', b.currency, 'cancelled_on', b.cancelled_on)
         FROM bookings b WHERE NOT EXISTS (
           SELECT 1 FROM booking_versions v WHERE v.reservation_id = b.reservation_id)""",
@@ -234,6 +252,17 @@ def _normalize(row):
         "market": row.get("MarketDescription"),
         "company_id": row.get("CompanyId"),
         "company": row.get("CompanyName"),
+        # GroupDescription is "" for an ordinary (non-group) reservation and a
+        # free-text group name when it's part of a group block - that empty/
+        # non-empty split is the GIT/FIT signal (GroupId is likewise 0 vs set,
+        # confirmed to agree with GroupDescription on every row seen so far).
+        "group_id": row.get("GroupId"),
+        "group_description": row.get("GroupDescription"),
+        # Unknown until check-in (blank on an advance booking), so this
+        # genuinely changes over a reservation's life - see the comment on
+        # the company/group backfill in _connect() for why that matters.
+        "nationality_id": row.get("NationalityId"),
+        "nationality": row.get("NationalityDescription"),
         "room_rate": room_rate,
         "currency": currency,
         # Net of breakfast and tax/service. This stored column is legacy and
@@ -281,16 +310,19 @@ def upsert(rows):
                     cancelled_on = rec["cancel_day"] or rec["reservation_date"]
             conn.execute("""
                 INSERT OR REPLACE INTO bookings (reservation_id, reservation_date, arrival_date, departure_date,
-                    nights, status, type_id, rate_type, market_id, market, company_id, company, room_rate,
+                    nights, status, type_id, rate_type, market_id, market, company_id, company,
+                    group_id, group_description, nationality_id, nationality, room_rate,
                     currency, net_rate, rate_id, cancelled_on, updated_at, synced_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (rec["reservation_id"], rec["reservation_date"], rec["arrival_date"], rec["departure_date"],
                  rec["nights"], rec["status"], rec["type_id"], rec["rate_type"], rec["market_id"], rec["market"],
-                 rec["company_id"], rec["company"], rec["room_rate"], rec["currency"], rec["net_rate"], rec["rate_id"],
-                 cancelled_on, rec["updated_at"], synced))
+                 rec["company_id"], rec["company"], rec["group_id"], rec["group_description"],
+                 rec["nationality_id"], rec["nationality"], rec["room_rate"], rec["currency"], rec["net_rate"],
+                 rec["rate_id"], cancelled_on, rec["updated_at"], synced))
             version = {key: rec[key] for key in (
                 "reservation_id", "reservation_date", "arrival_date", "departure_date", "status",
                 "type_id", "rate_type", "rate_id", "market_id", "market", "company_id", "company",
+                "group_id", "group_description", "nationality_id", "nationality",
                 "room_rate", "currency")}
             version["cancelled_on"] = cancelled_on
             payload = json.dumps(version, sort_keys=True)
@@ -551,11 +583,19 @@ def channel_bucket(company):
     return OTHER_BUCKET
 
 
-def _matches(r, room_type, market_id, channels=None, company_ids=None):
+def is_group(r):
+    """GroupDescription/GroupId agree on every row sampled so far - either
+    both carry a group block, or neither does (GroupId 0, GroupDescription '')."""
+    return bool((r.get("group_description") or "").strip())
+
+
+def _matches(r, room_type, market_id, channels=None, company_ids=None, nationality_ids=None, group=None):
     return (not room_type or r["type_id"] == room_type) and (
         market_id in (None, "") or r["market_id"] == int(market_id)) and (
         not channels or channel_bucket(r.get("company"))[0] in channels) and (
-        not company_ids or r.get("company_id") in company_ids)
+        not company_ids or r.get("company_id") in company_ids) and (
+        not nationality_ids or r.get("nationality_id") in nationality_ids) and (
+        not group or (group == "group") == is_group(r))
 
 
 def _empty():
@@ -574,7 +614,7 @@ def _idr_rate(r, fx_rate):
     return None
 
 
-def aggregate(states, start, end, as_of, room_type=None, market_id=None, rules=None, channels=None, company_ids=None, fx_rate=None):
+def aggregate(states, start, end, as_of, room_type=None, market_id=None, rules=None, channels=None, company_ids=None, fx_rate=None, nationality_ids=None, group=None):
     from .rms_workspace import net_rate, get_settings
     if rules is None or fx_rate is None:
         settings = get_settings()
@@ -582,7 +622,7 @@ def aggregate(states, start, end, as_of, room_type=None, market_id=None, rules=N
         fx_rate = fx_rate if fx_rate is not None else settings["usdIdrRate"]
     out = {}
     for r in states.values():
-        if not _active(r, as_of) or not _matches(r, room_type, market_id, channels, company_ids):
+        if not _active(r, as_of) or not _matches(r, room_type, market_id, channels, company_ids, nationality_ids, group):
             continue
         first, last = max(start, r["arrival_date"]), min(end, (date.fromisoformat(r["departure_date"]) - timedelta(days=1)).isoformat())
         if first > last:
@@ -598,9 +638,9 @@ def aggregate(states, start, end, as_of, room_type=None, market_id=None, rules=N
     return out
 
 
-def on_the_books(start, end, as_of, room_type=None, market_id=None, channels=None, company_ids=None):
+def on_the_books(start, end, as_of, room_type=None, market_id=None, channels=None, company_ids=None, nationality_ids=None, group=None):
     return aggregate(state_as_of(version_history([(start, end)]), as_of), start, end, as_of, room_type, market_id,
-                     channels=channels, company_ids=company_ids)
+                     channels=channels, company_ids=company_ids, nationality_ids=nationality_ids, group=group)
 
 
 LY_OFFSET = timedelta(days=364)
@@ -626,9 +666,9 @@ def _quality(as_of, coverage, history):
     return "observed" if first and as_of >= first else "estimated"
 
 
-def _occupied_days(r, start, end, as_of, room_type, market_id, channels, company_ids=None):
+def _occupied_days(r, start, end, as_of, room_type, market_id, channels, company_ids=None, nationality_ids=None, group=None):
     """ISO day strings in [start,end] where r is active and matches, as of as_of."""
-    if not r or not _active(r, as_of) or not _matches(r, room_type, market_id, channels, company_ids):
+    if not r or not _active(r, as_of) or not _matches(r, room_type, market_id, channels, company_ids, nationality_ids, group):
         return set()
     first, last = max(start, r["arrival_date"]), min(end, (date.fromisoformat(r["departure_date"]) - timedelta(days=1)).isoformat())
     if first > last:
@@ -636,7 +676,7 @@ def _occupied_days(r, start, end, as_of, room_type, market_id, channels, company
     return set(_stay_dates(first, (date.fromisoformat(last) + timedelta(days=1)).isoformat()))
 
 
-def pickup_breakdown_series(previous, current, start, end, before, today, room_type, market_id, channels=None, company_ids=None):
+def pickup_breakdown_series(previous, current, start, end, before, today, room_type, market_id, channels=None, company_ids=None, nationality_ids=None, group=None):
     """Per-day {newRooms, cancelledRooms, amendedRooms} for the whole
     [start,end] range in one pass over reservations - replaces calling the
     old per-day pickup_breakdown() once per day, which re-diffed every
@@ -645,8 +685,8 @@ def pickup_breakdown_series(previous, current, start, end, before, today, room_t
                for d in _stay_dates(start, (date.fromisoformat(end) + timedelta(days=1)).isoformat())}
     for rid in previous.keys() | current.keys():
         old, cur = previous.get(rid), current.get(rid)
-        old_days = _occupied_days(old, start, end, before, room_type, market_id, channels, company_ids)
-        cur_days = _occupied_days(cur, start, end, today, room_type, market_id, channels, company_ids)
+        old_days = _occupied_days(old, start, end, before, room_type, market_id, channels, company_ids, nationality_ids, group)
+        cur_days = _occupied_days(cur, start, end, today, room_type, market_id, channels, company_ids, nationality_ids, group)
         added, removed = cur_days - old_days, old_days - cur_days
         if added:
             key = "newRooms" if cur["reservation_date"] > before else "amendedRooms"
@@ -685,7 +725,7 @@ def _version_segments(versions, observed_from, range_end):
     return segments
 
 
-def final_rooms_series(history, start, end, rules, room_type=None, market_id=None, channels=None, company_ids=None, fx_rate=None):
+def final_rooms_series(history, start, end, rules, room_type=None, market_id=None, channels=None, company_ids=None, fx_rate=None, nationality_ids=None, group=None):
     """Per-day actuals "as observed on that stay date itself" (no later
     cancellations/amendments counted) for every day in [start,end] - i.e.
     state_as_of(history, day) aggregated at exactly that diagonal day.
@@ -702,7 +742,7 @@ def final_rooms_series(history, start, end, rules, room_type=None, market_id=Non
     out = {d: _empty() for d in _stay_dates(start, range_end)}
     for versions in history.values():
         for seg_start, seg_end, payload in _version_segments(versions, history.observed_from, range_end):
-            if not _matches(payload, room_type, market_id, channels, company_ids):
+            if not _matches(payload, room_type, market_id, channels, company_ids, nationality_ids, group):
                 continue
             lo = max(seg_start, start, payload["arrival_date"])
             hi = min(seg_end, range_end, payload["departure_date"])
@@ -723,7 +763,8 @@ def final_rooms_series(history, start, end, rules, room_type=None, market_id=Non
 
 @cached_report
 def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_days=7,
-               comparison="weekday", comparison_start=None, channels=None, company_ids=None):
+               comparison="weekday", comparison_start=None, channels=None, company_ids=None,
+               nationality_ids=None, group=None):
     from .rms_workspace import get_settings
     from . import rms_budget
     today = today or _today()
@@ -731,19 +772,21 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
     ly_start = comparison_date(s, comparison, comparison_start, start).isoformat()
     ly_end = comparison_date(e, comparison, comparison_start, start).isoformat()
     history = version_history([(start, end), (ly_start, ly_end)])
-    # Segment budget has no room-type, channel or company dimension, so those
-    # filters leave no figure that actually matches what's being compared.
-    budget = {} if room_type or channels or company_ids else rms_budget.daily_totals(start, end, market_id=market_id, basis="gross")
+    # Segment budget has no room-type, channel, company, nationality or group
+    # dimension, so those filters leave no figure that actually matches what's
+    # being compared.
+    budget = ({} if room_type or channels or company_ids or nationality_ids or group
+              else rms_budget.daily_totals(start, end, market_id=market_id, basis="gross"))
     settings = get_settings()
     rules, fx_rate = settings["revenueRules"], settings["usdIdrRate"]
     with _db_lock, _db() as conn:
         coverage = _get_meta(conn, "backfillFrom")
     current_day, prior_day = today.isoformat(), (today - timedelta(days=pickup_days)).isoformat()
     current, previous = state_as_of(history, current_day), state_as_of(history, prior_day)
-    now = aggregate(current, start, end, current_day, room_type, market_id, rules, channels, company_ids, fx_rate=fx_rate)
-    before = aggregate(previous, start, end, prior_day, room_type, market_id, rules, channels, company_ids, fx_rate=fx_rate)
+    now = aggregate(current, start, end, current_day, room_type, market_id, rules, channels, company_ids, fx_rate=fx_rate, nationality_ids=nationality_ids, group=group)
+    before = aggregate(previous, start, end, prior_day, room_type, market_id, rules, channels, company_ids, fx_rate=fx_rate, nationality_ids=nationality_ids, group=group)
     breakdown_series = pickup_breakdown_series(previous, current, start, end, prior_day, current_day,
-                                               room_type, market_id, channels, company_ids)
+                                               room_type, market_id, channels, company_ids, nationality_ids, group)
 
     days_meta = []
     for i in range((e - s).days + 1):
@@ -767,12 +810,12 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
         if m["quality"] != "unavailable":
             as_of_groups.setdefault(m["ly_as_of"], []).append(m["ly"])
     for as_of, lys in as_of_groups.items():
-        bucket = aggregate(state_as_of(history, as_of), min(lys), max(lys), as_of, room_type, market_id, rules, channels, company_ids, fx_rate=fx_rate)
+        bucket = aggregate(state_as_of(history, as_of), min(lys), max(lys), as_of, room_type, market_id, rules, channels, company_ids, fx_rate=fx_rate, nationality_ids=nationality_ids, group=group)
         for ly in lys:
             stly_by_day[ly] = bucket.get(ly, _empty())
 
     # final's as-of is genuinely different per day (see final_rooms_series).
-    final_by_day = final_rooms_series(history, ly_start, ly_end, rules, room_type, market_id, channels, company_ids, fx_rate=fx_rate)
+    final_by_day = final_rooms_series(history, ly_start, ly_end, rules, room_type, market_id, channels, company_ids, fx_rate=fx_rate, nationality_ids=nationality_ids, group=group)
 
     out = []
     for m in days_meta:
@@ -805,7 +848,8 @@ def pace_table(start, end, room_type=None, market_id=None, today=None, pickup_da
 
 @cached_report
 def pace_curve(stay_date, max_lead=180, room_type=None, market_id=None,
-               comparison="weekday", comparison_start=None, range_start=None, channels=None, company_ids=None):
+               comparison="weekday", comparison_start=None, range_start=None, channels=None, company_ids=None,
+               nationality_ids=None, group=None):
     from .rms_workspace import get_settings
     d = date.fromisoformat(stay_date)
     ly = comparison_date(d, comparison, comparison_start, range_start or stay_date)
@@ -823,7 +867,7 @@ def pace_curve(stay_date, max_lead=180, room_type=None, market_id=None,
             quality = _quality(as_of.isoformat(), coverage, history)
             value = aggregate(state_as_of(history, as_of.isoformat()), day.isoformat(), day.isoformat(),
                               as_of.isoformat(), room_type, market_id, rules, channels, company_ids,
-                              fx_rate=fx_rate).get(day.isoformat(), _empty())
+                              fx_rate=fx_rate, nationality_ids=nationality_ids, group=group).get(day.isoformat(), _empty())
             points.append({"lead": lead, "asOf": as_of.isoformat(), "quality": quality,
                            "rooms": value["rooms"] if quality != "unavailable" else None,
                            "revenue": value["revenue"] if quality != "unavailable" else None})
@@ -833,7 +877,9 @@ def pace_curve(stay_date, max_lead=180, room_type=None, market_id=None,
 
 
 def dimensions():
-    """Room types, markets and companies seen in the cache, for filter dropdowns."""
+    """Room types, markets, companies and nationalities seen in the cache, for
+    filter dropdowns. Group isn't listed here: it's a fixed FIT/Group toggle,
+    not an open set of values like these."""
     with _db_lock, _db() as conn:
         types = [r["type_id"] for r in conn.execute(
             "SELECT DISTINCT type_id FROM bookings WHERE type_id IS NOT NULL ORDER BY type_id")]
@@ -843,8 +889,12 @@ def dimensions():
         companies = [{"id": r["company_id"], "name": r["company"]} for r in conn.execute(
             "SELECT company_id, MAX(company) company FROM bookings WHERE company_id IS NOT NULL "
             "GROUP BY company_id ORDER BY company")]
+        nationalities = [{"id": r["nationality_id"], "name": r["nationality"]} for r in conn.execute(
+            "SELECT nationality_id, MAX(nationality) nationality FROM bookings WHERE nationality_id IS NOT NULL "
+            "GROUP BY nationality_id ORDER BY nationality")]
     channels = [{"id": bucket_id, "name": label} for bucket_id, label in BUCKET_ORDER]
-    return {"roomTypes": types, "markets": markets, "channels": channels, "companies": companies}
+    return {"roomTypes": types, "markets": markets, "channels": channels, "companies": companies,
+            "nationalities": nationalities}
 
 
 if __name__ == "__main__":  # python -m app.revenue.booking_events [backfill|daily|weekly] [days]

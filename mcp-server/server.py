@@ -131,9 +131,11 @@ def _check_range(start: str | None, end: str | None) -> None:
         raise ConsoleError(f"end must be on or after start and the range at most {MAX_RANGE_DAYS} days")
 
 
-def _filters(room_type, market_id, channels, company_ids, comparison=None, comparison_start=None):
+def _filters(room_type, market_id, channels, company_ids, comparison=None, comparison_start=None,
+            nationality_ids=None, group=None):
     return {"roomType": room_type, "marketId": market_id, "channels": _csv(channels),
-            "companyIds": _csv(company_ids), "comparison": comparison, "comparisonStart": comparison_start}
+            "companyIds": _csv(company_ids), "comparison": comparison, "comparisonStart": comparison_start,
+            "nationalityIds": _csv(nationality_ids), "group": group}
 
 
 def _by_date(rows: list[dict[str, Any]], start: str | None, end: str | None, key: str = "Date") -> list[dict[str, Any]]:
@@ -168,7 +170,8 @@ def build_server(client: ConsoleClient) -> MCPServer:
                        as_of: str | None = None, comparison: Comparison = "weekday",
                        comparison_start: str | None = None, room_type: str | None = None,
                        market_id: int | None = None, channels: list[str] | None = None,
-                       company_ids: list[int] | None = None) -> dict[str, Any]:
+                       company_ids: list[int] | None = None, nationality_ids: list[int] | None = None,
+                       group: Literal["fit", "group"] | None = None) -> dict[str, Any]:
         """Day-by-day pace for stay dates start..end (default: today + 29 days, max 366).
 
         Per date: rooms, revenue, netRevenue, idrRooms (rooms with a usable IDR rate),
@@ -180,37 +183,45 @@ def build_server(client: ConsoleClient) -> MCPServer:
         comparison: "weekday" = same weekday 364 days earlier, "calendar" = same date,
         "custom" = range starting at comparison_start. as_of pins the pickup window's
         later end to a past date (e.g. pickup during last week). Filters: room_type
-        (type code), market_id, channels (channel bucket ids), company_ids - get ids
-        from list_filters."""
+        (type code), market_id, channels (channel bucket ids), company_ids, nationality_ids
+        - get ids from list_filters. group: "fit" or "group" (group block bookings) -
+        nationality is blank/"unassigned" until check-in on bookings still on the books."""
         _check_range(start, end)
         return await client.get("/api/rms/pace", {
             "start": start, "end": end, "pickupDays": pickup_days, "asOf": as_of,
-            **_filters(room_type, market_id, channels, company_ids, comparison, comparison_start)})
+            **_filters(room_type, market_id, channels, company_ids, comparison, comparison_start,
+                      nationality_ids, group)})
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_pickup_by_group(start: str | None = None, end: str | None = None,
-                                  dimension: Literal["market", "company"] = "market",
+                                  dimension: Literal["market", "company", "nationality", "group"] = "market",
                                   pickup_days: int = 7, as_of: str | None = None, limit: int | None = 20,
                                   room_type: str | None = None, market_id: int | None = None,
                                   channels: list[str] | None = None,
-                                  company_ids: list[int] | None = None) -> dict[str, Any]:
+                                  company_ids: list[int] | None = None,
+                                  nationality_ids: list[int] | None = None,
+                                  group: Literal["fit", "group"] | None = None) -> dict[str, Any]:
         """Who drove pickup: rooms/revenue picked up over the last `pickup_days` for stay
-        dates start..end, grouped by market segment or by company (travel agent / OTA /
-        corporate account), largest first. Use for "who booked last week for December"."""
+        dates start..end, grouped by market segment, company (travel agent / OTA /
+        corporate account), nationality, or FIT vs group-block bookings, largest first.
+        Use for "who booked last week for December"."""
         _check_range(start, end)
         return await client.get("/api/rms/pace/pickup-groups", {
             "start": start, "end": end, "dimension": dimension, "pickupDays": pickup_days,
-            "asOf": as_of, "limit": limit, **_filters(room_type, market_id, channels, company_ids)})
+            "asOf": as_of, "limit": limit,
+            **_filters(room_type, market_id, channels, company_ids, nationality_ids=nationality_ids, group=group)})
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_booking_curve(stay_date: str, max_lead: int = 120, room_type: str | None = None,
                                 market_id: int | None = None, channels: list[str] | None = None,
-                                company_ids: list[int] | None = None) -> dict[str, Any]:
+                                company_ids: list[int] | None = None, nationality_ids: list[int] | None = None,
+                                group: Literal["fit", "group"] | None = None) -> dict[str, Any]:
         """Booking curve for one stay date: rooms and revenue on the books at each lead
         time (days before arrival, up to max_lead, 7-365) for this year and the comparison
         date last year. Use to judge whether a date is building ahead of or behind LY."""
         return await client.get("/api/rms/pace/curve", {
-            "date": stay_date, "maxLead": max_lead, **_filters(room_type, market_id, channels, company_ids)})
+            "date": stay_date, "maxLead": max_lead,
+            **_filters(room_type, market_id, channels, company_ids, nationality_ids=nationality_ids, group=group)})
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_production_report(start: str | None = None, end: str | None = None,
@@ -218,39 +229,46 @@ def build_server(client: ConsoleClient) -> MCPServer:
                                     pickup_days: int = 7, comparison: Comparison = "weekday",
                                     comparison_start: str | None = None, room_type: str | None = None,
                                     market_id: int | None = None, channels: list[str] | None = None,
-                                    company_ids: list[int] | None = None) -> dict[str, Any]:
+                                    company_ids: list[int] | None = None,
+                                    nationality_ids: list[int] | None = None,
+                                    group: Literal["fit", "group"] | None = None) -> dict[str, Any]:
         """Production report for start..end: rooms, revenue and ADR by market, company,
-        room type, rate plan and channel, each with pickup, new/cancelled/amended rooms,
-        last-year comparison and segment budget; market trend; booking behaviour (lead
-        time and length-of-stay distributions, booking/arrival weekdays, cancellations and
-        no-shows by market). date_basis "booking" analyses bookings MADE in the range
-        instead of stays in the range."""
+        room type, rate plan, nationality and FIT/group, each with pickup, new/cancelled/
+        amended rooms, last-year comparison and segment budget; market trend; booking
+        behaviour (lead time and length-of-stay distributions, booking/arrival weekdays,
+        cancellations and no-shows by market). date_basis "booking" analyses bookings MADE
+        in the range instead of stays in the range."""
         _check_range(start, end)
         return await client.get("/api/rms/reports", {
             "start": start, "end": end, "dateBasis": date_basis, "pickupDays": pickup_days,
-            **_filters(room_type, market_id, channels, company_ids, comparison, comparison_start)})
+            **_filters(room_type, market_id, channels, company_ids, comparison, comparison_start,
+                      nationality_ids, group)})
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_room_rate_breakdown(start: str | None = None, end: str | None = None,
                                       room_type: str | None = None, market_id: int | None = None,
                                       channels: list[str] | None = None,
-                                      company_ids: list[int] | None = None) -> dict[str, Any]:
+                                      company_ids: list[int] | None = None,
+                                      nationality_ids: list[int] | None = None,
+                                      group: Literal["fit", "group"] | None = None) -> dict[str, Any]:
         """Rooms, revenue and average rate on the books for start..end broken down by room
         type and rate plan."""
         _check_range(start, end)
         return await client.get("/api/rms/pace/breakdown", {
-            "start": start, "end": end, **_filters(room_type, market_id, channels, company_ids)})
+            "start": start, "end": end,
+            **_filters(room_type, market_id, channels, company_ids, nationality_ids=nationality_ids, group=group)})
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_online_mix(start: str | None = None, end: str | None = None,
                              market_id: int | None = None, room_type: str | None = None,
-                             channels: list[str] | None = None) -> dict[str, Any]:
+                             channels: list[str] | None = None, nationality_ids: list[int] | None = None,
+                             group: Literal["fit", "group"] | None = None) -> dict[str, Any]:
         """Online segment for start..end: production by source/OTA (Booking.com, Agoda,
         Expedia, Traveloka, direct web, ...) and direct-booking share. market_id defaults to
         the Online segment."""
         _check_range(start, end)
         params = {"start": start, "end": end, "marketId": market_id, "roomType": room_type,
-                  "channels": _csv(channels)}
+                  "channels": _csv(channels), "nationalityIds": _csv(nationality_ids), "group": group}
         return {"sources": await client.get("/api/rms/online/source", params),
                 "directShare": await client.get("/api/rms/online/direct-share", params)}
 
