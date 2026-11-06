@@ -27,6 +27,9 @@ import os
 from datetime import datetime, timedelta
 
 from selenium.common.exceptions import UnexpectedAlertPresentException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 from ...inventory.channel_manager_processor import process_cm_inventory
 from .bar_updater import (
@@ -43,6 +46,10 @@ from .bar_updater import (
 
 PLANNING_URL = f"https://extranet.availpro.com/Planning/Monthly?hotelId={HOTEL_ID}&language=en"
 EXPORT_URL = "https://extranet.availpro.com/Planning/Monthly/Export"
+
+ROOMS_FILTER_TEXT_SELECTOR = "#filterRoomsButtonText"
+ROOMS_FILTER_BUTTON_SELECTOR = ".ctx-filters-rooms .button-dropdown-button"
+ROOMS_FILTER_SELECT_ALL_SELECTOR = ".ctx-filters-rooms-dropdown .btnRoomsSelectAll"
 
 _FETCH_EXPORT_SCRIPT = """
 var start = arguments[0];
@@ -111,6 +118,40 @@ def _fetch_export(driver, start_str, end_str, timeout=60, max_attempts=3):
     return base64.b64decode(b64_payload)
 
 
+def _ensure_all_rooms_selected(driver, timeout=15):
+    """The planning page's "Rooms to show" filter is a saved-per-account
+    setting, not a one-off query param - the export endpoint (like the page
+    itself) reads whatever was last saved via Planning/Monthly/SaveFilters,
+    with no room-selection parameter of its own. Found by inspecting the
+    extranet live: this account's filter had been narrowed to just Deluxe
+    Room + Premiere Room, so every CM export silently carried only those two
+    room types, and skip_unchanged's CM-vs-calculated diff could never match
+    for the other 11 (no CM value to compare against at all).
+
+    Click "All" in that filter before every export so a filter left narrowed
+    by someone browsing the extranet by hand doesn't silently resurface.
+    """
+    text_el = WebDriverWait(driver, timeout).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, ROOMS_FILTER_TEXT_SELECTOR))
+    )
+    if text_el.text.strip().lower() == "all rooms":
+        return
+
+    log(driver, f"CM 'Rooms to show' filter was narrowed to {text_el.text.strip()!r} - selecting All before export")
+    driver.find_element(By.CSS_SELECTOR, ROOMS_FILTER_BUTTON_SELECTOR).click()
+    select_all = WebDriverWait(driver, timeout).until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, ROOMS_FILTER_SELECT_ALL_SELECTOR))
+    )
+    select_all.click()
+    # Clicking elsewhere commits the selection (fires SaveFilters) the same
+    # way a human closing the dropdown would.
+    driver.find_element(By.TAG_NAME, "body").click()
+
+    WebDriverWait(driver, timeout).until(
+        lambda d: d.find_element(By.CSS_SELECTOR, ROOMS_FILTER_TEXT_SELECTOR).text.strip().lower() == "all rooms"
+    )
+
+
 def _open_planning(driver):
     """Load Planning/Monthly. It enforces the device-trust check more strictly
     than ensure_logged_in's probe page, so re-check for it here."""
@@ -122,6 +163,7 @@ def _open_planning(driver):
         wait_for_page_load(driver)
         if "/Device" in driver.current_url:
             raise RuntimeError(f"Still on the device-verification page after waiting (at {driver.current_url})")
+    _ensure_all_rooms_selected(driver)
 
 
 def verify_session(username=None, password=None, user_data_dir=DEFAULT_PROFILE_DIR):
