@@ -10,7 +10,12 @@
     "bar": true
   },
   "barRooms": ["deluxe", "premiere"],
-  "allotmentRoomTypes": ["deluxe", "premiere"],
+  "allotmentRoomTypes": [
+    "deluxe", "premiere", "deluxe_suite", "family_premiere", "premiere_suite",
+    "beach_front_private_suite", "anvaya_suite_whirlpool", "anvaya_suite_no_pool",
+    "anvaya_suite_with_pool", "anvaya_residence", "anvaya_villa",
+    "deluxe_pool_access", "premiere_lagoon_access"
+  ],
   "allotmentConcurrency": 4,
   "companyId": 1001,
   "skipUnchanged": true,
