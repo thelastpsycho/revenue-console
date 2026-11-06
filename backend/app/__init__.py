@@ -7,16 +7,18 @@ def create_app():
     init_security(app)
     
     # Configure CORS
+    CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173", "http://10.201.59.16:5173",
+                     "https://sm.anvayabali.com"]
     CORS(app, resources={
         r"/api/*": {
-            "origins": ["http://localhost:5173", "http://127.0.0.1:5173", "http://10.201.59.16:5173"],
+            "origins": CORS_ORIGINS,
             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             "allow_headers": ["Content-Type", "Authorization", "Accept", "X-CSRF-Token"],
             "supports_credentials": True,
             "expose_headers": ["Content-Type", "Authorization"]
         }
     })
-    print(f"CORS origins configured: {['http://localhost:5173', 'http://127.0.0.1:5173', 'http://10.201.59.16:5173']}")
+    print(f"CORS origins configured: {CORS_ORIGINS}")
     
     # Register blueprints here
     from .routes import main
