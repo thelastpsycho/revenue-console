@@ -93,9 +93,10 @@ import {
   difference,
   signClass,
   currentRooms,
-  addDays,
+  bucketDateKey,
   sumKnown,
   ratio,
+  GRANULARITY_VIEWS,
   type PaceRow,
 } from "../utils/rms";
 ChartJS.register(
@@ -165,18 +166,11 @@ const estimated = (r: PaceRow) =>
   [r.comparisonQuality, r.pickupQuality].includes("estimated");
 
 const chartView = ref<string>("monthly");
-const views = [
-  { id: "daily", label: "Daily" },
-  { id: "weekly", label: "Weekly" },
-  { id: "monthly", label: "Monthly" },
-];
+const views = GRANULARITY_VIEWS;
 const buckets = computed(() => {
   const m = new Map<string, PaceRow[]>();
   for (const r of rows.value) {
-    let key = r.date;
-    if (chartView.value === "monthly") key = key.slice(0, 7);
-    if (chartView.value === "weekly")
-      key = addDays(key, -((new Date(`${key}T00:00:00Z`).getUTCDay() + 6) % 7));
+    const key = bucketDateKey(r.date, chartView.value);
     m.set(key, [...(m.get(key) || []), r]);
   }
   return [...m].map(([key, rs]) => {

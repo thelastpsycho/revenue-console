@@ -257,6 +257,24 @@ export const addDays = (iso: string, n: number) => {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 };
+// Shared daily/weekly/monthly/quarterly grouping key for a date - used by
+// the RMS Online tabs' chart-grouping toggles.
+export const GRANULARITY_VIEWS = [
+  { id: "daily", label: "Daily" },
+  { id: "weekly", label: "Weekly" },
+  { id: "monthly", label: "Monthly" },
+  { id: "quarterly", label: "Quarterly" },
+];
+export function bucketDateKey(date: string, chartView: string): string {
+  if (chartView === "monthly") return date.slice(0, 7);
+  if (chartView === "weekly")
+    return addDays(date, -((new Date(`${date}T00:00:00Z`).getUTCDay() + 6) % 7));
+  if (chartView === "quarterly") {
+    const [year, month] = date.slice(0, 7).split("-");
+    return `${year}-Q${Math.ceil(Number(month) / 3)}`;
+  }
+  return date;
+}
 export const hotelToday = () =>
   new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Makassar",

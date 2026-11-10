@@ -1,9 +1,21 @@
 <template>
   <RmsCard
     title="Santika Online vs OTA"
-    :description="`Daily room nights by channel, current on-the-books. ${quality === 'estimated' ? 'Based on partially reconstructed history.' : ''}`"
+    :description="`Room nights by channel, current on-the-books. ${quality === 'estimated' ? 'Based on partially reconstructed history.' : ''}`"
   >
     <template #actions>
+      <div class="seg" role="group" aria-label="Chart grouping">
+        <button
+          v-for="v in views"
+          :key="v.id"
+          type="button"
+          class="seg-btn"
+          :aria-pressed="chartView === v.id"
+          @click="chartView = v.id"
+        >
+          {{ v.label }}
+        </button>
+      </div>
       <button class="btn-flat" :disabled="!series.length" @click="exportCsv">
         <ArrowDownTrayIcon class="h-4 w-4" /> Export CSV
       </button>
@@ -79,12 +91,15 @@ import axios from "../plugins/axios";
 import RmsCard from "./RmsCard.vue";
 import RmsSkeleton from "./RmsSkeleton.vue";
 import {
+  bucketDateKey,
   csvText,
   money,
   moneyShort,
   num,
   percent,
   ratio,
+  GRANULARITY_VIEWS,
+  type BreakdownMetrics,
   type ChannelBucket,
   type DirectShareSeriesPoint,
 } from "../utils/rms";
@@ -157,6 +172,20 @@ onBeforeUnmount(() => {
   ++generation;
 });
 
+const chartView = ref<string>("daily");
+const views = GRANULARITY_VIEWS;
+const bucketedSeries = computed(() => {
+  const m = new Map<string, Record<string, number>>();
+  for (const s of series.value) {
+    const key = bucketDateKey(s.date, chartView.value);
+    const acc = m.get(key) || {};
+    for (const b of buckets.value)
+      acc[b.id] = (acc[b.id] || 0) + ((s[b.id] as BreakdownMetrics | undefined)?.rooms ?? 0);
+    m.set(key, acc);
+  }
+  return [...m].map(([key, rooms]) => ({ key, rooms }));
+});
+
 const totalRooms = computed(() =>
   buckets.value.reduce((s, b) => s + b.rooms, 0),
 );
@@ -172,12 +201,12 @@ const topBuckets = computed(() =>
 );
 
 const chartData = computed(() => ({
-  labels: series.value.map((s) => s.date),
+  labels: bucketedSeries.value.map((s) => s.key),
   datasets: buckets.value
     .filter((b) => b.rooms > 0 || b.id === "direct")
     .map((b) => ({
       label: b.name,
-      data: series.value.map((s) => (s[b.id] as any)?.rooms ?? 0),
+      data: bucketedSeries.value.map((s) => s.rooms[b.id] ?? 0),
       backgroundColor: BUCKET_COLORS[b.id] || "#94a3b8",
       stack: "channel",
     })),
