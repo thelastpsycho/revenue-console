@@ -73,9 +73,14 @@ Changing rules restates estimated net calculations, not stored gross history.
 RevPAR is explicitly the **IDR revenue component divided by room capacity** and
 is unavailable when capacity is missing or a market filter is active. These are
 booking positions, not audited actual room revenue. PMS forecast revenue/ADR use
-the PMS report's definitions and are displayed separately. PMS RoomUsed semantics
-are not fully verified; a reconciliation difference is a reason to check, not an
-automatic assertion that either source is wrong.
+the PMS report's definitions and are displayed separately. Pace's OTB rooms
+count excludes zero-rate reservations (`booking_events._matches`) to match the
+PMS forecast report's own RoomUsed definition, which excludes complimentary and
+house-use rooms (reporting them separately as Complimentary/HouseUse) - without
+this, pace-derived occupancy (pick-up, production reports) runs a point or two
+above the PMS forecast tab's occupancy for the same dates, since the PMS report
+isn't scraped down to individual-reservation granularity, so comp/house-use
+can only be identified by a zero room rate, not a confirmed rate-type code.
 
 Last-applied BAR reads the existing confirmed local apply record, labeled with
 its file timestamp. It is not live rate verification or an IDR quote. Physical

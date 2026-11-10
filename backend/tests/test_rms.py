@@ -111,18 +111,49 @@ def test_ingest_computes_net_rate_net_of_breakfast_and_tax_excludes_usd(data_dir
     assert net_rates[2] is None
 
 
-def test_adr_basis_converts_usd_nights_and_floors_zero_rate_rooms():
+def test_adr_basis_converts_usd_nights_and_excludes_comp_rooms():
     be.upsert([
         api_row(1, "2026-10-01", "2026-10-20", "2026-10-21", rate=1_560_000.0),
-        api_row(2, "2026-10-01", "2026-10-20", "2026-10-21", rate=0.0),               # comp: net 0, not negative
+        api_row(2, "2026-10-01", "2026-10-20", "2026-10-21", rate=0.0),               # comp/house-use: excluded entirely
         api_row(3, "2026-10-01", "2026-10-20", "2026-10-21", currency="USD", rate=150.0),
     ])
     day = be.pace_table("2026-10-20", "2026-10-20")[0]
-    assert (day["rooms"], day["idrRooms"]) == (3, 3)
+    # Zero-rate rooms don't count toward OTB rooms, matching the PMS's own
+    # RoomUsed definition (which reports Complimentary/HouseUse separately).
+    assert (day["rooms"], day["idrRooms"]) == (2, 2)
     usd_idr = 150.0 * 16000  # default usdIdrRate
     expected_net = (1_560_000 - be.BREAKFAST_IDR) / (1 + be.TAX_SERVICE_RATE) + (usd_idr - be.BREAKFAST_IDR) / (1 + be.TAX_SERVICE_RATE)
-    assert day["netRevenue"] == pytest.approx(expected_net)               # (1,560,000 - 350,000)/1.21 + 0 + (USD converted - 350,000)/1.21
-    assert day["netRevenue"] / day["idrRooms"] == pytest.approx(expected_net / 3)
+    assert day["netRevenue"] == pytest.approx(expected_net)               # (1,560,000 - 350,000)/1.21 + (USD converted - 350,000)/1.21
+    assert day["netRevenue"] / day["idrRooms"] == pytest.approx(expected_net / 2)
+
+
+def test_matches_excludes_zero_rate_comp_or_house_use_rooms():
+    comp = {"room_rate": 0.0, "type_id": "DLT", "market_id": 8}
+    paid = {"room_rate": 1_000_000.0, "type_id": "DLT", "market_id": 8}
+    assert not be._matches(comp, None, None)
+    assert be._matches(paid, None, None)
+
+
+def test_on_the_books_excludes_comp_and_house_use_rooms():
+    be.upsert([
+        api_row(1, "2026-10-01", "2026-10-20", "2026-10-21"),             # paid
+        api_row(2, "2026-10-01", "2026-10-20", "2026-10-21", rate=0.0),   # comp/house-use
+    ])
+    otb = be.on_the_books("2026-10-20", "2026-10-20", "2026-10-11")
+    assert (otb["2026-10-20"]["rooms"], otb["2026-10-20"]["idrRooms"]) == (1, 1)
+
+
+def test_pace_table_excludes_comp_rooms_from_otb_and_pickup():
+    with be._db() as conn:
+        be._set_meta(conn, "backfillFrom", "2023-01-01")
+    be.upsert([
+        api_row(1, "2026-09-01", "2026-10-20", "2026-10-21"),                     # paid, booked early
+        api_row(2, "2026-10-06", "2026-10-20", "2026-10-21", rate=0.0),           # comp, within last 7 days
+    ])
+    row = be.pace_table("2026-10-20", "2026-10-20")[0]
+    # The comp reservation never counts toward rooms or pickup, matching the
+    # PMS forecast report's RoomUsed (which excludes comp/house-use rooms).
+    assert (row["rooms"], row["pickupRooms"]) == (1, 0)
 
 
 def test_ingest_captures_company_id_and_name(data_dir):

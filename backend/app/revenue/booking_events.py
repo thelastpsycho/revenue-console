@@ -590,7 +590,11 @@ def is_group(r):
 
 
 def _matches(r, room_type, market_id, channels=None, company_ids=None, nationality_ids=None, group=None):
-    return (not room_type or r["type_id"] == room_type) and (
+    # Zero-rate reservations are complimentary/house-use rooms. The PMS's own
+    # forecast occupancy report excludes them from RoomUsed and reports them
+    # separately (Complimentary/HouseUse) - pace's OTB rooms count must match
+    # that exclusion, or it overstates occupancy relative to the PMS figure.
+    return r.get("room_rate") != 0 and (not room_type or r["type_id"] == room_type) and (
         market_id in (None, "") or r["market_id"] == int(market_id)) and (
         not channels or channel_bucket(r.get("company"))[0] in channels) and (
         not company_ids or r.get("company_id") in company_ids) and (
