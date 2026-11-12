@@ -129,8 +129,8 @@ def test_validate_rejects_deluxe_suite_borrowing_from_itself():
 
 def test_validate_delegates_suite_routing_to_load_policy():
     data = _valid()
-    # Beach Front Private Suite Room has no upgrade destinations by hotel rule.
-    data["suiteRouting"] = {"routes": {"Beach Front Private Suite Room": ["The Anvaya Villa"]}}
+    # Routing a suite "up" to a lower-tier room violates the hotel order.
+    data["suiteRouting"] = {"routes": {"Beach Front Private Suite Room": ["Deluxe Room"]}}
     with pytest.raises(ar.ValidationError, match="restrictions"):
         ar.validate_settings(data)
 

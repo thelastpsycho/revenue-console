@@ -28,11 +28,6 @@ ROOM_TIERS = [
     'The Anvaya Villa',
 ]
 DEFAULT_ROUTES = {room: ROOM_TIERS[index + 1:] for index, room in enumerate(ROOM_TIERS)}
-DEFAULT_ROUTES['Beach Front Private Suite Room'] = []
-DEFAULT_ROUTES['Premiere Room Lagoon Access'] = [
-    'The Anvaya Suite Whirpool', 'Beach Front Private Suite Room',
-]
-DEFAULT_ROUTES['Deluxe Pool Access'] = ['Premiere Room Lagoon Access']
 
 
 def room_count(value, name, signed=False):
@@ -50,8 +45,8 @@ def room_count(value, name, signed=False):
 def load_policy(room_types, policy=None):
     """Runtime JSON is shared by default, custom and pipeline yield calculations.
 
-    Unspecified routes retain the hotel tier order and its two exceptions.
-    Explicit routes may narrow eligibility, but cannot bypass those rules.
+    Unspecified routes retain the hotel tier order.
+    Explicit routes may narrow eligibility, but cannot bypass that order.
     """
     if policy is None:
         path = os.environ.get('ALLOCATION_POLICY_PATH', get_data_path('allocation_policy.json'))

@@ -247,28 +247,14 @@ def test_null_outside_scope_is_ignored_for_deluxe_premiere_run(tmp_path):
 
 
 @pytest.mark.parametrize('source', engine.ROOM_CAPS)
-def test_default_routes_follow_hotel_order_and_exceptions(source):
+def test_default_routes_follow_hotel_order(source):
     from app.revenue.upgrade_reserves import ROOM_TIERS
     expected = ROOM_TIERS[ROOM_TIERS.index(source) + 1:]
-    if source == L:
-        expected = ['The Anvaya Suite Whirpool', 'Beach Front Private Suite Room']
-    elif source == 'Beach Front Private Suite Room':
-        expected = []
-    elif source == 'Deluxe Pool Access':
-        expected = [L]
     assert load_policy(engine.ROOM_CAPS, {})['routes'][source] == expected
 
 
-@pytest.mark.parametrize('source', [L, 'Beach Front Private Suite Room'])
-def test_restricted_categories_cannot_indirectly_upgrade_to_villa(source):
-    row = calculate({source: -1, 'The Anvaya Villa': 1}, policy={})
-    assert row['Unresolved Upgrade Rooms'] == 1
-    assert row['The Anvaya Villa Upgrade Reserve'] == 0
-
-
 @pytest.mark.parametrize('source,destination', [
-    (L, 'The Anvaya Villa'), ('Beach Front Private Suite Room', 'The Anvaya Residence'),
-    (P, 'Deluxe Pool Access'), ('Deluxe Pool Access', P),
+    (P, 'Deluxe Pool Access'), (L, 'Deluxe Room'),
 ])
 def test_custom_policy_cannot_bypass_hotel_restrictions(source, destination):
     with pytest.raises(ValueError, match='restrictions'):
@@ -281,26 +267,27 @@ def test_deluxe_prefers_pool_access_before_premiere():
     assert row[f'{P} Upgrade Reserve'] == 1
 
 
-def test_deluxe_pool_access_can_only_upgrade_to_premiere_lagoon_access():
-    """Deluxe Pool Access's only upgrade destination is Premiere Room Lagoon
-    Access - a shortage must not borrow from Premiere Room or any other
-    higher category, even when they have spare capacity."""
+def test_deluxe_pool_access_falls_back_to_premiere_room_by_default():
+    """Deluxe Pool Access is no longer hardcoded to Premiere Room Lagoon
+    Access only - with no custom policy it follows the full hotel tier
+    order, so a shortage can borrow from Premiere Room when it has spare
+    capacity. Restricting it to Lagoon Access only is now a suiteRouting
+    setting, not a code default."""
     row = calculate({'Deluxe Pool Access': -1, P: 5, L: 0}, policy={}, deluxe_override_amount=0)
-    assert row['Unresolved Upgrade Rooms'] == 1
-    assert row[f'{P} Upgrade Reserve'] == 0
-
-    row = calculate({'Deluxe Pool Access': -1, P: 5, L: 2}, policy={}, deluxe_override_amount=0)
     assert row['Unresolved Upgrade Rooms'] == 0
-    assert row[f'{L} Upgrade Reserve'] == 1
-    assert row[f'{P} Upgrade Reserve'] == 0
+    assert row[f'{P} Upgrade Reserve'] == 1
 
 
-def test_lagoon_uses_only_whirlpool_then_beach_front():
+def test_lagoon_follows_full_tier_order_by_default():
+    """Premiere Room Lagoon Access is no longer hardcoded to Whirlpool/Beach
+    Front only - with no custom policy it follows the full hotel tier order,
+    so a shortage is covered by Premiere Suite Room (which sits earlier in
+    that order and has spare capacity) rather than skipping to Whirlpool."""
     row = calculate({L: -3, 'The Anvaya Suite Whirpool': 2,
                      'Beach Front Private Suite Room': 2, S: 8}, policy={})
-    assert row['The Anvaya Suite Whirpool Upgrade Reserve'] == 2
-    assert row['Beach Front Private Suite Room Upgrade Reserve'] == 1
-    assert row[f'{S} Upgrade Reserve'] == 0
+    assert row[f'{S} Upgrade Reserve'] == 3
+    assert row['The Anvaya Suite Whirpool Upgrade Reserve'] == 0
+    assert row['Beach Front Private Suite Room Upgrade Reserve'] == 0
 
 
 def test_default_yield_persists_only_deluxe_premiere_with_no_policy(tmp_path, monkeypatch):
