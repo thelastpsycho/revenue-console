@@ -2,6 +2,7 @@
 import os
 from datetime import datetime, timezone
 from flask import Blueprint, current_app, jsonify
+from ..accounts import users as accounts_users
 from ..infrastructure.paths import get_data_path
 from ..revenue import booking_events, rms_budget, report_cache
 from ..revenue.yield_engine import ROOM_CAPS
@@ -34,7 +35,7 @@ def overview():
         'mappings': {'roomTypes': LABEL_BY_CHECKBOX_VALUE, 'roomCapacities': ROOM_CAPS,
                      'budgetSegments': rms_budget.MARKET_ID_BY_SEGMENT,
                      'channelGroups': [{'id': key, 'label': label} for key, label in booking_events.BUCKET_ORDER]},
-        'access': {'configured': auth['configured'], 'developmentMode': auth['dev_mode'], 'model': 'Shared operator PIN',
-                   'sessionHours': 8},
+        'access': {'configured': auth['configured'], 'developmentMode': auth['dev_mode'], 'model': 'Per-operator accounts',
+                   'sessionHours': 8, 'userCount': len(accounts_users.list_users()) if auth['configured'] else None},
         'backups': {'managed': False, 'message': 'No managed backup service is configured in this app. Verify external backups with your system administrator.'},
         'reportTimings': report_cache.timings()})

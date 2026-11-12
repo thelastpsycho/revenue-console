@@ -5,6 +5,7 @@ import os
 
 from flask import Blueprint, jsonify, request
 
+from ..accounts.permissions import require_permission
 from ..infrastructure.paths import get_data_path
 from ..integrations.dedge import bar_holds
 
@@ -24,6 +25,7 @@ def list_bar_holds():
 
 
 @bp.route('/api/bar/holds', methods=['POST'])
+@require_permission('manage_bar_holds')
 def add_bar_hold():
     data = request.get_json(silent=True) or {}
     try:
@@ -36,6 +38,7 @@ def add_bar_hold():
 
 
 @bp.route('/api/bar/holds/<hold_id>', methods=['DELETE'])
+@require_permission('manage_bar_holds')
 def remove_bar_hold(hold_id):
     try:
         removed = bar_holds.remove_hold(hold_id)

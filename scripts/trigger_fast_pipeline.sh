@@ -210,7 +210,7 @@ for step in skip_steps:
     steps[step] = False
 
 with open(login_body, "w") as f:
-    json.dump({"pin": env.get("APP_ACCESS_PIN")}, f)
+    json.dump({"username": env.get("APP_SCHEDULER_USERNAME"), "password": env.get("APP_SCHEDULER_PASSWORD")}, f)
 with open(payload_body, "w") as f:
     json.dump(config, f)
 with open(host_port_file, "w") as f:
