@@ -6,6 +6,7 @@ import threading
 
 from flask import Blueprint, jsonify, request
 
+from ..accounts.permissions import require_permission
 from ..integrations.dedge import device_auth
 from ..integrations.dedge.inventory_scraper import verify_session
 from ..pipeline import fast_runner
@@ -20,6 +21,7 @@ def dedge_auth_status():
 
 
 @bp.route('/api/dedge/auth/code', methods=['POST'])
+@require_permission('run_dedge_scrape')
 def dedge_auth_code():
     data = request.get_json(silent=True) or {}
     ok, message = device_auth.submit_code(data.get("code"))
@@ -27,6 +29,7 @@ def dedge_auth_code():
 
 
 @bp.route('/api/dedge/auth/resend', methods=['POST'])
+@require_permission('run_dedge_scrape')
 def dedge_auth_resend():
     ok, message = device_auth.request_resend()
     return jsonify({"status": "success" if ok else "error", "message": message}), (200 if ok else 400)
@@ -43,6 +46,7 @@ def _run_check():
 
 
 @bp.route('/api/dedge/auth/check', methods=['POST'])
+@require_permission('run_dedge_scrape')
 def dedge_auth_check():
     """Opens D-EDGE in the shared Chrome profile, so it takes the pipeline lock
     (a run and a check can't drive the same profile at once)."""

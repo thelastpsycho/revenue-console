@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from flask import Blueprint, jsonify, request, g
 import time
 
+from ..accounts.permissions import require_permission
 from ..integrations.pms.fast_allotment_updater import LABEL_BY_CHECKBOX_VALUE
 from ..revenue import booking_events, rms_forecast, rms_online, rms_workspace
 
@@ -220,6 +221,8 @@ def _pace_options():
 
 @bp.route('/api/rms/settings', methods=['GET', 'PUT'])
 def settings():
+    if request.method == 'PUT' and 'manage_rms_settings' not in g.current_user.get('permissions', ()):
+        return _error("Forbidden", 403)
     try:
         value = rms_workspace.save_settings(request.get_json(silent=True)) if request.method == 'PUT' else rms_workspace.get_settings()
     except (ValueError, TypeError, KeyError) as exc:
@@ -228,6 +231,7 @@ def settings():
 
 
 @bp.route('/api/rms/notes/<day>', methods=['PUT'])
+@require_permission('manage_rms_settings')
 def note(day):
     try:
         body = request.get_json(silent=True)

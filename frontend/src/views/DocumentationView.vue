@@ -535,19 +535,23 @@
     >
       <h2 class="font-semibold">Security &amp; access</h2>
       <p class="text-sm text-slate-700">
-        The whole UI is gated behind a 6-digit operator PIN
-        (<code>APP_ACCESS_PIN</code>) and a signed session
-        (<code>APP_SESSION_SECRET</code>); every write request carries a CSRF
-        token issued at login. Authenticated endpoints simply don't exist
-        until both are configured on the backend. Provider credentials (e.g.
-        for any AI integration) are never passed through frontend-visible
-        <code>VITE_*</code> variables.
+        The whole UI is gated behind per-operator accounts (username/password,
+        created from the <router-link to="/users" class="underline">Users</router-link>
+        page) and a signed session (<code>APP_SESSION_SECRET</code>); every write
+        request carries a CSRF token issued at login. Authenticated endpoints
+        simply don't exist until the session secret is configured on the backend
+        and at least one account exists. Each account has its own set of
+        fine-grained permissions - viewing dashboards is open to any logged-in
+        account, but triggering scrapes, pushing allotment/BAR, sending
+        stop-sale emails, running the pipeline and editing settings each need
+        their own permission. Provider credentials (e.g. for any AI integration)
+        are never passed through frontend-visible <code>VITE_*</code> variables.
       </p>
       <p class="text-xs text-slate-500">
         The MCP server that lets Claude query this data is strictly
-        read-only: it logs in with the same operator PIN and calls the same
-        GET endpoints the UI does — it has no path to write inventory,
-        allotment, BAR, or stop-sale state.
+        read-only: it logs in with its own dedicated account (no permissions
+        needed) and calls the same GET endpoints the UI does — it has no path
+        to write inventory, allotment, BAR, or stop-sale state.
       </p>
     </section>
 

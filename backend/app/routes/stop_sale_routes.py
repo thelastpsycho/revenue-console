@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request
 
+from ..accounts.permissions import require_permission
 from ..stop_sale import mailer, rules, store
 
 bp = Blueprint('stop_sale', __name__)
@@ -60,6 +61,7 @@ def get_settings():
 
 
 @bp.route('/api/stop-sale/settings', methods=['PUT'])
+@require_permission('manage_stop_sale')
 def save_settings():
     try:
         settings = store.save_settings(request.get_json(silent=True))
@@ -74,6 +76,7 @@ def list_recipients():
 
 
 @bp.route('/api/stop-sale/recipients', methods=['POST'])
+@require_permission('manage_stop_sale')
 def add_recipient():
     try:
         recipient = store.add_recipient(request.get_json(silent=True) or {})
@@ -83,6 +86,7 @@ def add_recipient():
 
 
 @bp.route('/api/stop-sale/recipients/<int:recipient_id>', methods=['PUT'])
+@require_permission('manage_stop_sale')
 def update_recipient(recipient_id):
     try:
         recipient = store.update_recipient(recipient_id, request.get_json(silent=True) or {})
@@ -94,6 +98,7 @@ def update_recipient(recipient_id):
 
 
 @bp.route('/api/stop-sale/recipients/<int:recipient_id>', methods=['DELETE'])
+@require_permission('manage_stop_sale')
 def delete_recipient(recipient_id):
     if not store.delete_recipient(recipient_id):
         return _error("Recipient not found", 404)
@@ -211,6 +216,7 @@ def _start_job(email_settings, ranges, recipients, resend_of=None):
 
 
 @bp.route('/api/stop-sale/send', methods=['POST'])
+@require_permission('manage_stop_sale')
 def send():
     data = request.get_json(silent=True) or {}
     recipients = store.get_recipients()
@@ -224,6 +230,7 @@ def send():
 
 
 @bp.route('/api/stop-sale/history/<int:log_id>/resend', methods=['POST'])
+@require_permission('manage_stop_sale')
 def resend_failed(log_id):
     """Resends send `log_id` - the same dates/room types and email text as
     it went out - to recipients it failed for (or never reached) that have
@@ -272,6 +279,7 @@ def send_status():
 
 
 @bp.route('/api/stop-sale/send-stop', methods=['POST'])
+@require_permission('manage_stop_sale')
 def send_stop():
     """Stops a running send before its next email; emails already sent stay sent."""
     if not _job_snapshot()["running"]:
@@ -281,6 +289,7 @@ def send_stop():
 
 
 @bp.route('/api/stop-sale/send-test', methods=['POST'])
+@require_permission('manage_stop_sale')
 def send_test():
     """Sends the email for the ticked dates to one address only (subject
     prefixed [TEST], not logged) - for checking SMTP and the layout."""

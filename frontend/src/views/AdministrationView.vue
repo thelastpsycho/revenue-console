@@ -117,10 +117,14 @@
                 : "Authentication not configured"
           }}
         </p>
-        <p class="text-xs text-slate-500">
-          Individual accounts and roles are not configured. Ask your system
-          administrator to change the shared access credentials.
+        <p class="text-sm">
+          Signed in as <span class="font-semibold">{{ auth.user?.displayName }}</span>
+          ({{ auth.user?.permissions.length || 0 }} permission{{ auth.user?.permissions.length === 1 ? '' : 's' }})
         </p>
+        <p v-if="data.access.userCount != null" class="text-xs text-slate-500">
+          {{ data.access.userCount }} account{{ data.access.userCount === 1 ? '' : 's' }} configured.
+        </p>
+        <router-link to="/users" class="block text-sm underline">Manage users &amp; permissions</router-link>
         <button class="btn-flat px-3 py-2 text-xs" @click="logout">
           Sign out
         </button>
@@ -182,8 +186,10 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import axios from "../plugins/axios";
+import { useAuthStore } from "../stores/auth";
 import { timestamp } from "../utils/rms";
 const route = useRoute(),
+  auth = useAuthStore(),
   data = ref<any>(null),
   loading = ref(false),
   error = ref("");
@@ -237,8 +243,7 @@ async function load() {
 }
 async function logout() {
   try {
-    await axios.post("/api/auth/logout");
-    window.dispatchEvent(new Event("operator-session-expired"));
+    await auth.logout();
   } catch {
     error.value = "Could not sign out. Please retry.";
   }
