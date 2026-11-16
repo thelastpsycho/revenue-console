@@ -6,6 +6,7 @@ from flask import Blueprint, jsonify, Response, request, stream_with_context
 import threading
 import json
 
+from ..accounts.permissions import require_permission
 from ..pipeline import fast_runner
 from ..pipeline import fast_pipeline_log_store
 from ..pipeline import fast_pipeline_schedule
@@ -43,6 +44,7 @@ def fast_pipeline_status():
 
 
 @bp.route('/api/fast-pipeline/start', methods=['POST'])
+@require_permission('run_pipeline')
 def start_fast_pipeline():
     data = request.get_json(silent=True) or {}
     required = ['startDate', 'yieldConfig']
@@ -88,6 +90,7 @@ def get_fast_pipeline_schedule():
 
 
 @bp.route('/api/fast-pipeline/schedule', methods=['PUT'])
+@require_permission('run_pipeline')
 def update_fast_pipeline_schedule():
     data = request.get_json(silent=True) or {}
     try:
@@ -100,6 +103,7 @@ def update_fast_pipeline_schedule():
 
 
 @bp.route('/api/fast-pipeline/schedule/tick', methods=['POST'])
+@require_permission('run_pipeline')
 def fast_pipeline_schedule_tick():
     """Polled by the scheduler container (trigger_fast_pipeline.py --managed).
     Starts a run when one is due; otherwise just records the heartbeat.
@@ -167,6 +171,7 @@ def fast_pipeline_search():
 
 
 @bp.route('/api/fast-pipeline/stop', methods=['POST'])
+@require_permission('run_pipeline')
 def stop_fast_pipeline():
     """Best-effort: interrupts between steps only. The allotment step's
     concurrent push has no mid-batch stop check (see fast_allotment_updater.py) -

@@ -6,6 +6,7 @@ Selenium-based implementations are never touched by this work.
 
 from flask import Blueprint, jsonify, request
 
+from ..accounts.permissions import require_permission
 from ..integrations.pms.fast_allotment_updater import (
     ROOM_TYPES,
     FULL_ROOM_TYPE_CONFIG,
@@ -66,6 +67,7 @@ def inventory():
 
 
 @bp.route('/api/pms-fast/allotment', methods=['POST'])
+@require_permission('push_pms_allotment')
 def allotment():
     data = request.get_json(silent=True) or {}
     required = ['roomType', 'startDate', 'endDate', 'numberOfRooms']
@@ -136,6 +138,7 @@ def allotment_bulk_plan():
 
 
 @bp.route('/api/pms-fast/allotment-bulk/push', methods=['POST'])
+@require_permission('push_pms_allotment')
 def allotment_bulk_push():
     data = request.get_json(silent=True) or {}
     try:

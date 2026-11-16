@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router";
+import { useAuthStore } from "./stores/auth";
 const DashboardView = () => import("./views/DashboardView.vue");
 const InventoryCollectionView = () =>
   import("./views/InventoryCollectionView.vue");
@@ -25,11 +26,14 @@ const AllotmentRulesView = () => import("./views/AllotmentRulesView.vue");
 
 const AdministrationView = () => import("./views/AdministrationView.vue");
 const DocumentationView = () => import("./views/DocumentationView.vue");
+const UsersManagementView = () => import("./views/UsersManagementView.vue");
 
 declare module "vue-router" {
   interface RouteMeta {
     title: string;
     description: string;
+    // Permission key required to enter the route; omitted = any logged-in user.
+    permission?: string;
   }
 }
 
@@ -73,6 +77,7 @@ const router = createRouter({
         title: "Scraping",
         description:
           "Log into the PMS and capture room availability, then process and combine inventory.",
+        permission: "run_pms_scrape",
       },
     },
     {
@@ -82,6 +87,7 @@ const router = createRouter({
       meta: {
         title: "Yield Management",
         description: "Run the demand matrix and tune allocation strategies.",
+        permission: "run_yield",
       },
     },
     {
@@ -100,6 +106,7 @@ const router = createRouter({
       meta: {
         title: "Allotment",
         description: "Push the calculated allotment changes back into the PMS.",
+        permission: "push_pms_allotment",
       },
     },
     {
@@ -110,6 +117,7 @@ const router = createRouter({
         title: "BAR Calculator",
         description:
           "Pick a BAR level and a discount %, and see the resulting rate for every room type.",
+        permission: "push_dedge_bar",
       },
     },
     {
@@ -119,6 +127,7 @@ const router = createRouter({
       meta: {
         title: "Pipeline",
         description: "Run the entire scrape-to-BAR-pricing pipeline end-to-end with one click.",
+        permission: "run_pipeline",
       },
     },
     {
@@ -139,6 +148,7 @@ const router = createRouter({
         title: "Fast API Pipeline",
         description:
           "Same scrape-to-BAR-pricing pipeline, but PMS steps call its JSON API directly.",
+        permission: "run_pipeline",
       },
     },
     {
@@ -158,6 +168,7 @@ const router = createRouter({
         title: "Stop Sale",
         description:
           "Email a stop sale on all static rates to partners when inventory shows the hotel or a room type is full.",
+        permission: "manage_stop_sale",
       },
     },
     {
@@ -168,6 +179,7 @@ const router = createRouter({
         title: "Season Calendar",
         description:
           "Named date ranges (Nyepi, Lebaran, Lunar New Year, Easter, Australian school holidays, events) that set the yield engine's season tier.",
+        permission: "manage_season_calendar",
       },
     },
     {
@@ -178,6 +190,17 @@ const router = createRouter({
         title: "Allotment Rules",
         description:
           "Release rules per room type, the Deluxe Suite borrow trigger, and suite upgrade routing/buffers/holds.",
+        permission: "manage_allotment_rules",
+      },
+    },
+    {
+      path: "/users",
+      name: "users",
+      component: UsersManagementView,
+      meta: {
+        title: "Users",
+        description: "Create and manage operator accounts and their permissions.",
+        permission: "manage_users",
       },
     },
     {
@@ -230,6 +253,15 @@ const router = createRouter({
       },
     },
   ],
+});
+
+router.beforeEach((to) => {
+  if (!to.meta.permission) return true;
+  const auth = useAuthStore();
+  // AuthGate blocks unauthenticated access app-wide; this only narrows which
+  // pages a logged-in user without the page's permission can reach.
+  if (!auth.authenticated || auth.hasPermission(to.meta.permission)) return true;
+  return { name: "home" };
 });
 
 const DEFAULT_DESCRIPTION =

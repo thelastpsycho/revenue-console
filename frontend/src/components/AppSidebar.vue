@@ -41,7 +41,7 @@
     <!-- Navigation -->
     <nav class="flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden px-3 py-5">
       <section
-        v-for="area in navigationAreas"
+        v-for="area in visibleAreas"
         :key="area.name"
         class="mb-4"
         :aria-label="area.name"
@@ -162,6 +162,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useRoute } from "vue-router";
 import axios from "../plugins/axios";
+import { useAuthStore } from "../stores/auth";
 import {
   HomeIcon,
   CircleStackIcon,
@@ -181,12 +182,14 @@ import {
   CalendarDaysIcon,
   AdjustmentsHorizontalIcon,
   GlobeAltIcon,
+  UsersIcon,
 } from "@heroicons/vue/24/outline";
 
 defineProps<{ open: boolean }>();
 defineEmits<{ (e: "close"): void }>();
 
 const route = useRoute();
+const auth = useAuthStore();
 
 interface NavItem {
   name: string;
@@ -194,7 +197,9 @@ interface NavItem {
   icon: typeof HomeIcon;
   // Shown as a title-tooltip hint, e.g. "g i" for the global "go to" chord.
   shortcut?: string;
-  children?: { name: string; href: string }[];
+  // Permission key required to see this item; omitted = any logged-in user.
+  permission?: string;
+  children?: { name: string; href: string; permission?: string }[];
 }
 interface NavArea {
   name: string;
@@ -216,10 +221,10 @@ const navigationAreas: NavArea[] = [
     name: "Distribution Operations",
     items: [
       { name: "Inventory tables", href: "/data?tab=combined", icon: TableCellsIcon, shortcut: "g i" },
-      { name: "Automation", href: "/fast-api-pipeline", icon: BoltIcon },
+      { name: "Automation", href: "/fast-api-pipeline", icon: BoltIcon, permission: "run_pipeline" },
       { name: "Run history", href: "/fast-pipeline-history", icon: ClockIcon },
-      { name: "Stop sale", href: "/stop-sale", icon: EnvelopeIcon },
-      { name: "BAR", href: "/bar-calculator", icon: ReceiptPercentIcon },
+      { name: "Stop sale", href: "/stop-sale", icon: EnvelopeIcon, permission: "manage_stop_sale" },
+      { name: "BAR", href: "/bar-calculator", icon: ReceiptPercentIcon, permission: "push_dedge_bar" },
     ],
   },
   {
@@ -254,11 +259,19 @@ const navigationAreas: NavArea[] = [
         name: "Season calendar",
         href: "/season-calendar",
         icon: CalendarDaysIcon,
+        permission: "manage_season_calendar",
       },
       {
         name: "Allotment rules",
         href: "/allotment-rules",
         icon: AdjustmentsHorizontalIcon,
+        permission: "manage_allotment_rules",
+      },
+      {
+        name: "Users",
+        href: "/users",
+        icon: UsersIcon,
+        permission: "manage_users",
       },
       {
         name: "Advanced",
@@ -266,11 +279,11 @@ const navigationAreas: NavArea[] = [
         icon: BeakerIcon,
         children: [
           { name: "Inventory tables", href: "/data" },
-          { name: "Manual yielder", href: "/yielder" },
+          { name: "Manual yielder", href: "/yielder", permission: "run_yield" },
           { name: "PMS API test", href: "/pms-api-test" },
-          { name: "Manual inventory collection", href: "/scraping" },
-          { name: "Manual allotment", href: "/allotment" },
-          { name: "Legacy pipeline", href: "/pipeline" },
+          { name: "Manual inventory collection", href: "/scraping", permission: "run_pms_scrape" },
+          { name: "Manual allotment", href: "/allotment", permission: "push_pms_allotment" },
+          { name: "Legacy pipeline", href: "/pipeline", permission: "run_pipeline" },
         ],
       },
     ],
@@ -282,6 +295,26 @@ const navigationAreas: NavArea[] = [
     ],
   },
 ];
+const visibleAreas = computed(() =>
+  navigationAreas
+    .map((area) => {
+      const items = area.items
+        .map((item) => ({
+          ...item,
+          children: item.children?.filter(
+            (child) => !child.permission || auth.hasPermission(child.permission),
+          ),
+        }))
+        .filter((item) =>
+          item.children
+            ? item.children.length > 0
+            : !item.permission || auth.hasPermission(item.permission),
+        );
+      return { ...area, items };
+    })
+    .filter((area) => area.items.length > 0),
+);
+
 function isActive(href: string) {
   const [path, search] = href.split("?");
   if (route.path !== path) return false;

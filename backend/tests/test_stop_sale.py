@@ -7,6 +7,8 @@ from datetime import date
 import pytest
 
 from app import create_app
+from app.accounts import users as accounts_users
+from app.accounts.permissions import PERMISSION_KEYS
 from app.revenue import yield_engine
 from app.stop_sale import mailer, rules, store
 
@@ -234,14 +236,17 @@ def test_throttle_settings_validation():
 
 
 @pytest.fixture
-def client(monkeypatch):
-    monkeypatch.setenv("APP_ACCESS_PIN", "123456")
+def client(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_SESSION_SECRET", "b" * 48)
     monkeypatch.delenv("ALLOW_INSECURE_LOCAL_DEV", raising=False)
+    monkeypatch.setattr(accounts_users, "get_data_path", lambda name: str(tmp_path / name))
+    accounts_users.create_user({"username": "test-operator", "password": "correct-password-1",
+                                "permissions": sorted(PERMISSION_KEYS)})
     application = create_app()
     application.testing = True
     c = application.test_client()
-    csrf = c.post("/api/auth/login", json={"pin": "123456"}).get_json()["csrf_token"]
+    csrf = c.post("/api/auth/login",
+                  json={"username": "test-operator", "password": "correct-password-1"}).get_json()["csrf_token"]
     c.environ_base["HTTP_X_CSRF_TOKEN"] = csrf
     return c
 

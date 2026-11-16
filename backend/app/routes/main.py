@@ -10,6 +10,7 @@ from ..integrations.dedge.bar_updater import update_bar
 from ..shared import log_queue, allotment_run_control
 from ..pipeline import runner as pipeline_runner
 from ..pipeline import fast_runner, fast_pipeline_schedule
+from ..accounts.permissions import require_permission
 import queue
 import threading
 import time
@@ -82,6 +83,7 @@ def health_check():
     return jsonify({"status": "healthy"})
 
 @bp.route('/api/scrape', methods=['POST'])
+@require_permission('run_pms_scrape')
 def trigger_scrape():
     global scraping_active, scraping_error
     if _pipeline_busy():
@@ -147,6 +149,7 @@ def scrape_stream():
     )
 
 @bp.route('/api/combine-inventory', methods=['POST'])
+@require_permission('run_yield')
 def trigger_combine():
     if _pipeline_busy():
         return jsonify({"status": "error", "message": "A pipeline run is currently in progress; please wait for it to finish."}), 409
@@ -209,6 +212,7 @@ def trigger_combine():
         }), 500
 
 @bp.route('/api/yield', methods=['POST'])
+@require_permission('run_yield')
 def trigger_yield():
     if _pipeline_busy():
         return jsonify({"status": "error", "message": "A pipeline run is currently in progress; please wait for it to finish."}), 409
@@ -271,6 +275,7 @@ def trigger_yield():
         }), 500
 
 @bp.route('/api/process-cm', methods=['POST'])
+@require_permission('run_dedge_scrape')
 def trigger_process_cm():
     try:
         result = process_cm_inventory()
@@ -300,6 +305,7 @@ def stream_scrape_cm_logs():
     )
 
 @bp.route('/api/scrape-cm', methods=['POST'])
+@require_permission('run_dedge_scrape')
 def trigger_scrape_cm():
     """Log into D-EDGE / Availpro, export the Rooms planning grid, and process it.
 
@@ -342,6 +348,7 @@ def trigger_scrape_cm():
         }), 500
 
 @bp.route('/api/custom-yield', methods=['POST'])
+@require_permission('run_yield')
 def trigger_custom_yield():
     if _pipeline_busy():
         return jsonify({"status": "error", "message": "A pipeline run is currently in progress; please wait for it to finish."}), 409
@@ -431,6 +438,7 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 @bp.route('/api/upload-cm-excel', methods=['POST'])
+@require_permission('run_dedge_scrape')
 def upload_cm_excel():
     if 'file' not in request.files:
         return jsonify({'status': 'error', 'message': 'No file part'}), 400
@@ -471,6 +479,7 @@ def stream_allotment_logs():
     )
 
 @bp.route('/api/update-allotment', methods=['POST'])
+@require_permission('push_pms_allotment')
 def trigger_update_allotment():
     """Trigger allotment update process"""
     if _pipeline_busy():
@@ -539,24 +548,28 @@ def trigger_update_allotment():
         }), 500
 
 @bp.route('/api/update-allotment/stop', methods=['POST'])
+@require_permission('push_pms_allotment')
 def stop_update_allotment():
     """Request the running Deluxe/Premiere/Rest allotment update to stop"""
     allotment_run_control.stop_event.set()
     return jsonify({'status': 'success', 'message': 'Stop requested'})
 
 @bp.route('/api/update-allotment/pause', methods=['POST'])
+@require_permission('push_pms_allotment')
 def pause_update_allotment():
     """Request the running Deluxe/Premiere/Rest allotment update to pause"""
     allotment_run_control.pause_event.set()
     return jsonify({'status': 'success', 'message': 'Pause requested'})
 
 @bp.route('/api/update-allotment/resume', methods=['POST'])
+@require_permission('push_pms_allotment')
 def resume_update_allotment():
     """Resume a paused Deluxe/Premiere/Rest allotment update"""
     allotment_run_control.pause_event.clear()
     return jsonify({'status': 'success', 'message': 'Resume requested'})
 
 @bp.route('/api/update-rest-allotment', methods=['POST'])
+@require_permission('push_pms_allotment')
 def trigger_update_rest_allotment():
     """Trigger allotment update process for the 11 room types other than Deluxe/Premiere"""
     if _pipeline_busy():
@@ -629,6 +642,7 @@ def stream_bar_logs():
     )
 
 @bp.route('/api/update-bar', methods=['POST'])
+@require_permission('push_dedge_bar')
 def trigger_update_bar():
     """Trigger the D-EDGE / Availpro BAR price-level update process.
 

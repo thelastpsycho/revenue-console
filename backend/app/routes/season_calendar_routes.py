@@ -4,6 +4,7 @@ of the old hardcoded Jul-Aug/Christmas-New-Year rule."""
 
 from flask import Blueprint, jsonify, request
 
+from ..accounts.permissions import require_permission
 from ..revenue import season_calendar
 
 bp = Blueprint('season_calendar', __name__)
@@ -20,6 +21,7 @@ def list_periods():
 
 
 @bp.route('/api/season-calendar/periods', methods=['POST'])
+@require_permission('manage_season_calendar')
 def add_period():
     try:
         period = season_calendar.add_period(request.get_json(silent=True) or {})
@@ -29,6 +31,7 @@ def add_period():
 
 
 @bp.route('/api/season-calendar/periods/<int:period_id>', methods=['PUT'])
+@require_permission('manage_season_calendar')
 def update_period(period_id):
     try:
         period = season_calendar.update_period(period_id, request.get_json(silent=True) or {})
@@ -40,6 +43,7 @@ def update_period(period_id):
 
 
 @bp.route('/api/season-calendar/periods/<int:period_id>', methods=['DELETE'])
+@require_permission('manage_season_calendar')
 def delete_period(period_id):
     if not season_calendar.delete_period(period_id):
         return _error("Period not found", 404)

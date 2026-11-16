@@ -68,7 +68,7 @@ def test_cached_results_cannot_be_mutated_by_caller():
 def test_administration_omits_secrets_and_marks_backup_status(client):
     data=client.get('/api/administration/overview').get_json()
     assert data['backups']['managed'] is False
-    assert data['access']['model']=='Shared operator PIN'
+    assert data['access']['model']=='Per-operator accounts'
     assert '123456' not in str(data) and 'APP_SESSION_SECRET' not in str(data)
     assert 'reportTimings' in data
 

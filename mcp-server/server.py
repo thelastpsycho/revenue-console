@@ -1,19 +1,22 @@
 """Revenue Console MCP server - read-only access to the console's data for Claude.
 
 This is a thin client of the Flask backend: every tool is one or two GET
-requests against the existing /api endpoints, made with the operator PIN.
-Nothing here opens the SQLite files directly, so the backend's in-process
-locks, report caches and forecast leases keep working exactly as they do for
-the web UI, and no tool can change PMS, D-EDGE, allotments, BAR or emails.
+requests against the existing /api endpoints, made with a dedicated
+read-only service account. Nothing here opens the SQLite files directly, so
+the backend's in-process locks, report caches and forecast leases keep
+working exactly as they do for the web UI, and no tool can change PMS,
+D-EDGE, allotments, BAR or emails.
 
 Transports
   stdio            python server.py                (Claude Desktop / Claude Code on one machine)
   streamable HTTP  python server.py --http         (remote connector, e.g. behind the Cloudflare tunnel)
 
 Environment
-  REVENUE_CONSOLE_URL   backend base URL (default http://backend:5666; through the
-                        tunnel use the console's public URL - nginx proxies /api)
-  REVENUE_CONSOLE_PIN   the backend's APP_ACCESS_PIN
+  REVENUE_CONSOLE_URL        backend base URL (default http://backend:5666; through the
+                             tunnel use the console's public URL - nginx proxies /api)
+  REVENUE_CONSOLE_USERNAME   username of a Revenue Console account (create one from the
+  REVENUE_CONSOLE_PASSWORD   Users page or scripts/bootstrap_admin.py - no permissions are
+                             needed since every tool here only reads)
   MCP_ACCESS_TOKEN      required for --http; callers send it as
                         "Authorization: Bearer <token>" or use the URL /<token>/mcp
   MCP_ALLOWED_HOSTS     comma-separated public hostnames for --http (Host-header check)
@@ -69,11 +72,13 @@ class ConsoleError(ToolError):
 
 
 class ConsoleClient:
-    """Logs in with the operator PIN and retries once when the session expires."""
+    """Logs in with a dedicated service account and retries once when the session expires."""
 
-    def __init__(self, base_url: str, pin: str, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(self, base_url: str, username: str, password: str,
+                 transport: httpx.AsyncBaseTransport | None = None):
         self.base_url = base_url.rstrip("/")
-        self.pin = pin
+        self.username = username
+        self.password = password
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
 
@@ -84,9 +89,10 @@ class ConsoleClient:
         return self._client
 
     async def _login(self) -> None:
-        if not self.pin:
-            raise ConsoleError("REVENUE_CONSOLE_PIN is not set on the MCP server")
-        resp = await self._http().post("/api/auth/login", json={"pin": self.pin})
+        if not self.username or not self.password:
+            raise ConsoleError("REVENUE_CONSOLE_USERNAME/REVENUE_CONSOLE_PASSWORD are not set on the MCP server")
+        resp = await self._http().post("/api/auth/login",
+                                       json={"username": self.username, "password": self.password})
         if resp.status_code != 200:
             raise ConsoleError(f"Login to Revenue Console failed ({resp.status_code}): {_message(resp)}")
 
@@ -400,7 +406,8 @@ def main() -> None:
     args = parser.parse_args()
 
     client = ConsoleClient(os.environ.get("REVENUE_CONSOLE_URL", DEFAULT_URL),
-                           os.environ.get("REVENUE_CONSOLE_PIN", ""))
+                           os.environ.get("REVENUE_CONSOLE_USERNAME", ""),
+                           os.environ.get("REVENUE_CONSOLE_PASSWORD", ""))
     server = build_server(client)
     if not args.http:
         server.run("stdio")

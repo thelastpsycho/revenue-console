@@ -83,7 +83,7 @@ MANAGED_TICK_SECONDS = 30
 # matching bash's dotenv_values() behavior for local/manual runs where
 # nothing has pre-populated the process environment.
 ENV_KEYS = (
-    "APP_ACCESS_PIN", "APP_HOST", "APP_PORT",
+    "APP_SCHEDULER_USERNAME", "APP_SCHEDULER_PASSWORD", "APP_HOST", "APP_PORT",
     "PMS_USERNAME", "PMS_PASSWORD", "DEDGE_USERNAME", "DEDGE_PASSWORD",
 )
 
@@ -198,9 +198,10 @@ def wait_for_backend(session, base_url, attempts=30):
     raise PipelineRunError(f"backend never came up at {base_url}")
 
 
-def login(session, base_url, pin):
+def login(session, base_url, username, password):
     try:
-        resp = session.post(f"{base_url}/api/auth/login", json={"pin": pin}, timeout=10)
+        resp = session.post(f"{base_url}/api/auth/login",
+                            json={"username": username, "password": password}, timeout=10)
         resp.raise_for_status()
         return resp.json()["csrf_token"]
     except (requests.RequestException, KeyError, ValueError) as exc:
@@ -255,7 +256,7 @@ def run_once(args):
     session = requests.Session()
     wait_for_backend(session, base_url)
 
-    csrf_token = login(session, base_url, env.get("APP_ACCESS_PIN"))
+    csrf_token = login(session, base_url, env.get("APP_SCHEDULER_USERNAME"), env.get("APP_SCHEDULER_PASSWORD"))
 
     skip_msg = f", skipping: {' '.join(args.skip_steps)}" if args.skip_steps else ""
     mode = "LIVE" if args.live else "safe/preview"
@@ -344,7 +345,7 @@ def managed_loop(args):
             if csrf_token is None:
                 session = requests.Session()
                 wait_for_backend(session, base_url)
-                csrf_token = login(session, base_url, env.get("APP_ACCESS_PIN"))
+                csrf_token = login(session, base_url, env.get("APP_SCHEDULER_USERNAME"), env.get("APP_SCHEDULER_PASSWORD"))
             resp = session.post(
                 f"{base_url}/api/fast-pipeline/schedule/tick",
                 headers={"X-CSRF-Token": csrf_token},

@@ -8,6 +8,8 @@ from datetime import date, datetime
 import pytest
 
 from app import create_app
+from app.accounts import users as accounts_users
+from app.accounts.permissions import PERMISSION_KEYS
 from app.revenue import booking_events as be
 from app.revenue import rms_forecast
 
@@ -359,14 +361,17 @@ def test_canonicalize_counts_merges_variants_and_leaves_other_fields_alone():
 
 
 @pytest.fixture
-def client(monkeypatch):
-    monkeypatch.setenv("APP_ACCESS_PIN", "123456")
+def client(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_SESSION_SECRET", "b" * 48)
     monkeypatch.delenv("ALLOW_INSECURE_LOCAL_DEV", raising=False)
+    monkeypatch.setattr(accounts_users, "get_data_path", lambda name: str(tmp_path / name))
+    accounts_users.create_user({"username": "test-operator", "password": "correct-password-1",
+                                "permissions": sorted(PERMISSION_KEYS)})
     application = create_app()
     application.testing = True
     c = application.test_client()
-    csrf = c.post("/api/auth/login", json={"pin": "123456"}).get_json()["csrf_token"]
+    csrf = c.post("/api/auth/login",
+                  json={"username": "test-operator", "password": "correct-password-1"}).get_json()["csrf_token"]
     c.environ_base["HTTP_X_CSRF_TOKEN"] = csrf
     return c
 

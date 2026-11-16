@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, Response, request, stream_with_context
 import threading
 import json
 
+from ..accounts.permissions import require_permission
 from ..pipeline import runner as pipeline_runner
 
 bp = Blueprint('pipeline', __name__)
@@ -23,6 +24,7 @@ def pipeline_status():
 
 
 @bp.route('/api/pipeline/start', methods=['POST'])
+@require_permission('run_pipeline')
 def start_pipeline():
     data = request.get_json(silent=True) or {}
     # pmsUsername/pmsPassword/dedgeUsername/dedgePassword are optional here - each
@@ -88,6 +90,7 @@ def stream_pipeline_logs():
 
 
 @bp.route('/api/pipeline/stop', methods=['POST'])
+@require_permission('run_pipeline')
 def stop_pipeline():
     """Best-effort: interrupts between steps (checked before each step
     begins), or mid-step only during the allotment step (the only stage that

@@ -1,30 +1,37 @@
-"""Single-operator session auth for every API endpoint.
+"""Per-user session auth for every API endpoint.
 
-APP_ACCESS_PIN and APP_SESSION_SECRET must be configured before the API
-becomes available. Optional insecure development is restricted to an explicit
+APP_SESSION_SECRET must be configured, and at least one operator account
+must exist (see scripts/bootstrap_admin.py), before the API becomes
+available. Optional insecure development is restricted to an explicit
 opt-in on a loopback-bound Flask server.
 """
 import hmac
 import os
-import re
 import secrets
 from datetime import timedelta
 
-from flask import jsonify, request, session
+from flask import g, jsonify, request, session
 
-_PIN_RE = re.compile(r"^\d{6}$")
+from .accounts import users as accounts_users
+from .accounts.permissions import PERMISSION_KEYS
+
+DEV_USER = {
+    "id": 0,
+    "username": "dev",
+    "displayName": "Local Dev",
+    "permissions": sorted(PERMISSION_KEYS),
+    "isActive": True,
+}
 
 
 def init_security(app):
-    access_pin = os.environ.get("APP_ACCESS_PIN", "")
     session_secret = os.environ.get("APP_SESSION_SECRET", "")
     dev_flag = os.environ.get("ALLOW_INSECURE_LOCAL_DEV") == "1"
     host = os.environ.get("APP_HOST", "127.0.0.1")
-    dev_mode = dev_flag and host in ("127.0.0.1", "localhost", "::1") and not access_pin
-    configured = (bool(_PIN_RE.match(access_pin)) and len(session_secret) >= 32 and
-                  not session_secret.startswith("replace-"))
-    if (access_pin or session_secret) and not configured:
-        raise RuntimeError("Set APP_ACCESS_PIN to exactly 6 digits and APP_SESSION_SECRET to a random 32+ character secret; example values are invalid")
+    dev_mode = dev_flag and host in ("127.0.0.1", "localhost", "::1") and not session_secret
+    configured = len(session_secret) >= 32 and not session_secret.startswith("replace-")
+    if session_secret and not configured:
+        raise RuntimeError("Set APP_SESSION_SECRET to a random 32+ character secret; example values are invalid")
 
     # When unconfigured, the API is locked (not openly accessible). Health and
     # auth/status remain available to report the missing configuration.
@@ -39,7 +46,6 @@ def init_security(app):
     app.extensions["operator_auth"] = {
         "configured": configured,
         "dev_mode": dev_mode,
-        "pin": access_pin,
     }
 
     @app.before_request
@@ -50,11 +56,16 @@ def init_security(app):
             return None
         auth = app.extensions["operator_auth"]
         if auth["dev_mode"]:
+            g.current_user = DEV_USER
             return None
         if not auth["configured"]:
-            return jsonify({"status": "error", "message": "API access is not configured; set APP_ACCESS_PIN and APP_SESSION_SECRET"}), 503
-        if not session.get("authenticated"):
+            return jsonify({"status": "error", "message": "API access is not configured; set APP_SESSION_SECRET"}), 503
+        user_id = session.get("user_id")
+        user = accounts_users.get_user(user_id) if user_id is not None else None
+        if not user or not user["isActive"]:
+            session.clear()
             return jsonify({"status": "error", "message": "Authentication required"}), 401
+        g.current_user = user
         if request.method in ("POST", "PUT", "PATCH", "DELETE"):
             actual = request.headers.get("X-CSRF-Token", "")
             expected = session.get("csrf_token", "")

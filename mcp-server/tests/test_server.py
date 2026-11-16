@@ -13,7 +13,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import server  # noqa: E402
 
-PIN = "123456"
+USERNAME = "mcp-service"
+PASSWORD = "correct-password-123"
 
 INVENTORY = [{"Date": "2026-10-30 00:00:00", "Occupancy": 81.0, "Deluxe": 3},
              {"Date": "2026-10-31 00:00:00", "Occupancy": 92.4, "Deluxe": 0},
@@ -21,7 +22,7 @@ INVENTORY = [{"Date": "2026-10-30 00:00:00", "Occupancy": 81.0, "Deluxe": 3},
 
 
 class FakeBackend:
-    """Mimics the Flask auth: 401 until POST /api/auth/login with the right PIN."""
+    """Mimics the Flask auth: 401 until POST /api/auth/login with the right credentials."""
 
     def __init__(self):
         self.requests = []
@@ -31,10 +32,11 @@ class FakeBackend:
         self.requests.append(request)
         path = request.url.path
         if path == "/api/auth/login":
-            ok = json.loads(request.content).get("pin") == PIN
+            body = json.loads(request.content)
+            ok = body.get("username") == USERNAME and body.get("password") == PASSWORD
             self.logged_in = ok
             return httpx.Response(200 if ok else 401, json={"status": "success" if ok else "error",
-                                                            "message": None if ok else "Invalid PIN"})
+                                                            "message": None if ok else "Invalid username or password"})
         if request.method != "GET":
             return httpx.Response(405)
         if not self.logged_in:
@@ -48,9 +50,9 @@ class FakeBackend:
         return httpx.Response(404, json={"status": "error", "message": "Database file not found"})
 
 
-def make(pin=PIN):
+def make(username=USERNAME, password=PASSWORD):
     backend = FakeBackend()
-    client = server.ConsoleClient("http://console.test", pin, transport=httpx.MockTransport(backend))
+    client = server.ConsoleClient("http://console.test", username, password, transport=httpx.MockTransport(backend))
     return backend, server.build_server(client)
 
 
@@ -101,8 +103,8 @@ async def test_bad_range_and_backend_errors_are_tool_errors():
 
 
 @pytest.mark.anyio
-async def test_wrong_pin_is_reported():
-    _, mcp = make(pin="000000")
+async def test_wrong_password_is_reported():
+    _, mcp = make(password="wrong-password")
     async with Client(mcp) as c:
         result = await c.call_tool("get_revenue_briefing", {})
     assert result.is_error and "Login to Revenue Console failed (401)" in result.content[0].text

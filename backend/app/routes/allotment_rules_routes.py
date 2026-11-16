@@ -5,6 +5,7 @@ upgrade_reserves.py instead of hardcoded per-room dispatch."""
 
 from flask import Blueprint, jsonify, request
 
+from ..accounts.permissions import require_permission
 from ..revenue import allotment_rules
 
 bp = Blueprint('allotment_rules', __name__)
@@ -28,6 +29,7 @@ def get_settings():
 
 
 @bp.route('/api/allotment-rules/settings', methods=['PUT'])
+@require_permission('manage_allotment_rules')
 def save_settings():
     try:
         settings = allotment_rules.save_settings(request.get_json(silent=True) or {})
