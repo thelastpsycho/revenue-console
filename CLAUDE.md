@@ -94,7 +94,7 @@ Each reservation also carries `nationality`/`nationality_id` (`NationalityDescri
 
 ### MCP server
 
-`mcp-server/` is a read-only MCP server (separate `mcp` compose service, opt-in via `COMPOSE_PROFILES=mcp`) so Claude can query the console's data. It is a thin HTTP client of the backend's GET endpoints, authenticated with a personal API key (`app/accounts/mcp_keys.py`, minted from the `/mcp-access` page - `routes/mcp_keys_routes.py`) sent as a bearer token - it never opens the SQLite files directly. When adding or renaming a GET endpoint that answers a data question, consider adding a tool in `mcp-server/server.py`; its tests verify every called path exists. Setup: `mcp-server/README.md`.
+`mcp-server/` is a read-only MCP server (separate `mcp` compose service, opt-in via `COMPOSE_PROFILES=mcp`) so Claude can query the console's data. It is a thin HTTP client of the backend's GET endpoints, authenticated with a personal API key (`app/accounts/mcp_keys.py`, minted from the `/mcp-access` page - `routes/mcp_keys_routes.py`) sent as a bearer token - it never opens the SQLite files directly. The server holds no identity of its own for `--http`: each caller's `Authorization` header is forwarded to the backend as-is per request (`ctx.headers` via the MCP SDK's `Context`), so creating/rotating/revoking a key takes effect on that caller's next call with no `.env` edit or restart; `REVENUE_CONSOLE_API_KEY` is a stdio-only fallback, since that transport has no per-request header to forward. When adding or renaming a GET endpoint that answers a data question, consider adding a tool in `mcp-server/server.py`; its tests verify every called path exists. Setup: `mcp-server/README.md`.
 
 ### Progress streaming
 

@@ -11,15 +11,22 @@ Transports
   stdio            python server.py                (Claude Desktop / Claude Code on one machine)
   streamable HTTP  python server.py --http         (remote connector, e.g. behind the Cloudflare tunnel)
 
+Each personal API key (minted from the console's MCP Access page - any logged-in
+account, no permissions needed since every tool here only reads) carries exactly its
+owner's existing permissions. Remote callers send their own key per request as
+"Authorization: Bearer <key>" - this server has no identity of its own and never caches
+one, so creating/rotating/revoking a key on that page takes effect on a caller's very
+next call, with no server restart. Local stdio runs have no per-request header to carry
+a key, so they fall back to REVENUE_CONSOLE_API_KEY from the environment instead.
+
 Environment
   REVENUE_CONSOLE_URL        backend base URL (default http://backend:5666; through the
                              tunnel use the console's public URL - nginx proxies /api)
-  REVENUE_CONSOLE_API_KEY    a personal API key minted from the console's MCP Access page
-                             (any logged-in account - no permissions needed since every
-                             tool here only reads; the key carries exactly its owner's
-                             existing permissions, same as that account would have)
-  MCP_ACCESS_TOKEN      required for --http; callers send it as
-                        "Authorization: Bearer <token>" or use the URL /<token>/mcp
+  REVENUE_CONSOLE_API_KEY    stdio-only fallback key, used when there's no per-request
+                             Authorization header to forward (i.e. never for --http)
+  MCP_ACCESS_TOKEN      required for --http; gates the URL /<token>/mcp - the
+                        Authorization header is reserved for a caller's personal key,
+                        so (unlike before) this token is no longer also accepted there
   MCP_ALLOWED_HOSTS     comma-separated public hostnames for --http (Host-header check)
   MCP_PORT              --http port (default 8765)
 """
@@ -32,7 +39,7 @@ from datetime import date
 from typing import Any, Literal
 
 import httpx
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import Icon, ToolAnnotations
@@ -76,36 +83,44 @@ class ConsoleError(ToolError):
 
 
 class ConsoleClient:
-    """Sends a personal API key as a bearer token on every request - no
-    session cookie, login step, or CSRF handling needed."""
+    """Forwards whatever Authorization a caller sends on every request - no
+    identity of its own, no session cookie, login step, or CSRF handling
+    needed. `default_api_key` only covers stdio, where there's no per-request
+    header to forward."""
 
-    def __init__(self, base_url: str, api_key: str,
+    def __init__(self, base_url: str, default_api_key: str = "",
                  transport: httpx.AsyncBaseTransport | None = None):
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
+        self.default_api_key = default_api_key
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
 
     def _http(self) -> httpx.AsyncClient:
         if self._client is None:
-            if not self.api_key:
-                raise ConsoleError("REVENUE_CONSOLE_API_KEY is not set on the MCP server")
             self._client = httpx.AsyncClient(
                 base_url=self.base_url, timeout=httpx.Timeout(120, connect=10),
-                transport=self._transport, follow_redirects=False,
-                headers={"Authorization": f"Bearer {self.api_key}"})
+                transport=self._transport, follow_redirects=False)
         return self._client
 
-    async def get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def get(self, path: str, params: dict[str, Any] | None = None,
+                  auth: str | None = None) -> dict[str, Any]:
+        """auth is the caller's own `Authorization` header value, forwarded
+        as-is (never inspected or trusted here - the backend is the one
+        authority that verifies it). Falls back to a stdio-only default key
+        when there's no such header (auth is None on that transport)."""
+        auth = auth or (f"Bearer {self.default_api_key}" if self.default_api_key else None)
+        if not auth:
+            raise ConsoleError(
+                "No Revenue Console credential available - remote callers must send "
+                "Authorization: Bearer <personal key> (from the MCP Access page); a "
+                "local stdio run must set REVENUE_CONSOLE_API_KEY")
         params = {k: v for k, v in (params or {}).items() if v is not None and v != ""}
         try:
-            resp = await self._http().get(path, params=params)
+            resp = await self._http().get(path, params=params, headers={"Authorization": auth})
         except httpx.HTTPError as exc:
             raise ConsoleError(f"Revenue Console is unreachable at {self.base_url}: {exc}") from exc
         if resp.status_code == 401:
-            raise ConsoleError(
-                "Revenue Console rejected the API key (missing, wrong, or revoked) - "
-                "check REVENUE_CONSOLE_API_KEY")
+            raise ConsoleError("Revenue Console rejected the API key (missing, wrong, or revoked)")
         if resp.status_code != 200:
             raise ConsoleError(f"{path} returned {resp.status_code}: {_message(resp)}")
         body = resp.json()
@@ -115,6 +130,18 @@ class ConsoleClient:
     async def aclose(self) -> None:
         if self._client is not None:
             await self._client.aclose()
+
+
+def _forwarded_auth(ctx: Context) -> str | None:
+    """The caller's own Authorization header, when the transport has one
+    (streamable HTTP). None on stdio, where ctx.headers is always None."""
+    headers = ctx.headers
+    if not headers:
+        return None
+    for key, value in headers.items():
+        if key.lower() == "authorization":
+            return value
+    return None
 
 
 def _message(resp: httpx.Response) -> str:
@@ -166,15 +193,15 @@ def build_server(client: ConsoleClient) -> MCPServer:
     # ---- RMS: briefing, pace, pickup -------------------------------------------------
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_revenue_briefing() -> dict[str, Any]:
+    async def get_revenue_briefing(ctx: Context) -> dict[str, Any]:
         """Whole-hotel briefing for the next 7 and 30 days: rooms on the books, occupancy,
         gross revenue, ADR, 7-day pickup, budget gap vs same time last year, plus the dates
         that need attention (high occupancy, behind last year with weak pickup, negative
         pickup) and any data-freshness warnings. Best first call for "how are we doing"."""
-        return await client.get("/api/rms/briefing")
+        return await client.get("/api/rms/briefing", auth=_forwarded_auth(ctx))
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_pace(start: str | None = None, end: str | None = None, pickup_days: int = 7,
+    async def get_pace(ctx: Context, start: str | None = None, end: str | None = None, pickup_days: int = 7,
                        as_of: str | None = None, comparison: Comparison = "weekday",
                        comparison_start: str | None = None, room_type: str | None = None,
                        market_id: int | None = None, channels: list[str] | None = None,
@@ -198,10 +225,10 @@ def build_server(client: ConsoleClient) -> MCPServer:
         return await client.get("/api/rms/pace", {
             "start": start, "end": end, "pickupDays": pickup_days, "asOf": as_of,
             **_filters(room_type, market_id, channels, company_ids, comparison, comparison_start,
-                      nationality_ids, group)})
+                      nationality_ids, group)}, auth=_forwarded_auth(ctx))
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_pickup_by_group(start: str | None = None, end: str | None = None,
+    async def get_pickup_by_group(ctx: Context, start: str | None = None, end: str | None = None,
                                   dimension: Literal["market", "company", "nationality", "group"] = "market",
                                   pickup_days: int = 7, as_of: str | None = None, limit: int | None = 20,
                                   room_type: str | None = None, market_id: int | None = None,
@@ -217,10 +244,11 @@ def build_server(client: ConsoleClient) -> MCPServer:
         return await client.get("/api/rms/pace/pickup-groups", {
             "start": start, "end": end, "dimension": dimension, "pickupDays": pickup_days,
             "asOf": as_of, "limit": limit,
-            **_filters(room_type, market_id, channels, company_ids, nationality_ids=nationality_ids, group=group)})
+            **_filters(room_type, market_id, channels, company_ids, nationality_ids=nationality_ids, group=group)},
+            auth=_forwarded_auth(ctx))
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_booking_curve(stay_date: str, max_lead: int = 120, room_type: str | None = None,
+    async def get_booking_curve(ctx: Context, stay_date: str, max_lead: int = 120, room_type: str | None = None,
                                 market_id: int | None = None, channels: list[str] | None = None,
                                 company_ids: list[int] | None = None, nationality_ids: list[int] | None = None,
                                 group: Literal["fit", "group"] | None = None) -> dict[str, Any]:
@@ -229,10 +257,11 @@ def build_server(client: ConsoleClient) -> MCPServer:
         date last year. Use to judge whether a date is building ahead of or behind LY."""
         return await client.get("/api/rms/pace/curve", {
             "date": stay_date, "maxLead": max_lead,
-            **_filters(room_type, market_id, channels, company_ids, nationality_ids=nationality_ids, group=group)})
+            **_filters(room_type, market_id, channels, company_ids, nationality_ids=nationality_ids, group=group)},
+            auth=_forwarded_auth(ctx))
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_production_report(start: str | None = None, end: str | None = None,
+    async def get_production_report(ctx: Context, start: str | None = None, end: str | None = None,
                                     date_basis: Literal["stay", "booking"] = "stay",
                                     pickup_days: int = 7, comparison: Comparison = "weekday",
                                     comparison_start: str | None = None, room_type: str | None = None,
@@ -250,10 +279,10 @@ def build_server(client: ConsoleClient) -> MCPServer:
         return await client.get("/api/rms/reports", {
             "start": start, "end": end, "dateBasis": date_basis, "pickupDays": pickup_days,
             **_filters(room_type, market_id, channels, company_ids, comparison, comparison_start,
-                      nationality_ids, group)})
+                      nationality_ids, group)}, auth=_forwarded_auth(ctx))
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_room_rate_breakdown(start: str | None = None, end: str | None = None,
+    async def get_room_rate_breakdown(ctx: Context, start: str | None = None, end: str | None = None,
                                       room_type: str | None = None, market_id: int | None = None,
                                       channels: list[str] | None = None,
                                       company_ids: list[int] | None = None,
@@ -264,10 +293,11 @@ def build_server(client: ConsoleClient) -> MCPServer:
         _check_range(start, end)
         return await client.get("/api/rms/pace/breakdown", {
             "start": start, "end": end,
-            **_filters(room_type, market_id, channels, company_ids, nationality_ids=nationality_ids, group=group)})
+            **_filters(room_type, market_id, channels, company_ids, nationality_ids=nationality_ids, group=group)},
+            auth=_forwarded_auth(ctx))
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_online_mix(start: str | None = None, end: str | None = None,
+    async def get_online_mix(ctx: Context, start: str | None = None, end: str | None = None,
                              market_id: int | None = None, room_type: str | None = None,
                              channels: list[str] | None = None, nationality_ids: list[int] | None = None,
                              group: Literal["fit", "group"] | None = None) -> dict[str, Any]:
@@ -275,15 +305,16 @@ def build_server(client: ConsoleClient) -> MCPServer:
         Expedia, Traveloka, direct web, ...) and direct-booking share. market_id defaults to
         the Online segment."""
         _check_range(start, end)
+        auth = _forwarded_auth(ctx)
         params = {"start": start, "end": end, "marketId": market_id, "roomType": room_type,
                   "channels": _csv(channels), "nationalityIds": _csv(nationality_ids), "group": group}
-        return {"sources": await client.get("/api/rms/online/source", params),
-                "directShare": await client.get("/api/rms/online/direct-share", params)}
+        return {"sources": await client.get("/api/rms/online/source", params, auth=auth),
+                "directShare": await client.get("/api/rms/online/direct-share", params, auth=auth)}
 
     # ---- PMS forecast ----------------------------------------------------------------
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_pms_forecast(start: str | None = None, days: int = 14,
+    async def get_pms_forecast(ctx: Context, start: str | None = None, days: int = 14,
                                sections: list[Literal["hotel", "segments", "roomTypes", "availability"]] | None = None
                                ) -> dict[str, Any]:
         """The PMS's own forecast reports for `days` days from start (1-366): hotel totals
@@ -291,72 +322,75 @@ def build_server(client: ConsoleClient) -> MCPServer:
         from a persistent cache that refreshes in the background - check each section's
         stale/error/updatedAt before relying on it."""
         return await client.get("/api/rms/forecast", {"start": start, "days": days,
-                                                      "sections": _csv(sections)})
+                                                      "sections": _csv(sections)}, auth=_forwarded_auth(ctx))
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_channel_mix() -> dict[str, Any]:
+    async def get_channel_mix(ctx: Context) -> dict[str, Any]:
         """Channel mix from the PMS reports (cached): production by OTA / source."""
-        return await client.get("/api/rms/channel")
+        return await client.get("/api/rms/channel", auth=_forwarded_auth(ctx))
 
     # ---- Inventory, yield, BAR, stop sale --------------------------------------------
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_inventory(start: str | None = None, end: str | None = None) -> dict[str, Any]:
+    async def get_inventory(ctx: Context, start: str | None = None, end: str | None = None) -> dict[str, Any]:
         """Combined PMS + channel-manager inventory from the last pipeline run, one row per
         date: occupancy and rooms remaining per room type. Filter with start/end (inclusive);
         updated_at is when the pipeline last rebuilt it."""
-        body = await client.get("/api/db/combined-inventory")
+        body = await client.get("/api/db/combined-inventory", auth=_forwarded_auth(ctx))
         return {"updated_at": body.get("updated_at"), "rows": _by_date(body.get("data", []), start, end)}
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_yield_allocation(start: str | None = None, end: str | None = None) -> dict[str, Any]:
+    async def get_yield_allocation(ctx: Context, start: str | None = None, end: str | None = None) -> dict[str, Any]:
         """Yield-engine output from the last pipeline run, one row per date: season, demand
         level, occupancy, remaining vs online inventory per room type, recommended BAR level
         and allocation status."""
-        body = await client.get("/api/db/inventory-allocation")
+        body = await client.get("/api/db/inventory-allocation", auth=_forwarded_auth(ctx))
         return {"updated_at": body.get("updated_at"), "rows": _by_date(body.get("data", []), start, end)}
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_bar_rate_table() -> dict[str, Any]:
+    async def get_bar_rate_table(ctx: Context) -> dict[str, Any]:
         """The BAR rate grid: rate per room type and BAR level, with discount %."""
-        body = await client.get("/api/db/bar-rates")
+        body = await client.get("/api/db/bar-rates", auth=_forwarded_auth(ctx))
         return {"updated_at": body.get("updated_at"), "rows": body.get("data", [])}
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_stop_sale_preview() -> dict[str, Any]:
+    async def get_stop_sale_preview(ctx: Context) -> dict[str, Any]:
         """Dates that currently meet the stop-sale rules (whole hotel above the occupancy
         threshold, or a room type at/below its remaining-rooms threshold), with the
         inventory coverage it was computed from. Preview only - nothing is sent."""
-        return await client.get("/api/stop-sale/preview")
+        return await client.get("/api/stop-sale/preview", auth=_forwarded_auth(ctx))
 
     # ---- Reference and health --------------------------------------------------------
 
     @mcp.tool(annotations=READ_ONLY)
-    async def list_filters() -> dict[str, Any]:
+    async def list_filters(ctx: Context) -> dict[str, Any]:
         """Ids and names for filters: room type codes and labels, market segments, channel
         buckets and companies seen in the booking cache."""
-        return await client.get("/api/rms/room-types")
+        return await client.get("/api/rms/room-types", auth=_forwarded_auth(ctx))
 
     @mcp.tool(annotations=READ_ONLY)
-    async def get_data_health() -> dict[str, Any]:
+    async def get_data_health(ctx: Context) -> dict[str, Any]:
         """How fresh the data is: last update of each data file, booking-sync status and
         coverage, whether a pipeline is running, and the most recent automated runs."""
-        overview = await client.get("/api/administration/overview")
+        auth = _forwarded_auth(ctx)
+        overview = await client.get("/api/administration/overview", auth=auth)
         overview.pop("access", None)
         overview.pop("reportTimings", None)
         return {"files": overview.get("dataHealth"), "mappings": overview.get("mappings"),
-                "bookingSync": await client.get("/api/rms/sync"),
-                "pipeline": await client.get("/api/fast-pipeline/status"),
-                "recentRuns": (await client.get("/api/fast-pipeline/history", {"limit": 5})).get("runs")}
+                "bookingSync": await client.get("/api/rms/sync", auth=auth),
+                "pipeline": await client.get("/api/fast-pipeline/status", auth=auth),
+                "recentRuns": (await client.get("/api/fast-pipeline/history", {"limit": 5}, auth=auth)).get("runs")}
 
     return mcp
 
 
 class BearerAuth:
-    """ASGI wrapper: accept `Authorization: Bearer <token>` or a /<token>/... URL prefix.
+    """ASGI wrapper: gates the tunnel itself via a /<token>/... URL prefix only.
 
-    The URL form exists for clients that can only be given a URL (a custom connector
-    without OAuth). Treat that URL like a password."""
+    The Authorization header is deliberately left alone here and passed through
+    untouched - it's reserved for each caller's own personal Revenue Console API
+    key (see ConsoleClient/_forwarded_auth), checked by the backend, not this
+    layer. Treat the URL (which embeds the token) like a password."""
 
     def __init__(self, app, token: str):
         self.app, self.token = app, token.encode()
@@ -366,10 +400,6 @@ class BearerAuth:
             return await self.app(scope, receive, send)
         if scope["path"] == "/health":
             return await _plain(send, 200, b"ok")
-        headers = dict(scope.get("headers") or [])
-        auth = headers.get(b"authorization", b"")
-        if auth.lower().startswith(b"bearer ") and hmac.compare_digest(auth[7:].strip(), self.token):
-            return await self.app(scope, receive, send)
         parts = scope["path"].split("/", 2)
         if len(parts) == 3 and hmac.compare_digest(parts[1].encode(), self.token):
             path = "/" + parts[2]

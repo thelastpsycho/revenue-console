@@ -21,30 +21,33 @@ INVENTORY = [{"Date": "2026-10-30 00:00:00", "Occupancy": 81.0, "Deluxe": 3},
 
 
 class FakeBackend:
-    """Mimics the Flask bearer-token auth: 401 unless Authorization matches."""
+    """Mimics the Flask bearer-token auth: 401 unless Authorization matches
+    one of `valid_keys`."""
 
-    def __init__(self):
+    def __init__(self, valid_keys=(API_KEY,)):
         self.requests = []
+        self.valid_tokens = {f"Bearer {k}" for k in valid_keys}
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         path = request.url.path
         if request.method != "GET":
             return httpx.Response(405)
-        if request.headers.get("Authorization") != f"Bearer {API_KEY}":
+        if request.headers.get("Authorization") not in self.valid_tokens:
             return httpx.Response(401, json={"status": "error", "message": "Invalid or revoked API key"})
         if path == "/api/db/combined-inventory":
             return httpx.Response(200, json={"status": "success", "data": INVENTORY, "updated_at": "2026-10-23T01:00:00+00:00"})
         if path == "/api/rms/pace":
             return httpx.Response(200, json={"status": "success", "rows": [], "echo": dict(request.url.params)})
         if path == "/api/rms/briefing":
-            return httpx.Response(200, json={"status": "success", "today": "2026-10-23", "periods": []})
+            return httpx.Response(200, json={"status": "success", "today": "2026-10-23", "periods": [],
+                                             "caller": request.headers.get("Authorization")})
         return httpx.Response(404, json={"status": "error", "message": "Database file not found"})
 
 
-def make(api_key=API_KEY):
-    backend = FakeBackend()
-    client = server.ConsoleClient("http://console.test", api_key, transport=httpx.MockTransport(backend))
+def make(default_api_key=API_KEY, valid_keys=None):
+    backend = FakeBackend(valid_keys if valid_keys is not None else (API_KEY,))
+    client = server.ConsoleClient("http://console.test", default_api_key, transport=httpx.MockTransport(backend))
     return backend, server.build_server(client)
 
 
@@ -53,13 +56,31 @@ def payload(result):
     return result.structured_content or json.loads(result.content[0].text)
 
 
+# --- stdio fallback (no per-request header: ctx.headers is None) -------------
+
 @pytest.mark.anyio
-async def test_sends_bearer_token_and_strips_status():
+async def test_stdio_falls_back_to_default_api_key_and_strips_status():
     backend, mcp = make()
     async with Client(mcp) as c:
         data = payload(await c.call_tool("get_revenue_briefing", {}))
         assert data["today"] == "2026-10-23" and "status" not in data
     assert backend.requests[0].headers["Authorization"] == f"Bearer {API_KEY}"
+
+
+@pytest.mark.anyio
+async def test_wrong_default_api_key_is_reported():
+    _, mcp = make(default_api_key="wrong-key")
+    async with Client(mcp) as c:
+        result = await c.call_tool("get_revenue_briefing", {})
+    assert result.is_error and "rejected the API key" in result.content[0].text
+
+
+@pytest.mark.anyio
+async def test_no_credential_at_all_gives_a_clear_error():
+    _, mcp = make(default_api_key="")
+    async with Client(mcp) as c:
+        result = await c.call_tool("get_revenue_briefing", {})
+    assert result.is_error and "No Revenue Console credential available" in result.content[0].text
 
 
 @pytest.mark.anyio
@@ -93,14 +114,6 @@ async def test_bad_range_and_backend_errors_are_tool_errors():
 
 
 @pytest.mark.anyio
-async def test_wrong_api_key_is_reported():
-    _, mcp = make(api_key="wrong-key")
-    async with Client(mcp) as c:
-        result = await c.call_tool("get_revenue_briefing", {})
-    assert result.is_error and "rejected the API key" in result.content[0].text
-
-
-@pytest.mark.anyio
 async def test_every_tool_is_read_only():
     _, mcp = make()
     async with Client(mcp) as c:
@@ -109,28 +122,77 @@ async def test_every_tool_is_read_only():
     assert all(t.annotations and t.annotations.read_only_hint for t in tools)
 
 
+@pytest.mark.anyio
+async def test_ctx_is_not_exposed_as_a_tool_argument():
+    # Context is auto-injected by the SDK (type-detected), not a model-visible arg.
+    _, mcp = make()
+    async with Client(mcp) as c:
+        tool = next(t for t in (await c.list_tools()).tools if t.name == "get_pace")
+    assert "ctx" not in tool.input_schema.get("properties", {})
+
+
+# --- remote --http: no server identity, every caller's own key forwarded ----
+
 INIT = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": {"protocolVersion": "2025-06-18", "capabilities": {},
                    "clientInfo": {"name": "t", "version": "0"}}}
-HEADERS = {"accept": "application/json, text/event-stream", "content-type": "application/json"}
+HTTP_HEADERS = {"accept": "application/json, text/event-stream", "content-type": "application/json"}
+TOKEN = "t" * 40
+TOKEN_PATH = f"/{TOKEN}/mcp"
+
+
+def call_tool_request(name="get_revenue_briefing", arguments=None):
+    return {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": name, "arguments": arguments or {}}}
+
+
+@pytest.mark.anyio
+async def test_remote_callers_each_use_their_own_key_with_no_server_default():
+    from asgi_lifespan import LifespanManager
+    backend, mcp = make(default_api_key="", valid_keys=["rck_alice", "rck_bob"])
+    app = server.http_app(mcp, TOKEN, ["mcp.example.com"])
+    async with LifespanManager(app) as manager:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=manager.app),
+                                     base_url="https://mcp.example.com") as http:
+            alice = await http.post(TOKEN_PATH, json=call_tool_request(),
+                                    headers={**HTTP_HEADERS, "authorization": "Bearer rck_alice"})
+            bob = await http.post(TOKEN_PATH, json=call_tool_request(),
+                                  headers={**HTTP_HEADERS, "authorization": "Bearer rck_bob"})
+    assert alice.status_code == bob.status_code == 200
+    assert '"caller":"Bearer rck_alice"' in alice.text
+    assert '"caller":"Bearer rck_bob"' in bob.text
+    # No restart, no shared server-side key, no ordering dependency between callers.
+
+
+@pytest.mark.anyio
+async def test_remote_caller_revoked_key_fails_independently_of_others():
+    from asgi_lifespan import LifespanManager
+    _, mcp = make(default_api_key="", valid_keys=["rck_alice"])
+    app = server.http_app(mcp, TOKEN, ["mcp.example.com"])
+    async with LifespanManager(app) as manager:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=manager.app),
+                                     base_url="https://mcp.example.com") as http:
+            revoked = await http.post(TOKEN_PATH, json=call_tool_request(),
+                                      headers={**HTTP_HEADERS, "authorization": "Bearer rck_was_revoked"})
+    assert revoked.status_code == 200  # transport-level 200; the error is in the JSON-RPC body
+    assert "rejected the API key" in revoked.text
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("path,auth,expected", [
-    ("/mcp", None, 401),
-    ("/mcp", "Bearer wrong", 401),
-    ("/wrong-token/mcp", None, 401),
-    ("/mcp", "Bearer " + "t" * 40, 200),
-    ("/" + "t" * 40 + "/mcp", None, 200),
+    ("/mcp", None, 401),                       # no tunnel token in the URL at all
+    (f"/{TOKEN}/mcp", None, 200),               # correct tunnel token, no Authorization needed for initialize
+    ("/wrong-token/mcp", None, 401),            # wrong tunnel token
+    ("/mcp", f"Bearer {TOKEN}", 401),           # Authorization no longer doubles as the tunnel token
 ])
-async def test_http_auth(path, auth, expected):
+async def test_http_tunnel_gate_is_url_only(path, auth, expected):
     from asgi_lifespan import LifespanManager
     _, mcp = make()
-    app = server.http_app(mcp, "t" * 40, ["mcp.example.com"])
+    app = server.http_app(mcp, TOKEN, ["mcp.example.com"])
     async with LifespanManager(app) as manager:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=manager.app),
                                      base_url="https://mcp.example.com") as http:
-            headers = {**HEADERS, **({"authorization": auth} if auth else {})}
+            headers = {**HTTP_HEADERS, **({"authorization": auth} if auth else {})}
             resp = await http.post(path, json=INIT, headers=headers)
     assert resp.status_code == expected, resp.text
 
