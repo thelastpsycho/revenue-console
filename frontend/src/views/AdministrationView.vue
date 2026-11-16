@@ -129,6 +129,23 @@
         <button class="btn-flat px-3 py-2 text-xs" @click="logout">
           Sign out
         </button>
+
+        <form class="max-w-sm space-y-2 border-t border-slate-200 pt-3 text-xs" @submit.prevent="changePassword">
+          <h3 class="text-sm font-semibold">Change your password</h3>
+          <label class="block">
+            <span class="mb-1 block font-semibold text-slate-600">Current password</span>
+            <input v-model="pwForm.current" type="password" autocomplete="current-password" required class="neu-input w-full" />
+          </label>
+          <label class="block">
+            <span class="mb-1 block font-semibold text-slate-600">New password</span>
+            <input v-model="pwForm.new" type="password" autocomplete="new-password" minlength="8" required class="neu-input w-full" />
+          </label>
+          <p v-if="pwError" class="font-semibold text-rose-700">{{ pwError }}</p>
+          <p v-if="pwSuccess" class="font-semibold text-emerald-700">{{ pwSuccess }}</p>
+          <button type="submit" class="btn-primary py-1.5" :disabled="pwBusy">
+            {{ pwBusy ? "Saving…" : "Change password" }}
+          </button>
+        </form>
       </section>
       <section v-if="section === 'backups'" class="neu-card space-y-3 p-4">
         <h2 class="font-semibold">Backups</h2>
@@ -184,7 +201,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { useRoute } from "vue-router";
 import axios from "../plugins/axios";
 import { useAuthStore } from "../stores/auth";
@@ -249,5 +266,26 @@ async function logout() {
     error.value = "Could not sign out. Please retry.";
   }
 }
+
+const pwForm = reactive({ current: "", new: "" });
+const pwBusy = ref(false);
+const pwError = ref("");
+const pwSuccess = ref("");
+async function changePassword() {
+  pwBusy.value = true;
+  pwError.value = "";
+  pwSuccess.value = "";
+  try {
+    await auth.changePassword(pwForm.current, pwForm.new);
+    pwForm.current = "";
+    pwForm.new = "";
+    pwSuccess.value = "Password changed.";
+  } catch (err: any) {
+    pwError.value = err?.response?.data?.message || "Could not change password.";
+  } finally {
+    pwBusy.value = false;
+  }
+}
+
 onMounted(load);
 </script>

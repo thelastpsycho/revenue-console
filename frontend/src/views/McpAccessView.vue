@@ -8,9 +8,9 @@
     <div class="neu-card space-y-3 p-4 text-xs">
       <h2 class="text-sm font-semibold text-app-tertiary">MCP server URL</h2>
       <p class="text-slate-500">
-        The MCP server runs as its own service, not on this console's domain - set this to
-        wherever its tunnel is configured (see <code>mcp-server/README.md</code>), e.g.
-        <code>https://mcp.yourdomain.com/mcp</code>. Saved in this browser only.
+        The MCP server runs as its own service, on its own tunnel hostname. Only edit this
+        if that hostname ever changes (see <code>mcp-server/README.md</code>) - any change is
+        saved in this browser only.
       </p>
       <div class="flex items-center gap-2">
         <input v-model="serverUrl" placeholder="https://mcp.yourdomain.com/mcp" class="neu-input flex-1" />
@@ -148,10 +148,15 @@ interface McpKey {
   ownerDisplayName?: string
 }
 
+// This console's MCP server has its own Cloudflare tunnel hostname (it's a
+// separate service, not reachable on this app's own domain) - defaulted here
+// since there's only ever one deployment of this app. Still editable/saved
+// locally in case the tunnel hostname ever changes.
+const DEFAULT_SERVER_URL = 'https://revcon-mcp.krisnatha.com/mcp'
 const SERVER_URL_KEY = 'mcpAccess.serverUrl'
-const serverUrl = ref(localStorage.getItem(SERVER_URL_KEY) || '')
+const serverUrl = ref(localStorage.getItem(SERVER_URL_KEY) || DEFAULT_SERVER_URL)
 watch(serverUrl, (value) => {
-  if (value) localStorage.setItem(SERVER_URL_KEY, value)
+  if (value && value !== DEFAULT_SERVER_URL) localStorage.setItem(SERVER_URL_KEY, value)
   else localStorage.removeItem(SERVER_URL_KEY)
 })
 const sampleCommand = computed(
