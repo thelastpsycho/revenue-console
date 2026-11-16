@@ -2,7 +2,7 @@
   <div class="mx-auto w-full max-w-5xl space-y-4 p-4 sm:p-6 lg:p-8">
     <PageHeader
       title="MCP Access"
-      subtitle="Connect this console's data to Claude Code, Claude Desktop, claude.ai, or any other MCP-capable client. A key carries your own account's permissions - it can read exactly what you can read in the app, and nothing it can't."
+      subtitle="Connect this console's data to Claude Code, Claude Desktop, claude.ai, or any other MCP-capable client. A personal key below carries your own account's permissions, but only applies when you run the MCP server locally - the shared remote tunnel (claude.ai, or Claude Code against the URL above) uses one fixed identity for everyone, gated by a separate shared secret. See 'How to connect' below for which one you need."
     />
 
     <div class="neu-card space-y-3 p-4 text-xs">
@@ -37,26 +37,57 @@
         </button>
       </div>
 
-      <div v-if="activeTab === 'cli'" class="space-y-2">
-        <p class="text-slate-500">Claude Code and Cursor take a remote MCP server and a header directly on the command line.</p>
+      <div v-if="activeTab === 'remote-cli'" class="space-y-2">
+        <p class="text-slate-500">
+          Claude Code and Cursor can take a remote MCP server and a header directly on the
+          command line. The server URL above goes through this deployment's Cloudflare
+          tunnel, which is gated by a single shared secret (<code>MCP_ACCESS_TOKEN</code> in
+          <code>mcp-server/.env</code> on the server) - <strong>not</strong> one of your
+          personal keys below. Look it up there.
+        </p>
         <div class="flex items-center gap-2">
           <code class="flex-1 truncate rounded-lg bg-app-primary px-3 py-2 text-slate-700">{{ sampleCommand }}</code>
           <button type="button" class="btn-flat shrink-0 px-3 py-2" @click="copy(sampleCommand, 'cmd')">
             {{ copiedId === 'cmd' ? 'Copied' : 'Copy' }}
           </button>
         </div>
-        <p class="text-slate-500">Replace <code>&lt;your-key&gt;</code> with a key created below.</p>
+        <p class="text-slate-500">Replace <code>&lt;MCP_ACCESS_TOKEN&gt;</code> with that value.</p>
       </div>
 
-      <div v-else-if="activeTab === 'claude-app'" class="space-y-2">
-        <p class="text-slate-500">Claude.ai and Claude Desktop support custom connectors with a fixed request header - no OAuth needed.</p>
+      <div v-else-if="activeTab === 'remote-claude-app'" class="space-y-2">
+        <p class="text-slate-500">
+          Claude.ai and Claude Desktop support custom connectors with a fixed request header
+          - no OAuth needed. Same shared secret as the CLI tab: look up
+          <code>MCP_ACCESS_TOKEN</code> in <code>mcp-server/.env</code> on the server, not a
+          personal key below.
+        </p>
         <ol class="list-inside list-decimal space-y-1 text-slate-600">
           <li>Go to <strong>Settings → Connectors</strong>.</li>
           <li>Click <strong>Add</strong> → <strong>Custom</strong> → <strong>Web</strong>, name it, and paste the server URL above.</li>
           <li>For <strong>Authentication</strong>, choose <strong>No sign-in</strong>.</li>
-          <li>Under <strong>Request headers</strong>, add header <code>Authorization</code> with value <code>Bearer &lt;your-key&gt;</code> (a key from below).</li>
+          <li>Under <strong>Request headers</strong>, add header <code>Authorization</code> with value <code>Bearer &lt;MCP_ACCESS_TOKEN&gt;</code>.</li>
           <li>Click <strong>Add</strong> to finish.</li>
         </ol>
+      </div>
+
+      <div v-else-if="activeTab === 'local'" class="space-y-2">
+        <p class="text-slate-500">
+          Running <code>server.py</code> directly on your own machine (stdio, no tunnel
+          involved) is where a personal key below actually applies - it becomes
+          <code>REVENUE_CONSOLE_API_KEY</code> and the server calls the console's API as you,
+          with your own permissions.
+        </p>
+        <div class="flex items-center gap-2">
+          <code class="flex-1 truncate rounded-lg bg-app-primary px-3 py-2 text-slate-700">{{ localCommand }}</code>
+          <button type="button" class="btn-flat shrink-0 px-3 py-2" @click="copy(localCommand, 'localCmd')">
+            {{ copiedId === 'localCmd' ? 'Copied' : 'Copy' }}
+          </button>
+        </div>
+        <p class="text-slate-500">
+          Replace <code>&lt;your-key&gt;</code> with a key created below and the path with
+          where you cloned this repo. Claude Desktop uses the equivalent
+          <code>claude_desktop_config.json</code> form - see <code>mcp-server/README.md</code>.
+        </p>
       </div>
     </div>
 
@@ -87,21 +118,18 @@
 
       <div v-if="revealedKey" class="space-y-2 border-b border-slate-200 bg-amber-50 p-4 text-xs">
         <p class="font-semibold text-amber-800">Copy this key now - it won't be shown again.</p>
+        <p class="text-amber-800">
+          This is for the <strong>Run locally</strong> tab above (<code>REVENUE_CONSOLE_API_KEY</code>)
+          or the server's own <code>mcp-server/.env</code> - it does <strong>not</strong> go
+          into a remote claude.ai/Claude Code connector's header field (that uses the shared
+          <code>MCP_ACCESS_TOKEN</code> instead).
+        </p>
         <label class="block text-slate-600">
-          Plain key - for <code>REVENUE_CONSOLE_API_KEY</code> or a CLI's env var
+          Plain key
           <div class="mt-1 flex items-center gap-2">
             <code class="flex-1 truncate rounded-lg bg-white px-3 py-2 text-slate-700">{{ revealedKey }}</code>
             <button type="button" class="btn-flat shrink-0 px-3 py-2" @click="copy(revealedKey, 'reveal')">
               {{ copiedId === 'reveal' ? 'Copied' : 'Copy' }}
-            </button>
-          </div>
-        </label>
-        <label class="block text-slate-600">
-          With "Bearer " - paste straight into an Authorization header field (e.g. claude.ai)
-          <div class="mt-1 flex items-center gap-2">
-            <code class="flex-1 truncate rounded-lg bg-white px-3 py-2 text-slate-700">Bearer {{ revealedKey }}</code>
-            <button type="button" class="btn-flat shrink-0 px-3 py-2" @click="copy(`Bearer ${revealedKey}`, 'revealBearer')">
-              {{ copiedId === 'revealBearer' ? 'Copied' : 'Copy' }}
             </button>
           </div>
         </label>
@@ -172,15 +200,19 @@ watch(serverUrl, (value) => {
   else localStorage.removeItem(SERVER_URL_KEY)
 })
 const sampleCommand = computed(
-  () => `claude mcp add --transport http revenue-console ${serverUrl.value || '<server URL>'} --header "Authorization: Bearer <your-key>"`,
+  () => `claude mcp add --transport http revenue-console ${serverUrl.value || '<server URL>'} --header "Authorization: Bearer <MCP_ACCESS_TOKEN>"`,
+)
+const localCommand = computed(
+  () => `claude mcp add revenue-console -e REVENUE_CONSOLE_URL=https://<console URL> -e REVENUE_CONSOLE_API_KEY=<your-key> -- python /path/to/mcp-server/server.py`,
 )
 
-type ClientTab = 'cli' | 'claude-app'
+type ClientTab = 'remote-cli' | 'remote-claude-app' | 'local'
 const clientTabs: { key: ClientTab; label: string }[] = [
-  { key: 'cli', label: 'Claude Code / Cursor' },
-  { key: 'claude-app', label: 'Claude.ai / Desktop' },
+  { key: 'remote-cli', label: 'Claude Code / Cursor (remote)' },
+  { key: 'remote-claude-app', label: 'Claude.ai / Desktop (remote)' },
+  { key: 'local', label: 'Run locally (no tunnel)' },
 ]
-const activeTab = ref<ClientTab>('cli')
+const activeTab = ref<ClientTab>('remote-cli')
 
 const keys = ref<McpKey[]>([])
 const scope = ref<'own' | 'all'>('own')
