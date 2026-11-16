@@ -8,6 +8,25 @@
     <p v-if="loadError" class="rounded-lg bg-rose-50 p-3 text-xs font-semibold text-rose-700">{{ loadError }}</p>
 
     <template v-if="settings">
+      <!-- Full occupancy block -->
+      <div class="neu-card space-y-3 p-4 text-xs">
+        <h2 class="text-sm font-semibold text-app-tertiary">Full occupancy block</h2>
+        <p class="text-slate-500">
+          When enabled, every room type closes online once overall occupancy reaches the threshold below - even a
+          category that still shows a sellable room - so there's always a relocation buffer left.
+        </p>
+        <div class="flex flex-wrap items-end gap-3">
+          <label class="flex cursor-pointer items-center gap-1.5">
+            <input v-model="settings.fullOccupancyBlock.enabled" type="checkbox" class="h-3.5 w-3.5 accent-app-accent" />
+            Enabled
+          </label>
+          <label>
+            <span class="mb-1 block font-semibold text-slate-600">Occupancy threshold (%)</span>
+            <input v-model.number="settings.fullOccupancyBlock.threshold" type="number" min="0" step="0.1" class="neu-input w-24" />
+          </label>
+        </div>
+      </div>
+
       <!-- Release rules -->
       <div class="neu-card space-y-3 p-4 text-xs">
         <h2 class="text-sm font-semibold text-app-tertiary">Release rules</h2>
@@ -187,6 +206,7 @@ interface Settings {
   releaseRules: Record<string, ReleaseRule>
   deluxeSuiteBorrow: { fromRoomType: string; threshold: number; amount: number }
   suiteRouting: { routes?: Record<string, string[]>; buffers?: Record<string, number>; holds?: Hold[] }
+  fullOccupancyBlock: { enabled: boolean; threshold: number }
 }
 
 const roomTypes = ref<string[]>([])
@@ -275,6 +295,7 @@ async function save() {
       buffers: Object.fromEntries(Object.entries(buffers).filter(([, v]) => v > 0)),
       holds: holds.value,
     },
+    fullOccupancyBlock: settings.value.fullOccupancyBlock,
   }
   try {
     await axios.put('/api/allotment-rules/settings', payload)

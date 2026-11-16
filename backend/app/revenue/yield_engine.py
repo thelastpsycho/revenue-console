@@ -179,6 +179,7 @@ def apply_yield_matrix(data, very_low_threshold_pct=None, low_threshold_pct=None
     room_caps = {**ROOM_CAPS, **(room_caps or {})}
     policy = load_policy(ROOM_CAPS, allocation_policy)
     rules = allotment_rules.get_settings()
+    full_occupancy_block = rules['fullOccupancyBlock']
     allocation_scope = ['Deluxe Room', 'Premiere Room']
     if include_simple_rooms:
         allocation_scope += SIMPLE_ROOM_TYPES
@@ -389,7 +390,17 @@ def apply_yield_matrix(data, very_low_threshold_pct=None, low_threshold_pct=None
             rules['releaseRules']['Premiere Room'], sellable['Premiere Room'], room_caps['Premiere Room'])
         for room_type in blocked:
             allocations[room_type] = 0
-        if unresolved:
+        # Hotel-wide safety stop: once overall occupancy crosses the
+        # configured threshold, close every category regardless of its own
+        # remaining inventory - a category can still show a sellable room
+        # (e.g. freed up by a PMS room reassignment) while the property as a
+        # whole has no relocation buffer left for walk/displacement cases.
+        full_occupancy_hit = full_occupancy_block['enabled'] and row['Occupancy'] >= full_occupancy_block['threshold']
+        if full_occupancy_hit:
+            allocations = dict.fromkeys(ROOM_CAPS, 0)
+            data.at[idx, 'Allocation Status'] = (
+                f"Blocked: hotel at full occupancy (>= {full_occupancy_block['threshold']:g}%)")
+        elif unresolved:
             closed = ', '.join(room for room in ROOM_CAPS if room in blocked)
             data.at[idx, 'Allocation Status'] = f'Blocked: upgrade capacity or routes insufficient ({closed})'
         data.at[idx, 'Unresolved Upgrade Rooms'] = unresolved

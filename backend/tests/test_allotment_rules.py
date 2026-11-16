@@ -63,6 +63,7 @@ def test_default_settings_cover_every_room_type():
     assert set(settings["releaseRules"]) == ar.ROOM_TYPES
     assert settings["deluxeSuiteBorrow"] == {"fromRoomType": "Premiere Suite Room", "threshold": 3, "amount": 1}
     assert settings["suiteRouting"] == {}
+    assert settings["fullOccupancyBlock"] == {"enabled": False, "threshold": 100}
 
 
 def test_save_and_reload_round_trips():
@@ -80,6 +81,7 @@ def _valid():
         "releaseRules": {room: {"kind": "sellAsRemaining"} for room in ar.ROOM_TYPES},
         "deluxeSuiteBorrow": {"fromRoomType": "Premiere Suite Room", "threshold": 3, "amount": 1},
         "suiteRouting": {},
+        "fullOccupancyBlock": {"enabled": False, "threshold": 100},
     }
 
 
@@ -140,3 +142,24 @@ def test_validate_accepts_a_valid_suite_routing_override():
     data["suiteRouting"] = {"buffers": {"Deluxe Room": 2}}
     clean = ar.validate_settings(data)
     assert clean["suiteRouting"] == {"buffers": {"Deluxe Room": 2}}
+
+
+def test_validate_accepts_a_full_occupancy_block_override():
+    data = _valid()
+    data["fullOccupancyBlock"] = {"enabled": True, "threshold": 98.5}
+    clean = ar.validate_settings(data)
+    assert clean["fullOccupancyBlock"] == {"enabled": True, "threshold": 98.5}
+
+
+def test_validate_rejects_non_boolean_full_occupancy_enabled():
+    data = _valid()
+    data["fullOccupancyBlock"] = {"enabled": "yes", "threshold": 100}
+    with pytest.raises(ar.ValidationError):
+        ar.validate_settings(data)
+
+
+def test_validate_rejects_negative_full_occupancy_threshold():
+    data = _valid()
+    data["fullOccupancyBlock"] = {"enabled": True, "threshold": -1}
+    with pytest.raises(ar.ValidationError):
+        ar.validate_settings(data)

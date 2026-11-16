@@ -222,6 +222,36 @@ def test_covered_shortage_keeps_the_date_ready():
     assert row['The Anvaya Villa Online Inventory'] == 0  # its only room is spoken for
 
 
+# --- Full-occupancy block (settings-driven, off by default) ------------------
+
+def test_full_occupancy_block_is_off_by_default():
+    # Every room type still has spare inventory; nothing closes it on its own.
+    row = calculate({D: 10, P: 10, WHIRL: 2}, occupancy=150)
+    assert row['Allocation Status'] == 'Ready'
+    assert row[online_column(D)] > 0
+
+
+def test_full_occupancy_block_closes_everything_once_enabled(tmp_path):
+    settings = allotment_rules.get_settings()
+    settings['fullOccupancyBlock'] = {'enabled': True, 'threshold': 100}
+    allotment_rules.save_settings(settings)
+    # Each category has a room to sell on its own terms, but the hotel-wide
+    # stop overrides that - no relocation buffer left once it fires.
+    row = calculate({D: 1, P: 5, WHIRL: 2}, occupancy=100)
+    assert row['Allocation Status'] == 'Blocked: hotel at full occupancy (>= 100%)'
+    for room in (D, P, WHIRL):
+        assert row[online_column(room)] == 0
+
+
+def test_full_occupancy_block_does_not_fire_below_its_threshold(tmp_path):
+    settings = allotment_rules.get_settings()
+    settings['fullOccupancyBlock'] = {'enabled': True, 'threshold': 100}
+    allotment_rules.save_settings(settings)
+    row = calculate({D: 1, P: 5}, occupancy=99.9)
+    assert row['Allocation Status'] == 'Ready'
+    assert row[online_column(D)] > 0
+
+
 # --- Invariants over random snapshots ----------------------------------------
 
 def random_snapshot(rng):

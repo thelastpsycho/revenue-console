@@ -13,6 +13,7 @@ no UI or persistence).
 
 import copy
 import json
+import math
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -59,6 +60,12 @@ DEFAULT_SETTINGS = {
     },
     "deluxeSuiteBorrow": {"fromRoomType": "Premiere Suite Room", "threshold": 3, "amount": 1},
     "suiteRouting": {},
+    # Off by default: when enabled, every room type closes online (Online
+    # Inventory 0) for any date at or above this occupancy, regardless of
+    # what any single room type's own remaining inventory says - a hotel-wide
+    # safety stop so the operator always keeps a relocation buffer, rather
+    # than relying on a specific category still showing a sellable room.
+    "fullOccupancyBlock": {"enabled": False, "threshold": 100},
 }
 assert set(DEFAULT_SETTINGS["releaseRules"]) == ROOM_TYPES
 
@@ -106,6 +113,8 @@ def get_settings():
         settings["deluxeSuiteBorrow"] = stored["deluxeSuiteBorrow"]
     if "suiteRouting" in stored:
         settings["suiteRouting"] = stored["suiteRouting"]
+    if "fullOccupancyBlock" in stored:
+        settings["fullOccupancyBlock"] = stored["fullOccupancyBlock"]
     return settings
 
 
@@ -128,6 +137,18 @@ def _int(value, name, low=0):
     if not number.is_integer() or number < low:
         raise ValidationError(f"{name} must be a whole number of at least {low}")
     return int(number)
+
+
+def _number(value, name, low=0):
+    if isinstance(value, bool):
+        raise ValidationError(f"{name} must be a number")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValidationError(f"{name} must be a number") from None
+    if not math.isfinite(number) or number < low:
+        raise ValidationError(f"{name} must be a number of at least {low}")
+    return number
 
 
 def _validate_tiered_rows(rows):
@@ -198,7 +219,21 @@ def validate_settings(data):
     except ValueError as exc:
         raise ValidationError(str(exc)) from exc
 
-    return {"releaseRules": release_rules, "deluxeSuiteBorrow": deluxe_suite_borrow, "suiteRouting": suite_routing}
+    raw_full_block = data.get("fullOccupancyBlock")
+    if not isinstance(raw_full_block, dict) or set(raw_full_block) - {"enabled", "threshold"}:
+        raise ValidationError("fullOccupancyBlock must be an object with enabled and threshold")
+    enabled = raw_full_block.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ValidationError("fullOccupancyBlock.enabled must be true or false")
+    full_occupancy_block = {
+        "enabled": enabled,
+        "threshold": _number(raw_full_block.get("threshold"), "fullOccupancyBlock.threshold"),
+    }
+
+    return {
+        "releaseRules": release_rules, "deluxeSuiteBorrow": deluxe_suite_borrow,
+        "suiteRouting": suite_routing, "fullOccupancyBlock": full_occupancy_block,
+    }
 
 
 # ------------------------------------------------------------------ release
