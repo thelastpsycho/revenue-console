@@ -87,12 +87,24 @@
 
       <div v-if="revealedKey" class="space-y-2 border-b border-slate-200 bg-amber-50 p-4 text-xs">
         <p class="font-semibold text-amber-800">Copy this key now - it won't be shown again.</p>
-        <div class="flex items-center gap-2">
-          <code class="flex-1 truncate rounded-lg bg-white px-3 py-2 text-slate-700">{{ revealedKey }}</code>
-          <button type="button" class="btn-flat shrink-0 px-3 py-2" @click="copy(revealedKey, 'reveal')">
-            {{ copiedId === 'reveal' ? 'Copied' : 'Copy' }}
-          </button>
-        </div>
+        <label class="block text-slate-600">
+          Plain key - for <code>REVENUE_CONSOLE_API_KEY</code> or a CLI's env var
+          <div class="mt-1 flex items-center gap-2">
+            <code class="flex-1 truncate rounded-lg bg-white px-3 py-2 text-slate-700">{{ revealedKey }}</code>
+            <button type="button" class="btn-flat shrink-0 px-3 py-2" @click="copy(revealedKey, 'reveal')">
+              {{ copiedId === 'reveal' ? 'Copied' : 'Copy' }}
+            </button>
+          </div>
+        </label>
+        <label class="block text-slate-600">
+          With "Bearer " - paste straight into an Authorization header field (e.g. claude.ai)
+          <div class="mt-1 flex items-center gap-2">
+            <code class="flex-1 truncate rounded-lg bg-white px-3 py-2 text-slate-700">Bearer {{ revealedKey }}</code>
+            <button type="button" class="btn-flat shrink-0 px-3 py-2" @click="copy(`Bearer ${revealedKey}`, 'revealBearer')">
+              {{ copiedId === 'revealBearer' ? 'Copied' : 'Copy' }}
+            </button>
+          </div>
+        </label>
         <button type="button" class="btn-flat py-1.5" @click="revealedKey = null">Done</button>
       </div>
 
