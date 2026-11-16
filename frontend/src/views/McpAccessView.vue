@@ -8,10 +8,9 @@
     <div class="neu-card space-y-3 p-4 text-xs">
       <h2 class="text-sm font-semibold text-app-tertiary">MCP server URL (remote)</h2>
       <p class="text-slate-500">
-        This embeds <code>MCP_ACCESS_TOKEN</code> - a one-time shared secret that gates the
-        tunnel itself (not a personal key). It changes rarely; look it up in
-        <code>mcp-server/.env</code> on the server and replace the placeholder below.
-        Saved in this browser only.
+        This embeds <code>MCP_ACCESS_TOKEN</code> - a shared secret that gates the tunnel
+        itself (not a personal key - everyone uses this same URL). It changes rarely; if it
+        ever is rotated, update it here and in <code>mcp-server/.env</code> on the server.
       </p>
       <div class="flex items-center gap-2">
         <input v-model="serverUrl" placeholder="https://mcp.yourdomain.com/&lt;MCP_ACCESS_TOKEN&gt;/mcp" class="neu-input flex-1" />
@@ -189,11 +188,13 @@ interface McpKey {
 }
 
 // This console's MCP server has its own Cloudflare tunnel hostname (it's a
-// separate service, not reachable on this app's own domain) - the host is
-// known/fixed for this single deployment, but the path embeds MCP_ACCESS_TOKEN,
-// a secret this frontend has no access to (and must not bundle) - look it up
-// once in mcp-server/.env. Editable/saved locally once filled in.
-const DEFAULT_SERVER_URL = 'https://revcon-mcp.krisnatha.com/<MCP_ACCESS_TOKEN>/mcp'
+// separate service, not reachable on this app's own domain) and its path
+// embeds MCP_ACCESS_TOKEN, the shared secret gating that tunnel - baked in
+// here since there's only one deployment of this app. Any logged-in account
+// can now read this value from the page source; it's no longer something
+// that needs SSH to look up. Update both here and in mcp-server/.env if it's
+// ever rotated. Still editable/saved locally if the host or token changes.
+const DEFAULT_SERVER_URL = 'https://revcon-mcp.krisnatha.com/zCeXmM6WPsS-whbXHaquOwdACrgpIPxDbXPlpfCdwjM/mcp'
 const SERVER_URL_KEY = 'mcpAccess.serverUrl'
 const serverUrl = ref(localStorage.getItem(SERVER_URL_KEY) || DEFAULT_SERVER_URL)
 watch(serverUrl, (value) => {
