@@ -35,7 +35,7 @@ import httpx
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import ToolAnnotations
+from mcp.types import Icon, ToolAnnotations
 
 INSTRUCTIONS = """\
 Read-only data from Revenue Console, the revenue/inventory system for The Anvaya
@@ -64,6 +64,9 @@ range, get_pickup_by_group for "who booked", and list_filters to turn names
 DEFAULT_URL = "http://backend:5666"
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 MAX_RANGE_DAYS = 366
+# A client (e.g. claude.ai) fetches this itself, so it must be the console's
+# public URL, never the internal docker-network REVENUE_CONSOLE_URL.
+ICON_URL = "https://revcon.krisnatha.com/favicon.svg"
 
 Comparison = Literal["weekday", "calendar", "custom"]
 
@@ -157,7 +160,8 @@ def _by_date(rows: list[dict[str, Any]], start: str | None, end: str | None, key
 
 def build_server(client: ConsoleClient) -> MCPServer:
     mcp = MCPServer(name="revenue-console", title="Revenue Console (The Anvaya)",
-                    instructions=INSTRUCTIONS, version="1.0.0")
+                    instructions=INSTRUCTIONS, version="1.0.0",
+                    icons=[Icon(src=ICON_URL, mime_type="image/svg+xml")])
 
     # ---- RMS: briefing, pace, pickup -------------------------------------------------
 
