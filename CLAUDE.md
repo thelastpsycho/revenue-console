@@ -94,7 +94,7 @@ Each reservation also carries `nationality`/`nationality_id` (`NationalityDescri
 
 ### MCP server
 
-`mcp-server/` is a read-only MCP server (separate `mcp` compose service, opt-in via `COMPOSE_PROFILES=mcp`) so Claude can query the console's data. It is a thin HTTP client of the backend's GET endpoints, logged in with the operator PIN - it never opens the SQLite files directly. When adding or renaming a GET endpoint that answers a data question, consider adding a tool in `mcp-server/server.py`; its tests verify every called path exists. Setup: `mcp-server/README.md`.
+`mcp-server/` is a read-only MCP server (separate `mcp` compose service, opt-in via `COMPOSE_PROFILES=mcp`) so Claude can query the console's data. It is a thin HTTP client of the backend's GET endpoints, authenticated with a personal API key (`app/accounts/mcp_keys.py`, minted from the `/mcp-access` page - `routes/mcp_keys_routes.py`) sent as a bearer token - it never opens the SQLite files directly. When adding or renaming a GET endpoint that answers a data question, consider adding a tool in `mcp-server/server.py`; its tests verify every called path exists. Setup: `mcp-server/README.md`.
 
 ### Progress streaming
 
@@ -122,7 +122,7 @@ The shared axios instance uses a relative base URL and Vite proxies `/api` to th
 
 ## Security
 
-`APP_ACCESS_PIN` (a 6-digit PIN) and `APP_SESSION_SECRET` must be configured on the backend before authenticated API endpoints become available. The UI is gated by `AuthGate.vue` and the axios client attaches CSRF tokens on writes. Never introduce provider credentials via `VITE_*` frontend variables. BAR partial-run recovery is implemented in `integrations/dedge/bar_checkpoint.py`.
+`APP_SESSION_SECRET` must be configured on the backend, and at least one operator account must exist (`backend/scripts/bootstrap_admin.py` creates the first one), before authenticated API endpoints become available. Operators log in with a per-account username/password (`app/accounts/users.py`), gated by fine-grained permissions (`app/accounts/permissions.py`); any logged-in account can also mint a personal API key from `/mcp-access` (`app/accounts/mcp_keys.py`) to call the API as a bearer token instead of a session cookie - it carries exactly that account's own permissions. The UI is gated by `AuthGate.vue` and the axios client attaches CSRF tokens on writes (bearer-token requests skip CSRF, since browsers never attach them automatically). Never introduce provider credentials via `VITE_*` frontend variables. BAR partial-run recovery is implemented in `integrations/dedge/bar_checkpoint.py`.
 
 The DeepSeek-backed chat/assistant page (`InventoryAssistantView.vue`) and its `routes/assistant_routes.py` server-side proxy were removed - the feature called DeepSeek with a hardcoded API key. Both the DeepSeek key and the D-EDGE password were previously embedded in public frontend history: rotate/revoke them immediately; see `SECURITY.md`. Removing the source file does not do that.
 

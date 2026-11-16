@@ -548,10 +548,14 @@
         are never passed through frontend-visible <code>VITE_*</code> variables.
       </p>
       <p class="text-xs text-slate-500">
-        The MCP server that lets Claude query this data is strictly
-        read-only: it logs in with its own dedicated account (no permissions
-        needed) and calls the same GET endpoints the UI does — it has no path
-        to write inventory, allotment, BAR, or stop-sale state.
+        Any logged-in account can mint its own personal API key from the
+        <router-link to="/mcp-access" class="underline">MCP Access</router-link>
+        page to call the API as a bearer token instead of a session cookie -
+        the key carries exactly that account's own permissions, never more.
+        The MCP server that lets Claude query this data uses one of these
+        keys and is strictly read-only: it calls the same GET endpoints the
+        UI does — it has no path to write inventory, allotment, BAR, or
+        stop-sale state.
       </p>
     </section>
 

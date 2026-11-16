@@ -13,8 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import server  # noqa: E402
 
-USERNAME = "mcp-service"
-PASSWORD = "correct-password-123"
+API_KEY = "rck_test-key-123"
 
 INVENTORY = [{"Date": "2026-10-30 00:00:00", "Occupancy": 81.0, "Deluxe": 3},
              {"Date": "2026-10-31 00:00:00", "Occupancy": 92.4, "Deluxe": 0},
@@ -22,25 +21,18 @@ INVENTORY = [{"Date": "2026-10-30 00:00:00", "Occupancy": 81.0, "Deluxe": 3},
 
 
 class FakeBackend:
-    """Mimics the Flask auth: 401 until POST /api/auth/login with the right credentials."""
+    """Mimics the Flask bearer-token auth: 401 unless Authorization matches."""
 
     def __init__(self):
         self.requests = []
-        self.logged_in = False
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         path = request.url.path
-        if path == "/api/auth/login":
-            body = json.loads(request.content)
-            ok = body.get("username") == USERNAME and body.get("password") == PASSWORD
-            self.logged_in = ok
-            return httpx.Response(200 if ok else 401, json={"status": "success" if ok else "error",
-                                                            "message": None if ok else "Invalid username or password"})
         if request.method != "GET":
             return httpx.Response(405)
-        if not self.logged_in:
-            return httpx.Response(401, json={"status": "error", "message": "Authentication required"})
+        if request.headers.get("Authorization") != f"Bearer {API_KEY}":
+            return httpx.Response(401, json={"status": "error", "message": "Invalid or revoked API key"})
         if path == "/api/db/combined-inventory":
             return httpx.Response(200, json={"status": "success", "data": INVENTORY, "updated_at": "2026-10-23T01:00:00+00:00"})
         if path == "/api/rms/pace":
@@ -50,9 +42,9 @@ class FakeBackend:
         return httpx.Response(404, json={"status": "error", "message": "Database file not found"})
 
 
-def make(username=USERNAME, password=PASSWORD):
+def make(api_key=API_KEY):
     backend = FakeBackend()
-    client = server.ConsoleClient("http://console.test", username, password, transport=httpx.MockTransport(backend))
+    client = server.ConsoleClient("http://console.test", api_key, transport=httpx.MockTransport(backend))
     return backend, server.build_server(client)
 
 
@@ -62,14 +54,12 @@ def payload(result):
 
 
 @pytest.mark.anyio
-async def test_logs_in_on_first_401_and_strips_status():
+async def test_sends_bearer_token_and_strips_status():
     backend, mcp = make()
     async with Client(mcp) as c:
         data = payload(await c.call_tool("get_revenue_briefing", {}))
         assert data["today"] == "2026-10-23" and "status" not in data
-        payload(await c.call_tool("get_revenue_briefing", {}))
-    paths = [r.url.path for r in backend.requests]
-    assert paths == ["/api/rms/briefing", "/api/auth/login", "/api/rms/briefing", "/api/rms/briefing"]
+    assert backend.requests[0].headers["Authorization"] == f"Bearer {API_KEY}"
 
 
 @pytest.mark.anyio
@@ -103,11 +93,11 @@ async def test_bad_range_and_backend_errors_are_tool_errors():
 
 
 @pytest.mark.anyio
-async def test_wrong_password_is_reported():
-    _, mcp = make(password="wrong-password")
+async def test_wrong_api_key_is_reported():
+    _, mcp = make(api_key="wrong-key")
     async with Client(mcp) as c:
         result = await c.call_tool("get_revenue_briefing", {})
-    assert result.is_error and "Login to Revenue Console failed (401)" in result.content[0].text
+    assert result.is_error and "rejected the API key" in result.content[0].text
 
 
 @pytest.mark.anyio

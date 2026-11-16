@@ -125,6 +125,7 @@
           {{ data.access.userCount }} account{{ data.access.userCount === 1 ? '' : 's' }} configured.
         </p>
         <router-link to="/users" class="block text-sm underline">Manage users &amp; permissions</router-link>
+        <router-link to="/mcp-access" class="block text-sm underline">Manage MCP / API keys</router-link>
         <button class="btn-flat px-3 py-2 text-xs" @click="logout">
           Sign out
         </button>

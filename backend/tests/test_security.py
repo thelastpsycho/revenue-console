@@ -2,12 +2,13 @@
 import pytest
 
 from app import create_app
-from app.accounts import users as accounts_users
+from app.accounts import mcp_keys, users as accounts_users
 
 
 @pytest.fixture(autouse=True)
 def user_data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(accounts_users, "get_data_path", lambda name: str(tmp_path / name))
+    monkeypatch.setattr(mcp_keys, "get_data_path", lambda name: str(tmp_path / name))
 
 
 @pytest.fixture
@@ -102,3 +103,30 @@ def test_inactive_user_is_logged_out(app):
     sign_in(client)
     accounts_users.update_user(user["id"], {"isActive": False})
     assert client.get("/api/pipeline/status").status_code == 401
+
+
+def test_bearer_token_authenticates_without_session_or_csrf(app):
+    user = _create_user("alice", "correct-password-1", permissions=["manage_users"])
+    _, token = mcp_keys.create_key(user["id"], "test key")
+    client = app.test_client()
+    # No login call, no CSRF header - a mutating request still goes through.
+    response = client.get("/api/users", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+
+
+def test_wrong_or_revoked_bearer_token_is_rejected(app):
+    user = _create_user()
+    record, token = mcp_keys.create_key(user["id"], "test key")
+    client = app.test_client()
+    assert client.get("/api/pipeline/status",
+                       headers={"Authorization": "Bearer not-a-real-token"}).status_code == 401
+    mcp_keys.revoke_key(record["id"])
+    assert client.get("/api/pipeline/status",
+                       headers={"Authorization": f"Bearer {token}"}).status_code == 401
+
+
+def test_bearer_token_only_carries_its_owners_permissions(app):
+    user = _create_user("alice", "correct-password-1", permissions=[])
+    _, token = mcp_keys.create_key(user["id"], "read-only key")
+    client = app.test_client()
+    assert client.get("/api/users", headers={"Authorization": f"Bearer {token}"}).status_code == 403

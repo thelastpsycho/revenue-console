@@ -183,6 +183,7 @@ import {
   AdjustmentsHorizontalIcon,
   GlobeAltIcon,
   UsersIcon,
+  KeyIcon,
 } from "@heroicons/vue/24/outline";
 
 defineProps<{ open: boolean }>();
@@ -272,6 +273,11 @@ const navigationAreas: NavArea[] = [
         href: "/users",
         icon: UsersIcon,
         permission: "manage_users",
+      },
+      {
+        name: "MCP Access",
+        href: "/mcp-access",
+        icon: KeyIcon,
       },
       {
         name: "Advanced",

@@ -3,11 +3,10 @@
 Lets Claude answer questions from the console's data ("how's December pacing vs last
 year?", "who picked up last week?", "which dates hit stop-sale?") without opening the UI.
 
-**Read-only.** Every tool is a GET against the existing backend API, logged in with a
-dedicated service account (no permissions needed - reads are open to any logged-in
-account). It never opens the SQLite files itself (so the backend's locks and caches
-stay authoritative) and has no tool that pushes allotments, BAR, stop-sale emails or
-pipeline runs.
+**Read-only.** Every tool is a GET against the existing backend API, authenticated with a
+personal API key (no permissions needed - reads are open to any logged-in account). It
+never opens the SQLite files itself (so the backend's locks and caches stay authoritative)
+and has no tool that pushes allotments, BAR, stop-sale emails or pipeline runs.
 
 ## Tools
 
@@ -31,11 +30,11 @@ pipeline runs.
 
 ## Option A — claude.ai / mobile (remote, via the tunnel)
 
-1. On the server, create `mcp-server/.env` from `.env.example`: a Revenue Console
-   username/password (create the account from the Users page or
-   `backend/scripts/bootstrap_admin.py` - it needs no permissions, since every tool here
-   only reads), a new `MCP_ACCESS_TOKEN`, and `MCP_ALLOWED_HOSTS` set to the public
-   hostname (e.g. `mcp.krisnatha.com`) - the server refuses to start `--http` without it.
+1. On the server, create `mcp-server/.env` from `.env.example`: a personal API key minted
+   from the console's **MCP Access** page (any logged-in account - no permissions needed,
+   since every tool here only reads), a new `MCP_ACCESS_TOKEN`, and `MCP_ALLOWED_HOSTS`
+   set to the public hostname (e.g. `mcp.krisnatha.com`) - the server refuses to start
+   `--http` without it.
 2. Add `COMPOSE_PROFILES=mcp` to the root `.env`, then deploy as usual
    (`git pull` + `schtasks /run /tn revenue-console-deploy`).
 3. Add a public hostname to the console's Cloudflare tunnel pointing at `http://mcp:8765`
@@ -63,13 +62,13 @@ Claude Desktop (`claude_desktop_config.json`):
       "command": "python",
       "args": ["/path/to/revenue-console/mcp-server/server.py"],
       "env": {"REVENUE_CONSOLE_URL": "https://<console public URL>",
-              "REVENUE_CONSOLE_USERNAME": "<username>", "REVENUE_CONSOLE_PASSWORD": "<password>"}
+              "REVENUE_CONSOLE_API_KEY": "<key from the MCP Access page>"}
     }
   }
 }
 ```
 
-Claude Code: `claude mcp add revenue-console -e REVENUE_CONSOLE_URL=... -e REVENUE_CONSOLE_USERNAME=... -e REVENUE_CONSOLE_PASSWORD=... -- python /path/to/mcp-server/server.py`,
+Claude Code: `claude mcp add revenue-console -e REVENUE_CONSOLE_URL=... -e REVENUE_CONSOLE_API_KEY=... -- python /path/to/mcp-server/server.py`,
 or against the remote endpoint: `claude mcp add --transport http revenue-console https://<host>/mcp --header "Authorization: Bearer <token>"`.
 
 ## Notes
@@ -77,7 +76,8 @@ or against the remote endpoint: `claude mcp add --transport http revenue-console
 - Revenue is gross room-rate revenue in IDR (USD at the configured mid rate); every figure
   carries an observed/estimated/unavailable quality flag. These rules are in the server's
   instructions so Claude reports them correctly.
-- The server logs in once and re-logs when the 8-hour backend session expires.
+- The key never expires on its own - revoke it from the MCP Access page (or the Users
+  page, as an admin) to cut off access immediately.
 - Adding a tool: add a GET endpoint to the backend if needed, then one `@mcp.tool` function in
   `server.py`. `tests/test_server.py` checks every path the server calls exists as a GET route.
 

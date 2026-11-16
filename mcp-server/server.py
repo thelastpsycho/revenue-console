@@ -14,9 +14,10 @@ Transports
 Environment
   REVENUE_CONSOLE_URL        backend base URL (default http://backend:5666; through the
                              tunnel use the console's public URL - nginx proxies /api)
-  REVENUE_CONSOLE_USERNAME   username of a Revenue Console account (create one from the
-  REVENUE_CONSOLE_PASSWORD   Users page or scripts/bootstrap_admin.py - no permissions are
-                             needed since every tool here only reads)
+  REVENUE_CONSOLE_API_KEY    a personal API key minted from the console's MCP Access page
+                             (any logged-in account - no permissions needed since every
+                             tool here only reads; the key carries exactly its owner's
+                             existing permissions, same as that account would have)
   MCP_ACCESS_TOKEN      required for --http; callers send it as
                         "Authorization: Bearer <token>" or use the URL /<token>/mcp
   MCP_ALLOWED_HOSTS     comma-separated public hostnames for --http (Host-header check)
@@ -72,39 +73,36 @@ class ConsoleError(ToolError):
 
 
 class ConsoleClient:
-    """Logs in with a dedicated service account and retries once when the session expires."""
+    """Sends a personal API key as a bearer token on every request - no
+    session cookie, login step, or CSRF handling needed."""
 
-    def __init__(self, base_url: str, username: str, password: str,
+    def __init__(self, base_url: str, api_key: str,
                  transport: httpx.AsyncBaseTransport | None = None):
         self.base_url = base_url.rstrip("/")
-        self.username = username
-        self.password = password
+        self.api_key = api_key
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
 
     def _http(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(base_url=self.base_url, timeout=httpx.Timeout(120, connect=10),
-                                             transport=self._transport, follow_redirects=False)
+            if not self.api_key:
+                raise ConsoleError("REVENUE_CONSOLE_API_KEY is not set on the MCP server")
+            self._client = httpx.AsyncClient(
+                base_url=self.base_url, timeout=httpx.Timeout(120, connect=10),
+                transport=self._transport, follow_redirects=False,
+                headers={"Authorization": f"Bearer {self.api_key}"})
         return self._client
-
-    async def _login(self) -> None:
-        if not self.username or not self.password:
-            raise ConsoleError("REVENUE_CONSOLE_USERNAME/REVENUE_CONSOLE_PASSWORD are not set on the MCP server")
-        resp = await self._http().post("/api/auth/login",
-                                       json={"username": self.username, "password": self.password})
-        if resp.status_code != 200:
-            raise ConsoleError(f"Login to Revenue Console failed ({resp.status_code}): {_message(resp)}")
 
     async def get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         params = {k: v for k, v in (params or {}).items() if v is not None and v != ""}
         try:
             resp = await self._http().get(path, params=params)
-            if resp.status_code == 401:
-                await self._login()
-                resp = await self._http().get(path, params=params)
         except httpx.HTTPError as exc:
             raise ConsoleError(f"Revenue Console is unreachable at {self.base_url}: {exc}") from exc
+        if resp.status_code == 401:
+            raise ConsoleError(
+                "Revenue Console rejected the API key (missing, wrong, or revoked) - "
+                "check REVENUE_CONSOLE_API_KEY")
         if resp.status_code != 200:
             raise ConsoleError(f"{path} returned {resp.status_code}: {_message(resp)}")
         body = resp.json()
@@ -406,8 +404,7 @@ def main() -> None:
     args = parser.parse_args()
 
     client = ConsoleClient(os.environ.get("REVENUE_CONSOLE_URL", DEFAULT_URL),
-                           os.environ.get("REVENUE_CONSOLE_USERNAME", ""),
-                           os.environ.get("REVENUE_CONSOLE_PASSWORD", ""))
+                           os.environ.get("REVENUE_CONSOLE_API_KEY", ""))
     server = build_server(client)
     if not args.http:
         server.run("stdio")

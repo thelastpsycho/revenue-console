@@ -12,6 +12,7 @@ from datetime import timedelta
 
 from flask import g, jsonify, request, session
 
+from .accounts import mcp_keys
 from .accounts import users as accounts_users
 from .accounts.permissions import PERMISSION_KEYS
 
@@ -60,6 +61,18 @@ def init_security(app):
             return None
         if not auth["configured"]:
             return jsonify({"status": "error", "message": "API access is not configured; set APP_SESSION_SECRET"}), 503
+
+        bearer = request.headers.get("Authorization", "")
+        if bearer.startswith("Bearer "):
+            owner_id = mcp_keys.authenticate(bearer[len("Bearer "):].strip())
+            user = accounts_users.get_user(owner_id) if owner_id is not None else None
+            if not user or not user["isActive"]:
+                return jsonify({"status": "error", "message": "Invalid or revoked API key"}), 401
+            g.current_user = user
+            # A bearer token is never sent automatically by a browser (unlike
+            # the session cookie), so it carries no CSRF risk - skip that check.
+            return None
+
         user_id = session.get("user_id")
         user = accounts_users.get_user(user_id) if user_id is not None else None
         if not user or not user["isActive"]:

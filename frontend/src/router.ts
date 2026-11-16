@@ -27,6 +27,7 @@ const AllotmentRulesView = () => import("./views/AllotmentRulesView.vue");
 const AdministrationView = () => import("./views/AdministrationView.vue");
 const DocumentationView = () => import("./views/DocumentationView.vue");
 const UsersManagementView = () => import("./views/UsersManagementView.vue");
+const McpAccessView = () => import("./views/McpAccessView.vue");
 
 declare module "vue-router" {
   interface RouteMeta {
@@ -201,6 +202,15 @@ const router = createRouter({
         title: "Users",
         description: "Create and manage operator accounts and their permissions.",
         permission: "manage_users",
+      },
+    },
+    {
+      path: "/mcp-access",
+      name: "mcp-access",
+      component: McpAccessView,
+      meta: {
+        title: "MCP Access",
+        description: "Create and revoke personal API keys to connect Claude and other MCP clients to this console's data.",
       },
     },
     {
