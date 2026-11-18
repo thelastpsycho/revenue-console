@@ -250,20 +250,91 @@ def _run_verify_step(pipeline_start_time, enabled_steps):
         raise PipelineStepError("verify", f"Allocation range ({alloc_lo}..{alloc_hi}) != combined range ({comb_lo}..{comb_hi})")
 
 
-def _scrape_and_process_pms(start_date, username, password):
+# Specialty (1-9 room) categories, as the raw short codes the PMS API
+# returns; Deluxe Pool Access and Premiere Room Lagoon Access are each split
+# across two codes there (same combination pms_processor.py does later).
+_SPECIALTY_RAW_COLUMNS = {
+    'The Anvaya Residence': ('AVR',),
+    'The Anvaya Suite No Pool': ('AVS',),
+    'The Anvaya Suite With Pool': ('ASP',),
+    'The Anvaya Suite Whirpool': ('ASW',),
+    'The Anvaya Villa': ('AVP',),
+    'Beach Front Private Suite Room': ('BFS',),
+    'Deluxe Suite Room': ('DLS',),
+    'Family Premiere Room': ('FAM',),
+    'Premiere Suite Room': ('PSU',),
+    'Deluxe Pool Access': ('DLKP', 'DLTP'),
+    'Premiere Room Lagoon Access': ('PRKL', 'PRTL'),
+}
+
+
+def _flatlined_specialty_room_types(raw_df, edge_rows=2, min_rows=30):
+    """Flag any specialty room type whose remaining-inventory value is
+    perfectly flat across the whole middle of the scraped window while
+    differing at the edges. Confirmed live on 2026-11-18: the PMS API's
+    AvailableRoomInventoryType endpoint intermittently returned exactly this
+    shape - every low-inventory room type pinned to one number (commonly 0)
+    for ~98 of 100 days, with a real value only in the first/last couple of
+    rows - while fresh calls made seconds later returned normal, varying
+    data. Real day-to-day turnover on these 1-9 room categories never stays
+    perfectly constant for that long, so this shape means the response
+    itself is bad, not that the rooms are actually closed that whole time."""
+    if len(raw_df) < min_rows:
+        return []
+    flagged = []
+    for room, codes in _SPECIALTY_RAW_COLUMNS.items():
+        if not all(code in raw_df.columns for code in codes):
+            continue
+        series = raw_df[list(codes)].sum(axis=1)
+        middle = series.iloc[edge_rows:-edge_rows]
+        if middle.nunique() != 1:
+            continue
+        stuck_value = middle.iloc[0]
+        edges = pd.concat([series.iloc[:edge_rows], series.iloc[-edge_rows:]])
+        if (edges != stuck_value).any():
+            flagged.append(room)
+    return flagged
+
+
+def _scrape_and_process_pms(start_date, username, password, max_attempts=3, retry_delay=5.0):
     """Fetch room availability via the PMS JSON API (100 days, matching the
     Selenium scraper's hardcoded window), write it to pms_inventory_raw.db in
     the same shape the Selenium scraper produces, then run it through the
     unmodified production process_pms_inventory() to write
-    pms_inventory_processed.db."""
-    rows, elapsed = fetch_room_inventory(start_date, days=100, username=username, password=password)
-    if not rows:
-        raise PipelineStepError("scrape_pms", "PMS API returned no rows")
+    pms_inventory_processed.db.
 
-    df = pd.DataFrame(rows)
-    for col in _PMS_NUMERIC_COLUMNS:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    Retries the fetch (fresh login each time) when the response looks
+    corrupted per _flatlined_specialty_room_types - this step's output
+    directly drives a live allotment push, so a flatlined response (which
+    reads as "closed for months" on rooms that are actually open) must
+    never be written or acted on."""
+    flagged = []
+    df = None
+    for attempt in range(1, max_attempts + 1):
+        rows, elapsed = fetch_room_inventory(start_date, days=100, username=username, password=password)
+        if not rows:
+            raise PipelineStepError("scrape_pms", "PMS API returned no rows")
+
+        df = pd.DataFrame(rows)
+        for col in _PMS_NUMERIC_COLUMNS:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+        flagged = _flatlined_specialty_room_types(df)
+        if not flagged:
+            break
+        more_attempts_left = attempt < max_attempts
+        _emit("scrape_pms", "warning",
+              f"PMS API response looks corrupted (flatlined: {', '.join(flagged)}) - "
+              f"attempt {attempt}/{max_attempts}" + (", retrying..." if more_attempts_left else ""))
+        if more_attempts_left:
+            time.sleep(retry_delay)
+
+    if flagged:
+        raise PipelineStepError(
+            "scrape_pms",
+            f"PMS API kept returning a corrupted snapshot (flatlined: {', '.join(flagged)}) "
+            f"after {max_attempts} attempts - aborting without pushing allotment from it")
 
     data_dir = get_data_dir()
     raw_db_path = os.path.join(data_dir, 'pms_inventory_raw.db')
