@@ -296,6 +296,27 @@ def _flatlined_specialty_room_types(raw_df, edge_rows=2, min_rows=30):
     return flagged
 
 
+def _patch_flatlined_columns(df, flagged, previous_raw_df):
+    """Replace just the flagged specialty room types' raw columns with the
+    previous run's values for the same dates, leaving every other column
+    (including Deluxe/Premiere) untouched. Dates with no previous value
+    (e.g. the window's newest day) keep this run's value as a last resort.
+    Since this patched frame becomes next run's "previous", a corrupted room
+    type self-heals the moment the PMS returns one good value for it, rather
+    than re-corrupting every run it stays broken."""
+    if previous_raw_df is None:
+        return df
+    patched = df.copy()
+    prev_by_date = previous_raw_df.set_index('Date')
+    for room in flagged:
+        for code in _SPECIALTY_RAW_COLUMNS[room]:
+            if code not in prev_by_date.columns:
+                continue
+            mapped_old = patched['Date'].map(prev_by_date[code])
+            patched[code] = mapped_old.fillna(patched[code])
+    return patched
+
+
 def _scrape_and_process_pms(start_date, username, password, max_attempts=3, retry_delay=5.0):
     """Fetch room availability via the PMS JSON API (100 days, matching the
     Selenium scraper's hardcoded window), write it to pms_inventory_raw.db in
@@ -304,10 +325,17 @@ def _scrape_and_process_pms(start_date, username, password, max_attempts=3, retr
     pms_inventory_processed.db.
 
     Retries the fetch (fresh login each time) when the response looks
-    corrupted per _flatlined_specialty_room_types - this step's output
-    directly drives a live allotment push, so a flatlined response (which
-    reads as "closed for months" on rooms that are actually open) must
-    never be written or acted on."""
+    corrupted per _flatlined_specialty_room_types - confirmed live against
+    the PMS's own UI (same endpoint, same account) to be real backend
+    instability, not a quirk of our scrape, and observed to persist for
+    20-40+ minutes at a stretch. Because of that, retrying a few seconds
+    apart often won't find a clean response - if every attempt is still
+    corrupted, this step patches just the flagged room types from the
+    previous run (_patch_flatlined_columns) and proceeds, instead of
+    aborting the whole step. Letting the whole pipeline fail over a handful
+    of 1-9 room specialty categories would also stop Deluxe/Premiere
+    allotment and BAR pricing from updating for as long as the PMS stays
+    unstable - far worse than those few room types going stale for one run."""
     flagged = []
     df = None
     for attempt in range(1, max_attempts + 1):
@@ -330,14 +358,23 @@ def _scrape_and_process_pms(start_date, username, password, max_attempts=3, retr
         if more_attempts_left:
             time.sleep(retry_delay)
 
-    if flagged:
-        raise PipelineStepError(
-            "scrape_pms",
-            f"PMS API kept returning a corrupted snapshot (flatlined: {', '.join(flagged)}) "
-            f"after {max_attempts} attempts - aborting without pushing allotment from it")
-
     data_dir = get_data_dir()
     raw_db_path = os.path.join(data_dir, 'pms_inventory_raw.db')
+
+    if flagged:
+        previous_raw_df = None
+        if os.path.exists(raw_db_path):
+            prev_conn = sqlite3.connect(raw_db_path)
+            try:
+                previous_raw_df = pd.read_sql_query("SELECT * FROM pms_inventory", prev_conn)
+            finally:
+                prev_conn.close()
+        df = _patch_flatlined_columns(df, flagged, previous_raw_df)
+        _emit("scrape_pms", "warning",
+              f"PMS API kept returning a corrupted snapshot for {', '.join(flagged)} after "
+              f"{max_attempts} attempts - carried forward their last known values instead of "
+              f"this run's figures; every other room type (Deluxe/Premiere included) is unaffected")
+
     conn = sqlite3.connect(raw_db_path)
     try:
         df.to_sql('pms_inventory', conn, if_exists='replace', index=False, dtype=_PMS_RAW_DTYPE)

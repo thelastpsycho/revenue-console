@@ -2,8 +2,12 @@
 intermittently return every specialty room type pinned to one value for
 almost the whole scraped window, with real values only at the edges -
 closing rooms that are actually open once that bad snapshot drives a live
-allotment push. _scrape_and_process_pms must detect that shape and retry
-rather than trust it."""
+allotment push. Confirmed live to be real PMS-side instability (identical
+in its own UI), persisting 20-40+ minutes at a stretch rather than clearing
+within a few quick retries - so _scrape_and_process_pms must detect that
+shape and, when it doesn't clear, patch forward only the affected room
+types rather than aborting the whole step (which would also stop
+Deluxe/Premiere allotment and BAR from updating)."""
 import pandas as pd
 import pytest
 
@@ -12,15 +16,17 @@ from app.pipeline import fast_runner as fr
 _DAYS = 40
 
 
-def _rows(avp):
+def _rows(avp, dlk=10):
     """avp: per-day values for The Anvaya Villa's raw code (AVP); every
     other specialty code gets a plainly-varying pattern (0/1 alternating)
-    so only AVP is a candidate for flagging."""
+    so only AVP is a candidate for flagging. dlk: constant marker for
+    Deluxe's raw code, so a test can tell whether a Deluxe/Premiere column
+    came from this call's rows or got left over from a previous run."""
     rows = []
     for i in range(_DAYS):
         rows.append({
             "Date": f"2026-11-{i + 1:02d}", "AVR": i % 2, "AVS": i % 2, "ASP": i % 2,
-            "ASW": i % 2, "AVP": avp[i], "BFS": i % 2, "DLK": 10, "DLT": 10,
+            "ASW": i % 2, "AVP": avp[i], "BFS": i % 2, "DLK": dlk, "DLT": 10,
             "DLKP": i % 2, "DLTP": 0, "PRKG": 10, "PRKP": 0, "PRTG": 0, "PRTP": 0,
             "PRKL": i % 2, "PRTL": 0, "DLS": i % 2, "FAM": i % 2, "PSU": i % 2,
             "Extra Bed": 0, "Total Room": 400, "Available": 100, "Tentative": 0,
@@ -80,14 +86,39 @@ def test_retries_until_a_good_snapshot_arrives(pipeline_env, monkeypatch):
     assert any(t == "warning" for _, t, _ in emitted)
 
 
-def test_raises_without_writing_anything_when_every_attempt_is_corrupted(pipeline_env, monkeypatch):
+def test_patches_only_the_flagged_room_type_from_the_previous_run(pipeline_env, monkeypatch):
+    """A previous run's pms_inventory_raw.db had a trustworthy AVP and a
+    distinct Deluxe (DLK) marker. This run's PMS response is corrupted on
+    AVP for every attempt. The step must not raise - it should carry AVP
+    forward from the previous run while DLK (and everything else) still
+    reflects this run's fresh data, proving the patch is scoped to just the
+    flagged room type."""
+    tmp_path, emitted = pipeline_env
+    previous = pd.DataFrame(_rows(_GOOD_AVP, dlk=777))
+    conn = fr.sqlite3.connect(str(tmp_path / "pms_inventory_raw.db"))
+    previous.to_sql("pms_inventory", conn, if_exists="replace", index=False)
+    conn.close()
+
+    monkeypatch.setattr(fr, "fetch_room_inventory",
+                         lambda start_date, days, username, password: (_rows(_FLATLINED_AVP, dlk=10), 0.1))
+
+    processed, elapsed = fr._scrape_and_process_pms("2026-11-01", "u", "p", max_attempts=2, retry_delay=0)
+
+    assert list(processed["AVP"]) == _GOOD_AVP  # carried forward from the previous run
+    assert (processed["DLK"] == 10).all()  # untouched - reflects this run's own data
+    assert any("The Anvaya Villa" in m and "carried forward" in m for _, _, m in emitted)
+
+
+def test_proceeds_without_a_previous_run_to_patch_from(pipeline_env, monkeypatch):
+    """First-ever run (no pms_inventory_raw.db yet): there's nothing to
+    carry forward, but the step still must not raise - it has no better
+    option than this run's own (possibly corrupted) data for the flagged
+    room type, while every other room type is unaffected either way."""
     tmp_path, emitted = pipeline_env
     monkeypatch.setattr(fr, "fetch_room_inventory",
                          lambda start_date, days, username, password: (_rows(_FLATLINED_AVP), 0.1))
 
-    with pytest.raises(fr.PipelineStepError) as exc_info:
-        fr._scrape_and_process_pms("2026-11-01", "u", "p", max_attempts=2, retry_delay=0)
+    processed, elapsed = fr._scrape_and_process_pms("2026-11-01", "u", "p", max_attempts=2, retry_delay=0)
 
-    assert exc_info.value.step == "scrape_pms"
-    assert "The Anvaya Villa" in str(exc_info.value)
-    assert not (tmp_path / "pms_inventory_raw.db").exists()
+    assert list(processed["AVP"]) == _FLATLINED_AVP
+    assert (tmp_path / "pms_inventory_raw.db").exists()
