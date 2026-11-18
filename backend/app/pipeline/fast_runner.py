@@ -250,142 +250,23 @@ def _run_verify_step(pipeline_start_time, enabled_steps):
         raise PipelineStepError("verify", f"Allocation range ({alloc_lo}..{alloc_hi}) != combined range ({comb_lo}..{comb_hi})")
 
 
-# Specialty (1-9 room) categories, as the raw short codes the PMS API
-# returns; Deluxe Pool Access and Premiere Room Lagoon Access are each split
-# across two codes there (same combination pms_processor.py does later).
-_SPECIALTY_RAW_COLUMNS = {
-    'The Anvaya Residence': ('AVR',),
-    'The Anvaya Suite No Pool': ('AVS',),
-    'The Anvaya Suite With Pool': ('ASP',),
-    'The Anvaya Suite Whirpool': ('ASW',),
-    'The Anvaya Villa': ('AVP',),
-    'Beach Front Private Suite Room': ('BFS',),
-    'Deluxe Suite Room': ('DLS',),
-    'Family Premiere Room': ('FAM',),
-    'Premiere Suite Room': ('PSU',),
-    'Deluxe Pool Access': ('DLKP', 'DLTP'),
-    'Premiere Room Lagoon Access': ('PRKL', 'PRTL'),
-}
-
-
-def _flatlined_specialty_room_types(raw_df, edge_rows=2, min_rows=30):
-    """Flag any specialty room type whose remaining-inventory value is
-    perfectly flat across the whole middle of the scraped window while
-    differing at the edges. Observed live on 2026-11-18 for The Anvaya
-    Villa/Residence: AvailableRoomInventoryType reports PMS's own unallotted
-    pool, which drops to 0 the moment we allot a room online and only comes
-    back once we close it again - a real, not corrupted, number, but
-    self-referential. Combining with D-EDGE/CM data normally breaks that
-    self-reference (CM has its own independent count to add back), but CM's
-    export was silently dropping these two room types entirely (traced to
-    the D-EDGE "Rates to show" filter being pinned to a promo rate they have
-    no price under - fixed in integrations/dedge/inventory_scraper.py's
-    _ensure_bar_rate_selected). With no CM figure to add back, each run read
-    its own prior allotment as "nothing left to sell", closed it, which
-    freed the room, which reopened it next run - an open/close loop that
-    looks exactly like this flatlined shape. That root cause is now fixed at
-    the export; this check stays as a defensive fallback in case the same
-    shape resurfaces for a different reason (real day-to-day turnover on
-    these 1-9 room categories should never stay perfectly constant this
-    long, flagged or not)."""
-    if len(raw_df) < min_rows:
-        return []
-    flagged = []
-    for room, codes in _SPECIALTY_RAW_COLUMNS.items():
-        if not all(code in raw_df.columns for code in codes):
-            continue
-        series = raw_df[list(codes)].sum(axis=1)
-        middle = series.iloc[edge_rows:-edge_rows]
-        if middle.nunique() != 1:
-            continue
-        stuck_value = middle.iloc[0]
-        edges = pd.concat([series.iloc[:edge_rows], series.iloc[-edge_rows:]])
-        if (edges != stuck_value).any():
-            flagged.append(room)
-    return flagged
-
-
-def _patch_flatlined_columns(df, flagged, previous_raw_df):
-    """Replace just the flagged specialty room types' raw columns with the
-    previous run's values for the same dates, leaving every other column
-    (including Deluxe/Premiere) untouched. Dates with no previous value
-    (e.g. the window's newest day) keep this run's value as a last resort.
-    Since this patched frame becomes next run's "previous", a corrupted room
-    type self-heals the moment the PMS returns one good value for it, rather
-    than re-corrupting every run it stays broken."""
-    if previous_raw_df is None:
-        return df
-    patched = df.copy()
-    prev_by_date = previous_raw_df.set_index('Date')
-    for room in flagged:
-        for code in _SPECIALTY_RAW_COLUMNS[room]:
-            if code not in prev_by_date.columns:
-                continue
-            mapped_old = patched['Date'].map(prev_by_date[code])
-            patched[code] = mapped_old.fillna(patched[code])
-    return patched
-
-
-def _scrape_and_process_pms(start_date, username, password, max_attempts=3, retry_delay=5.0):
+def _scrape_and_process_pms(start_date, username, password):
     """Fetch room availability via the PMS JSON API (100 days, matching the
     Selenium scraper's hardcoded window), write it to pms_inventory_raw.db in
     the same shape the Selenium scraper produces, then run it through the
     unmodified production process_pms_inventory() to write
-    pms_inventory_processed.db.
+    pms_inventory_processed.db."""
+    rows, elapsed = fetch_room_inventory(start_date, days=100, username=username, password=password)
+    if not rows:
+        raise PipelineStepError("scrape_pms", "PMS API returned no rows")
 
-    Retries the fetch (fresh login each time) when the response looks
-    corrupted per _flatlined_specialty_room_types. The known cause (D-EDGE's
-    export silently dropping The Anvaya Villa/Residence - see that
-    function's docstring) is now fixed at the source, so retrying should
-    rarely matter in practice; this is a defensive fallback, not the primary
-    fix. It's still worth keeping because the underlying issue was
-    self-referential (PMS reads back its own prior allotment), which a
-    quick retry a few seconds later is unlikely to clear on its own - if
-    every attempt is still flagged, this step patches just the flagged room
-    types from the previous run (_patch_flatlined_columns) and proceeds,
-    instead of aborting the whole step. Letting the whole pipeline fail over
-    a handful of 1-9 room specialty categories would also stop
-    Deluxe/Premiere allotment and BAR pricing from updating - far worse than
-    those few room types going stale for one run."""
-    flagged = []
-    df = None
-    for attempt in range(1, max_attempts + 1):
-        rows, elapsed = fetch_room_inventory(start_date, days=100, username=username, password=password)
-        if not rows:
-            raise PipelineStepError("scrape_pms", "PMS API returned no rows")
-
-        df = pd.DataFrame(rows)
-        for col in _PMS_NUMERIC_COLUMNS:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-
-        flagged = _flatlined_specialty_room_types(df)
-        if not flagged:
-            break
-        more_attempts_left = attempt < max_attempts
-        _emit("scrape_pms", "warning",
-              f"PMS API response looks corrupted (flatlined: {', '.join(flagged)}) - "
-              f"attempt {attempt}/{max_attempts}" + (", retrying..." if more_attempts_left else ""))
-        if more_attempts_left:
-            time.sleep(retry_delay)
+    df = pd.DataFrame(rows)
+    for col in _PMS_NUMERIC_COLUMNS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
     data_dir = get_data_dir()
     raw_db_path = os.path.join(data_dir, 'pms_inventory_raw.db')
-
-    if flagged:
-        previous_raw_df = None
-        if os.path.exists(raw_db_path):
-            prev_conn = sqlite3.connect(raw_db_path)
-            try:
-                previous_raw_df = pd.read_sql_query("SELECT * FROM pms_inventory", prev_conn)
-            finally:
-                prev_conn.close()
-        df = _patch_flatlined_columns(df, flagged, previous_raw_df)
-        _emit("scrape_pms", "warning",
-              f"PMS API kept returning a corrupted snapshot for {', '.join(flagged)} after "
-              f"{max_attempts} attempts - carried forward their last known values instead of "
-              f"this run's figures; every other room type (Deluxe/Premiere included) is unaffected")
-
     conn = sqlite3.connect(raw_db_path)
     try:
         df.to_sql('pms_inventory', conn, if_exists='replace', index=False, dtype=_PMS_RAW_DTYPE)
