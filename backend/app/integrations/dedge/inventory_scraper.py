@@ -191,7 +191,12 @@ def _ensure_bar_rate_selected(driver, timeout=15):
         ))
     )
     if not bar_checkbox.is_selected():
-        bar_checkbox.click()
+        # The native checkbox is visually hidden behind a custom-styled span
+        # (only that span is in the clickable render tree), so a normal
+        # WebDriver click raises ElementNotInteractable even though the
+        # input is present and toggling it is exactly what a real click on
+        # its visible label would do.
+        driver.execute_script("arguments[0].click();", bar_checkbox)
     # Clicking elsewhere commits the selection (fires SaveFilters) the same
     # way a human closing the dropdown would.
     driver.find_element(By.TAG_NAME, "body").click()
