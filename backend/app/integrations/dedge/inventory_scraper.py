@@ -51,6 +51,11 @@ ROOMS_FILTER_TEXT_SELECTOR = "#filterRoomsButtonText"
 ROOMS_FILTER_BUTTON_SELECTOR = ".ctx-filters-rooms .button-dropdown-button"
 ROOMS_FILTER_SELECT_ALL_SELECTOR = ".ctx-filters-rooms-dropdown .btnRoomsSelectAll"
 
+RATES_FILTER_TEXT_SELECTOR = "#filterRatesButtonText"
+RATES_FILTER_BUTTON_SELECTOR = ".ctx-filters-rates .button-dropdown-button"
+RATES_FILTER_SELECT_NONE_SELECTOR = ".ctx-filters-rates-dropdown .btnHotelRatesSelectNone"
+RATES_FILTER_BAR_LABEL = "Best Flexible Rate (BAR)"
+
 _FETCH_EXPORT_SCRIPT = """
 var start = arguments[0];
 var end = arguments[1];
@@ -152,6 +157,50 @@ def _ensure_all_rooms_selected(driver, timeout=15):
     )
 
 
+def _ensure_bar_rate_selected(driver, timeout=15):
+    """The planning page's "Rates to show" filter is also a saved-per-account
+    setting, same as _ensure_all_rooms_selected guards against for rooms - but
+    here the fix isn't "select All". Found by inspecting the extranet live:
+    the export's per-room "Left for sale" row only appears for whatever rate
+    is currently selected, and this account has dozens of promotional/package
+    rates (Indulgence, Black Friday, Staycation offers, ...) that aren't
+    configured for every room type. The Anvaya Villa and The Anvaya Residence
+    have no price under those narrower rates, so while one was selected they
+    silently had no "Left for sale" row at all - missing from the export
+    entirely, not just zeroed. Best Flexible Rate (BAR) is the one rate every
+    room type always has, so force it to be the only selection before every
+    export - not "All", which would also pull in every irrelevant promo rate.
+    """
+    text_el = WebDriverWait(driver, timeout).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, RATES_FILTER_TEXT_SELECTOR))
+    )
+    if text_el.text.strip() == RATES_FILTER_BAR_LABEL:
+        return
+
+    log(driver, f"CM 'Rates to show' filter was set to {text_el.text.strip()!r} - selecting {RATES_FILTER_BAR_LABEL!r} before export")
+    driver.find_element(By.CSS_SELECTOR, RATES_FILTER_BUTTON_SELECTOR).click()
+    WebDriverWait(driver, timeout).until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, RATES_FILTER_SELECT_NONE_SELECTOR))
+    ).click()
+    bar_checkbox = WebDriverWait(driver, timeout).until(
+        EC.presence_of_element_located((
+            By.XPATH,
+            "(//label[contains(@class,'avp-label') and normalize-space(text())="
+            f"'{RATES_FILTER_BAR_LABEL}']/ancestor::*[descendant::input[@type='checkbox']])[1]"
+            "//input[@type='checkbox']"
+        ))
+    )
+    if not bar_checkbox.is_selected():
+        bar_checkbox.click()
+    # Clicking elsewhere commits the selection (fires SaveFilters) the same
+    # way a human closing the dropdown would.
+    driver.find_element(By.TAG_NAME, "body").click()
+
+    WebDriverWait(driver, timeout).until(
+        lambda d: d.find_element(By.CSS_SELECTOR, RATES_FILTER_TEXT_SELECTOR).text.strip() == RATES_FILTER_BAR_LABEL
+    )
+
+
 def _open_planning(driver):
     """Load Planning/Monthly. It enforces the device-trust check more strictly
     than ensure_logged_in's probe page, so re-check for it here."""
@@ -164,6 +213,7 @@ def _open_planning(driver):
         if "/Device" in driver.current_url:
             raise RuntimeError(f"Still on the device-verification page after waiting (at {driver.current_url})")
     _ensure_all_rooms_selected(driver)
+    _ensure_bar_rate_selected(driver)
 
 
 def verify_session(username=None, password=None, user_data_dir=DEFAULT_PROFILE_DIR):

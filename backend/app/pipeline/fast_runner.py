@@ -271,14 +271,23 @@ _SPECIALTY_RAW_COLUMNS = {
 def _flatlined_specialty_room_types(raw_df, edge_rows=2, min_rows=30):
     """Flag any specialty room type whose remaining-inventory value is
     perfectly flat across the whole middle of the scraped window while
-    differing at the edges. Confirmed live on 2026-11-18: the PMS API's
-    AvailableRoomInventoryType endpoint intermittently returned exactly this
-    shape - every low-inventory room type pinned to one number (commonly 0)
-    for ~98 of 100 days, with a real value only in the first/last couple of
-    rows - while fresh calls made seconds later returned normal, varying
-    data. Real day-to-day turnover on these 1-9 room categories never stays
-    perfectly constant for that long, so this shape means the response
-    itself is bad, not that the rooms are actually closed that whole time."""
+    differing at the edges. Observed live on 2026-11-18 for The Anvaya
+    Villa/Residence: AvailableRoomInventoryType reports PMS's own unallotted
+    pool, which drops to 0 the moment we allot a room online and only comes
+    back once we close it again - a real, not corrupted, number, but
+    self-referential. Combining with D-EDGE/CM data normally breaks that
+    self-reference (CM has its own independent count to add back), but CM's
+    export was silently dropping these two room types entirely (traced to
+    the D-EDGE "Rates to show" filter being pinned to a promo rate they have
+    no price under - fixed in integrations/dedge/inventory_scraper.py's
+    _ensure_bar_rate_selected). With no CM figure to add back, each run read
+    its own prior allotment as "nothing left to sell", closed it, which
+    freed the room, which reopened it next run - an open/close loop that
+    looks exactly like this flatlined shape. That root cause is now fixed at
+    the export; this check stays as a defensive fallback in case the same
+    shape resurfaces for a different reason (real day-to-day turnover on
+    these 1-9 room categories should never stay perfectly constant this
+    long, flagged or not)."""
     if len(raw_df) < min_rows:
         return []
     flagged = []
@@ -325,17 +334,19 @@ def _scrape_and_process_pms(start_date, username, password, max_attempts=3, retr
     pms_inventory_processed.db.
 
     Retries the fetch (fresh login each time) when the response looks
-    corrupted per _flatlined_specialty_room_types - confirmed live against
-    the PMS's own UI (same endpoint, same account) to be real backend
-    instability, not a quirk of our scrape, and observed to persist for
-    20-40+ minutes at a stretch. Because of that, retrying a few seconds
-    apart often won't find a clean response - if every attempt is still
-    corrupted, this step patches just the flagged room types from the
-    previous run (_patch_flatlined_columns) and proceeds, instead of
-    aborting the whole step. Letting the whole pipeline fail over a handful
-    of 1-9 room specialty categories would also stop Deluxe/Premiere
-    allotment and BAR pricing from updating for as long as the PMS stays
-    unstable - far worse than those few room types going stale for one run."""
+    corrupted per _flatlined_specialty_room_types. The known cause (D-EDGE's
+    export silently dropping The Anvaya Villa/Residence - see that
+    function's docstring) is now fixed at the source, so retrying should
+    rarely matter in practice; this is a defensive fallback, not the primary
+    fix. It's still worth keeping because the underlying issue was
+    self-referential (PMS reads back its own prior allotment), which a
+    quick retry a few seconds later is unlikely to clear on its own - if
+    every attempt is still flagged, this step patches just the flagged room
+    types from the previous run (_patch_flatlined_columns) and proceeds,
+    instead of aborting the whole step. Letting the whole pipeline fail over
+    a handful of 1-9 room specialty categories would also stop
+    Deluxe/Premiere allotment and BAR pricing from updating - far worse than
+    those few room types going stale for one run."""
     flagged = []
     df = None
     for attempt in range(1, max_attempts + 1):

@@ -1,13 +1,12 @@
-"""The PMS API's AvailableRoomInventoryType endpoint has been observed to
-intermittently return every specialty room type pinned to one value for
-almost the whole scraped window, with real values only at the edges -
-closing rooms that are actually open once that bad snapshot drives a live
-allotment push. Confirmed live to be real PMS-side instability (identical
-in its own UI), persisting 20-40+ minutes at a stretch rather than clearing
-within a few quick retries - so _scrape_and_process_pms must detect that
-shape and, when it doesn't clear, patch forward only the affected room
-types rather than aborting the whole step (which would also stop
-Deluxe/Premiere allotment and BAR from updating)."""
+"""AvailableRoomInventoryType reports PMS's own unallotted pool - a real,
+self-referential number that can flatline (read back our own prior
+allotment, close it, reopen it, repeat) when D-EDGE/CM has no independent
+figure to add back. That was traced to D-EDGE's export silently dropping
+The Anvaya Villa/Residence (fixed in dedge/inventory_scraper.py's
+_ensure_bar_rate_selected), but _scrape_and_process_pms keeps this check as
+a defensive fallback: if every retry still looks flagged, patch forward
+only the affected room types rather than aborting the whole step (which
+would also stop Deluxe/Premiere allotment and BAR from updating)."""
 import pandas as pd
 import pytest
 
