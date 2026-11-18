@@ -51,7 +51,6 @@ ROOMS_FILTER_TEXT_SELECTOR = "#filterRoomsButtonText"
 ROOMS_FILTER_BUTTON_SELECTOR = ".ctx-filters-rooms .button-dropdown-button"
 ROOMS_FILTER_SELECT_ALL_SELECTOR = ".ctx-filters-rooms-dropdown .btnRoomsSelectAll"
 
-RATES_FILTER_TEXT_SELECTOR = "#filterRatesButtonText"
 RATES_FILTER_BUTTON_SELECTOR = ".ctx-filters-rates .button-dropdown-button"
 RATES_FILTER_SELECT_NONE_SELECTOR = ".ctx-filters-rates-dropdown .btnHotelRatesSelectNone"
 RATES_FILTER_BAR_LABEL = "Best Flexible Rate (BAR)"
@@ -170,18 +169,15 @@ def _ensure_bar_rate_selected(driver, timeout=15):
     entirely, not just zeroed. Best Flexible Rate (BAR) is the one rate every
     room type always has, so force it to be the only selection before every
     export - not "All", which would also pull in every irrelevant promo rate.
-    """
-    text_el = WebDriverWait(driver, timeout).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, RATES_FILTER_TEXT_SELECTOR))
-    )
-    if text_el.text.strip() == RATES_FILTER_BAR_LABEL:
-        return
 
-    log(driver, f"CM 'Rates to show' filter was set to {text_el.text.strip()!r} - selecting {RATES_FILTER_BAR_LABEL!r} before export")
+    Unlike the rooms filter, this can't be checked from the button's display
+    text: that text reads "N rate(s) from my hotel" for any single selection
+    that isn't literally every rate (confirmed live - it showed "1 rate from
+    my hotel" even while BAR alone was already selected), never the rate's
+    name. So the dropdown has to be opened to read the actual checkbox state
+    either way; there's no cheap short-circuit via the closed button text.
+    """
     driver.find_element(By.CSS_SELECTOR, RATES_FILTER_BUTTON_SELECTOR).click()
-    WebDriverWait(driver, timeout).until(
-        EC.element_to_be_clickable((By.CSS_SELECTOR, RATES_FILTER_SELECT_NONE_SELECTOR))
-    ).click()
     bar_checkbox = WebDriverWait(driver, timeout).until(
         EC.presence_of_element_located((
             By.XPATH,
@@ -190,6 +186,18 @@ def _ensure_bar_rate_selected(driver, timeout=15):
             "//input[@type='checkbox']"
         ))
     )
+    other_checked = any(
+        cb.is_selected() for cb in driver.find_elements(By.CSS_SELECTOR, ".ctx-filters-rates-dropdown input[type=checkbox]")
+        if cb.get_attribute("id") != bar_checkbox.get_attribute("id")
+    )
+    if bar_checkbox.is_selected() and not other_checked:
+        driver.find_element(By.TAG_NAME, "body").click()
+        return
+
+    log(driver, "CM 'Rates to show' filter wasn't set to exactly Best Flexible Rate (BAR) - fixing before export")
+    WebDriverWait(driver, timeout).until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, RATES_FILTER_SELECT_NONE_SELECTOR))
+    ).click()
     if not bar_checkbox.is_selected():
         # The native checkbox is visually hidden behind a custom-styled span
         # (only that span is in the clickable render tree), so a normal
@@ -197,13 +205,10 @@ def _ensure_bar_rate_selected(driver, timeout=15):
         # input is present and toggling it is exactly what a real click on
         # its visible label would do.
         driver.execute_script("arguments[0].click();", bar_checkbox)
+    WebDriverWait(driver, timeout).until(lambda d: bar_checkbox.is_selected())
     # Clicking elsewhere commits the selection (fires SaveFilters) the same
     # way a human closing the dropdown would.
     driver.find_element(By.TAG_NAME, "body").click()
-
-    WebDriverWait(driver, timeout).until(
-        lambda d: d.find_element(By.CSS_SELECTOR, RATES_FILTER_TEXT_SELECTOR).text.strip() == RATES_FILTER_BAR_LABEL
-    )
 
 
 def _open_planning(driver):
