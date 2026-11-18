@@ -242,7 +242,13 @@ def compute_release(rule, remaining, room_cap):
     """How many rooms to open online, given how many physically remain."""
     kind = rule["kind"]
     if kind == "sellAsRemaining":
-        return max(0, remaining)
+        # Clamped like "tiered" already is - "remaining" comes from
+        # combined_inventory (PMS + CM summed), which can legitimately
+        # exceed a room type's actual capacity (e.g. PMS's unallotted count
+        # plus CM's own count for the same physical room), and pushing more
+        # online than physically exists is an oversell, not just a reporting
+        # quirk.
+        return min(max(0, remaining), room_cap)
     if kind == "keepBack":
         if remaining <= 0:
             return 0

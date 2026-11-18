@@ -56,6 +56,14 @@ def test_sell_as_remaining():
     assert ar.compute_release(rule, 5, 10) == 5
 
 
+def test_sell_as_remaining_clamps_to_room_cap():
+    # "remaining" comes from combined (PMS + CM) inventory, which can
+    # exceed a room type's actual capacity - must never release more than
+    # physically exists.
+    rule = {"kind": "sellAsRemaining"}
+    assert ar.compute_release(rule, 2, 1) == 1
+
+
 # --- settings: defaults + persistence ---------------------------------------
 
 def test_default_settings_cover_every_room_type():
