@@ -52,10 +52,35 @@
         <p class="text-slate-500">Replace <code>&lt;your-key&gt;</code> with a key created below.</p>
       </div>
 
+      <div v-else-if="activeTab === 'remote-oauth'" class="space-y-2">
+        <p class="text-slate-500">
+          Recommended: claude.ai signs you in directly, with no key to copy-paste - the
+          key it mints for you shows up (and can be revoked) in the table below like any
+          other.
+        </p>
+        <ol class="list-inside list-decimal space-y-1 text-slate-600">
+          <li>Go to <strong>Settings → Connectors</strong>.</li>
+          <li>Click <strong>Add</strong> → <strong>Custom</strong> → <strong>Web</strong>, name it, and paste the server URL above.</li>
+          <li>For <strong>Authentication</strong>, choose <strong>OAuth</strong> (or "Sign in").</li>
+          <li>Click <strong>Add</strong>, then sign in with your own console username and password when prompted.</li>
+          <li>
+            The very first time any client connects this way, an admin needs to approve
+            it once under "Pending OAuth connections" below - new clients start out
+            pending.
+          </li>
+        </ol>
+        <p class="text-slate-500">
+          Needs <code>REVENUE_CONSOLE_PUBLIC_URL</code> set on both the backend and the
+          mcp-server - see <code>mcp-server/README.md</code>. If it isn't set yet, use the
+          "manual header" tab instead.
+        </p>
+      </div>
+
       <div v-else-if="activeTab === 'remote-claude-app'" class="space-y-2">
         <p class="text-slate-500">
-          Claude.ai and Claude Desktop support custom connectors with a fixed request header
-          - no OAuth needed.
+          Fallback for clients that don't support OAuth sign-in (see the previous tab):
+          claude.ai and Claude Desktop also support custom connectors with a fixed
+          request header.
         </p>
         <ol class="list-inside list-decimal space-y-1 text-slate-600">
           <li>Go to <strong>Settings → Connectors</strong>.</li>
@@ -88,6 +113,53 @@
     </div>
 
     <p v-if="loadError" class="rounded-lg bg-rose-50 p-3 text-xs font-semibold text-rose-700">{{ loadError }}</p>
+
+    <div v-if="scope === 'all'" class="neu-card overflow-hidden">
+      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 p-4">
+        <h2 class="text-sm font-semibold text-app-tertiary">
+          Pending OAuth connections
+          <span class="ml-1 font-normal text-slate-500">{{ oauthClients.length }}</span>
+        </h2>
+      </div>
+      <p class="border-b border-slate-200 p-4 text-slate-500">
+        Any client can register itself (that's how OAuth sign-in works), but none of them
+        can grant access until approved here - this is the actual gate, not the consent
+        screen an operator sees when signing in.
+      </p>
+      <p v-if="oauthLoadError" class="p-4 text-xs font-semibold text-rose-700">{{ oauthLoadError }}</p>
+      <p v-else-if="!oauthClients.length" class="p-4 text-xs text-slate-500">No OAuth clients have registered yet.</p>
+      <div v-else class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-slate-200 text-xs">
+          <thead class="bg-app-primary">
+            <tr>
+              <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Client</th>
+              <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Redirects to</th>
+              <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Registered</th>
+              <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Status</th>
+              <th class="px-4 py-2.5"><span class="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            <tr v-for="c in oauthClients" :key="c.clientId">
+              <td class="px-4 py-2 font-semibold text-slate-700">{{ c.clientName }}</td>
+              <td class="px-4 py-2 text-slate-600">{{ redirectHost(c) }}</td>
+              <td class="whitespace-nowrap px-4 py-2 text-slate-600">{{ formatDate(c.createdAt) }}</td>
+              <td class="px-4 py-2">
+                <span :class="['rounded-full px-2 py-0.5 font-semibold', c.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700']">
+                  {{ c.status === 'approved' ? 'Approved' : 'Pending' }}
+                </span>
+              </td>
+              <td class="whitespace-nowrap px-4 py-2 text-right">
+                <button v-if="c.status !== 'approved'" type="button" class="rounded px-2 py-1 font-semibold text-emerald-700 hover:bg-emerald-50"
+                  :disabled="oauthBusy" @click="approveOAuthClient(c)">Approve</button>
+                <button type="button" class="rounded px-2 py-1 font-semibold text-rose-700 hover:bg-rose-50"
+                  :disabled="oauthBusy" @click="rejectOAuthClient(c)">Reject</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
 
     <div class="neu-card overflow-hidden">
       <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 p-4">
@@ -187,6 +259,14 @@ interface McpKey {
   ownerDisplayName?: string
 }
 
+interface OAuthClient {
+  clientId: string
+  clientName: string
+  redirectUris: string[]
+  status: 'pending' | 'approved'
+  createdAt: string
+}
+
 // This console's MCP server has its own Cloudflare tunnel hostname (it's a
 // separate service, not reachable on this app's own domain) and its path
 // embeds MCP_ACCESS_TOKEN, the shared secret gating that tunnel - baked in
@@ -208,13 +288,14 @@ const localCommand = computed(
   () => `claude mcp add revenue-console -e REVENUE_CONSOLE_URL=https://<console URL> -e REVENUE_CONSOLE_API_KEY=<your-key> -- python /path/to/mcp-server/server.py`,
 )
 
-type ClientTab = 'remote-cli' | 'remote-claude-app' | 'local'
+type ClientTab = 'remote-oauth' | 'remote-cli' | 'remote-claude-app' | 'local'
 const clientTabs: { key: ClientTab; label: string }[] = [
+  { key: 'remote-oauth', label: 'Claude.ai / Desktop (sign in)' },
   { key: 'remote-cli', label: 'Claude Code / Cursor (remote)' },
-  { key: 'remote-claude-app', label: 'Claude.ai / Desktop (remote)' },
+  { key: 'remote-claude-app', label: 'Claude.ai / Desktop (manual header)' },
   { key: 'local', label: 'Run locally (no tunnel)' },
 ]
-const activeTab = ref<ClientTab>('remote-cli')
+const activeTab = ref<ClientTab>('remote-oauth')
 
 const keys = ref<McpKey[]>([])
 const scope = ref<'own' | 'all'>('own')
@@ -230,10 +311,64 @@ async function load() {
     keys.value = res.data.keys
     scope.value = res.data.scope
     loadError.value = ''
+    if (scope.value === 'all') await loadOAuthClients()
   } catch (err: any) {
     loadError.value = message(err, 'Could not load keys.')
   } finally {
     loaded.value = true
+  }
+}
+
+const oauthClients = ref<OAuthClient[]>([])
+const oauthLoadError = ref('')
+const oauthBusy = ref(false)
+
+async function loadOAuthClients() {
+  try {
+    const res = await axios.get('/api/oauth-clients')
+    oauthClients.value = res.data.clients
+    oauthLoadError.value = ''
+  } catch (err: any) {
+    oauthLoadError.value = message(err, 'Could not load OAuth connections.')
+  }
+}
+
+function redirectHost(c: OAuthClient) {
+  try {
+    return new URL(c.redirectUris[0]).host
+  } catch {
+    return c.redirectUris[0] || '—'
+  }
+}
+
+async function approveOAuthClient(c: OAuthClient) {
+  oauthBusy.value = true
+  try {
+    await axios.post(`/api/oauth-clients/${c.clientId}/approve`)
+    await loadOAuthClients()
+  } catch (err: any) {
+    oauthLoadError.value = message(err, 'Could not approve client.')
+  } finally {
+    oauthBusy.value = false
+  }
+}
+
+async function rejectOAuthClient(c: OAuthClient) {
+  const ok = await confirmDialog({
+    tone: 'warning',
+    title: `Reject "${c.clientName}"?`,
+    message: 'This removes the registration. The client would need to register again to retry.',
+    confirmText: 'Reject',
+  })
+  if (!ok) return
+  oauthBusy.value = true
+  try {
+    await axios.post(`/api/oauth-clients/${c.clientId}/reject`)
+    await loadOAuthClients()
+  } catch (err: any) {
+    oauthLoadError.value = message(err, 'Could not reject client.')
+  } finally {
+    oauthBusy.value = false
   }
 }
 

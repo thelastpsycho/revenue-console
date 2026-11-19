@@ -54,6 +54,13 @@ def _connect():
             last_used_at TEXT
         )
     """)
+    try:
+        # Tags a key minted via the OAuth token endpoint with the client that
+        # caused it, so a reconnect can revoke its own previous key instead of
+        # piling up a fresh non-expiring one every time (see create_oauth_key).
+        conn.execute("ALTER TABLE mcp_keys ADD COLUMN oauth_client_id TEXT")
+    except sqlite3.OperationalError:
+        pass
     return conn
 
 
@@ -75,6 +82,7 @@ def _record(row):
         "createdAt": row["created_at"],
         "revokedAt": row["revoked_at"],
         "lastUsedAt": row["last_used_at"],
+        "oauthClientId": row["oauth_client_id"],
     }
 
 
@@ -110,6 +118,25 @@ def create_key(user_id, label):
         cur = conn.execute(
             "INSERT INTO mcp_keys (user_id, label, key_hash, created_at) VALUES (?, ?, ?, ?)",
             (user_id, label, _hash(token), now))
+        record = _record(conn.execute("SELECT * FROM mcp_keys WHERE id = ?", (cur.lastrowid,)).fetchone())
+    return record, token
+
+
+def create_oauth_key(user_id, client_id, client_name):
+    """Mints a key on behalf of a completed OAuth grant (see routes/oauth_routes.py's
+    /oauth/token). Revokes any still-live key already tagged with this exact
+    (user_id, client_id) pair first, so reconnecting doesn't pile up a fresh
+    non-expiring key on every sign-in - one live key per (user, client)."""
+    label = f"OAuth: {client_name}"[:MAX_LABEL_LENGTH]
+    now = _now()
+    with _lock, _db() as conn:
+        conn.execute(
+            "UPDATE mcp_keys SET revoked_at = ? WHERE user_id = ? AND oauth_client_id = ? AND revoked_at IS NULL",
+            (now, user_id, client_id))
+        token = KEY_PREFIX + secrets.token_urlsafe(32)
+        cur = conn.execute(
+            "INSERT INTO mcp_keys (user_id, label, key_hash, created_at, oauth_client_id) VALUES (?, ?, ?, ?, ?)",
+            (user_id, label, _hash(token), now, client_id))
         record = _record(conn.execute("SELECT * FROM mcp_keys WHERE id = ?", (cur.lastrowid,)).fetchone())
     return record, token
 

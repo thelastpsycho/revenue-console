@@ -19,21 +19,34 @@ one, so creating/rotating/revoking a key on that page takes effect on a caller's
 next call, with no server restart. Local stdio runs have no per-request header to carry
 a key, so they fall back to REVENUE_CONSOLE_API_KEY from the environment instead.
 
+A caller can also get that same kind of key through a real "Sign in" instead of
+pasting one: when REVENUE_CONSOLE_PUBLIC_URL is set, this server advertises OAuth
+discovery (RFC 9728) pointing at the Flask backend's own Authorization Server
+(backend/app/routes/oauth_routes.py) and 401-challenges requests with no
+Authorization header at all. The backend mints the resulting access_token as, under
+the hood, exactly the kind of personal key described above - this server still never
+validates a token itself, that's still the backend's job on every call.
+
 Environment
   REVENUE_CONSOLE_URL        backend base URL (default http://backend:5666; through the
                              tunnel use the console's public URL - nginx proxies /api)
   REVENUE_CONSOLE_API_KEY    stdio-only fallback key, used when there's no per-request
                              Authorization header to forward (i.e. never for --http)
+  REVENUE_CONSOLE_PUBLIC_URL optional, --http only: the backend's public URL, advertised
+                             as the OAuth Authorization Server for "Sign in" connector
+                             setup. Leave unset to keep the manual-header-only flow.
   MCP_ACCESS_TOKEN      required for --http; gates the URL /<token>/mcp - the
                         Authorization header is reserved for a caller's personal key,
                         so (unlike before) this token is no longer also accepted there
-  MCP_ALLOWED_HOSTS     comma-separated public hostnames for --http (Host-header check)
+  MCP_ALLOWED_HOSTS     comma-separated public hostnames for --http (Host-header check);
+                        the first entry also becomes this server's own OAuth "resource" URL
   MCP_PORT              --http port (default 8765)
 """
 from __future__ import annotations
 
 import argparse
 import hmac
+import json
 import os
 from datetime import date
 from typing import Any, Literal
@@ -384,37 +397,74 @@ def build_server(client: ConsoleClient) -> MCPServer:
     return mcp
 
 
+WELL_KNOWN_PATH = "/.well-known/oauth-protected-resource"
+
+
 class BearerAuth:
     """ASGI wrapper: gates the tunnel itself via a /<token>/... URL prefix only.
 
     The Authorization header is deliberately left alone here and passed through
     untouched - it's reserved for each caller's own personal Revenue Console API
     key (see ConsoleClient/_forwarded_auth), checked by the backend, not this
-    layer. Treat the URL (which embeds the token) like a password."""
+    layer. Treat the URL (which embeds the token) like a password.
 
-    def __init__(self, app, token: str):
+    When authorization_server_url is set (REVENUE_CONSOLE_PUBLIC_URL configured
+    on this service), this also serves OAuth discovery (RFC 9728) at a fixed,
+    token-free path, and 401s with a WWW-Authenticate challenge when a request
+    to the real endpoint has no Authorization header at all - that's what makes
+    claude.ai notice this server wants OAuth and start the sign-in flow,
+    instead of only failing deep inside a tool call. A present-but-wrong token
+    is still never inspected here; that 401 still comes from the backend at
+    tool-call time, as always. When unset, behavior is unchanged from before
+    OAuth support existed - no challenge, no metadata."""
+
+    def __init__(self, app, token: str, *, resource_url: str = "", authorization_server_url: str = ""):
         self.app, self.token = app, token.encode()
+        self.resource_url = resource_url
+        self.metadata_body = json.dumps({
+            "resource": resource_url,
+            "authorization_servers": [authorization_server_url],
+        }).encode() if authorization_server_url else None
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         if scope["path"] == "/health":
             return await _plain(send, 200, b"ok")
+        # Reachable without the /<token>/ prefix by definition (a client has to
+        # discover this before it has anything else) - the body only ever
+        # carries the public base URL, never the tunnel's secret token segment.
+        if self.metadata_body is not None and scope["path"].startswith(WELL_KNOWN_PATH):
+            return await _json(send, 200, self.metadata_body)
         parts = scope["path"].split("/", 2)
         if len(parts) == 3 and hmac.compare_digest(parts[1].encode(), self.token):
+            if self.metadata_body is not None and not _has_authorization(scope):
+                challenge = f'Bearer resource_metadata="{self.resource_url}{WELL_KNOWN_PATH}"'
+                return await _plain(send, 401, b"unauthorized",
+                                    extra_headers=[(b"www-authenticate", challenge.encode())])
             path = "/" + parts[2]
             scope = {**scope, "path": path, "raw_path": path.encode()}
             return await self.app(scope, receive, send)
         return await _plain(send, 401, b"unauthorized")
 
 
-async def _plain(send, status, body):
+def _has_authorization(scope) -> bool:
+    return any(key.lower() == b"authorization" for key, _ in scope.get("headers", []))
+
+
+async def _plain(send, status, body, extra_headers=None):
     await send({"type": "http.response.start", "status": status,
-                "headers": [(b"content-type", b"text/plain")]})
+                "headers": [(b"content-type", b"text/plain")] + (extra_headers or [])})
     await send({"type": "http.response.body", "body": body})
 
 
-def http_app(server: MCPServer, token: str, allowed_hosts: list[str]):
+async def _json(send, status, body):
+    await send({"type": "http.response.start", "status": status,
+                "headers": [(b"content-type", b"application/json")]})
+    await send({"type": "http.response.body", "body": body})
+
+
+def http_app(server: MCPServer, token: str, allowed_hosts: list[str], authorization_server_url: str = ""):
     if len(token) < 32:
         raise SystemExit("MCP_ACCESS_TOKEN must be at least 32 characters for --http "
                          "(python -c \"import secrets; print(secrets.token_urlsafe(32))\")")
@@ -429,7 +479,8 @@ def http_app(server: MCPServer, token: str, allowed_hosts: list[str]):
         allowed_origins=[f"https://{h}" for h in allowed_hosts] + ["http://" + h for h in local])
     app = server.streamable_http_app(stateless_http=True, json_response=True,
                                      transport_security=security, host="0.0.0.0")
-    return BearerAuth(app, token)
+    resource_url = f"https://{allowed_hosts[0]}"
+    return BearerAuth(app, token, resource_url=resource_url, authorization_server_url=authorization_server_url)
 
 
 def main() -> None:
@@ -446,7 +497,8 @@ def main() -> None:
 
     import uvicorn
     hosts = [h.strip() for h in os.environ.get("MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
-    app = http_app(server, os.environ.get("MCP_ACCESS_TOKEN", ""), hosts)
+    app = http_app(server, os.environ.get("MCP_ACCESS_TOKEN", ""), hosts,
+                  os.environ.get("REVENUE_CONSOLE_PUBLIC_URL", ""))
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("MCP_PORT", "8765")),
                 proxy_headers=True, forwarded_allow_ips="*",
                 # The access log would write the /<token>/mcp URL form to disk.

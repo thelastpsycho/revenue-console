@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask
 from flask_cors import CORS
 from .security import init_security
@@ -5,7 +7,8 @@ from .security import init_security
 def create_app():
     app = Flask(__name__)
     init_security(app)
-    
+    app.config["REVENUE_CONSOLE_PUBLIC_URL"] = os.environ.get("REVENUE_CONSOLE_PUBLIC_URL", "")
+
     # Configure CORS
     CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173", "http://10.201.59.16:5173",
                      "https://sm.anvayabali.com"]
@@ -16,7 +19,13 @@ def create_app():
             "allow_headers": ["Content-Type", "Authorization", "Accept", "X-CSRF-Token"],
             "supports_credentials": True,
             "expose_headers": ["Content-Type", "Authorization"]
-        }
+        },
+        # The OAuth token/registration endpoints aren't cookie-authenticated (a
+        # client's token exchange may run from browser JS rather than its own
+        # backend), so an open origin policy here grants nothing beyond what an
+        # unauthenticated POST can already do - no credentials flag needed.
+        r"/oauth/token": {"origins": "*", "methods": ["POST", "OPTIONS"]},
+        r"/oauth/register": {"origins": "*", "methods": ["POST", "OPTIONS"]},
     })
     print(f"CORS origins configured: {CORS_ORIGINS}")
     
@@ -36,6 +45,7 @@ def create_app():
     from .routes import allotment_rules_routes
     from .routes import users_routes
     from .routes import mcp_keys_routes
+    from .routes import oauth_routes
     app.register_blueprint(main.bp)
     app.register_blueprint(database_routes.bp)
     app.register_blueprint(pipeline_routes.bp)
@@ -51,5 +61,6 @@ def create_app():
     app.register_blueprint(allotment_rules_routes.bp)
     app.register_blueprint(users_routes.bp)
     app.register_blueprint(mcp_keys_routes.bp)
+    app.register_blueprint(oauth_routes.bp)
 
     return app

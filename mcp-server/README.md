@@ -40,22 +40,33 @@ your *personal key* (which you alone create and can rotate any time with no serv
 1. On the server, create `mcp-server/.env` from `.env.example`: a new `MCP_ACCESS_TOKEN`
    and `MCP_ALLOWED_HOSTS` set to the public hostname (e.g. `mcp.krisnatha.com`) - the
    server refuses to start `--http` without these. No personal key goes in this file -
-   the server never holds one.
+   the server never holds one. To support OAuth sign-in (step 4 below), also set
+   `REVENUE_CONSOLE_PUBLIC_URL` to the console backend's own public URL, and set the same
+   variable in `backend/.env` (see `backend/.env.example`).
 2. Add `COMPOSE_PROFILES=mcp` to the root `.env`, then deploy as usual
    (`git pull` + `schtasks /run /tn revenue-console-deploy`).
 3. Add a public hostname to the console's Cloudflare tunnel pointing at `http://mcp:8765`
    (in `cloudflared/config.yml` ingress, above the catch-all rule, or in the Zero Trust dashboard).
    Check `https://<host>/health` returns `ok`.
 4. In claude.ai: Settings → Connectors → Add custom connector, URL
-   `https://<host>/<MCP_ACCESS_TOKEN>/mcp`, Authentication **No sign-in**, and a
-   `Authorization` request header set to `Bearer <your personal key>` (minted from the
-   console's **MCP Access** page).
+   `https://<host>/<MCP_ACCESS_TOKEN>/mcp`.
+   - **With `REVENUE_CONSOLE_PUBLIC_URL` set (recommended):** Authentication **OAuth** (or
+     "Sign in"). claude.ai redirects you to the console's own login + consent page; signing
+     in mints a personal key for you automatically - nothing to copy-paste. The very first
+     time any client connects this way, an admin needs to approve it once on the **MCP
+     Access** page (new clients start out pending - this is what stops a lookalike client
+     from tricking someone into granting access).
+   - **Without it, or for clients that don't support OAuth:** Authentication **No
+     sign-in**, and a `Authorization` request header set to `Bearer <your personal key>`
+     (minted from the console's **MCP Access** page).
 
 The URL's `<MCP_ACCESS_TOKEN>` segment gates the tunnel itself, so treat it like a
 password - to revoke it, change `MCP_ACCESS_TOKEN` and redeploy (this does affect every
-client at once, unlike a personal key). The `Authorization` header is yours alone: create
-a new key on the MCP Access page any time and just update that one header value in your
-client's settings - nothing on the server needs to change.
+client at once, unlike a personal key). With the manual-header setup, the `Authorization`
+header is yours alone: create a new key on the MCP Access page any time and just update
+that one header value in your client's settings - nothing on the server needs to change.
+Either way - OAuth sign-in or a pasted header - the result is the same kind of key, visible
+and revocable on the MCP Access page.
 
 ## Option B — Claude Desktop / Claude Code on your own machine (stdio)
 

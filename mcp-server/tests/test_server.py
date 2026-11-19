@@ -197,6 +197,64 @@ async def test_http_tunnel_gate_is_url_only(path, auth, expected):
     assert resp.status_code == expected, resp.text
 
 
+# --- OAuth discovery: off unless REVENUE_CONSOLE_PUBLIC_URL is configured ----
+
+AS_URL = "https://revcon.example.com"
+
+
+@pytest.mark.anyio
+async def test_no_oauth_metadata_or_challenge_when_unconfigured():
+    from asgi_lifespan import LifespanManager
+    _, mcp = make()
+    app = server.http_app(mcp, TOKEN, ["mcp.example.com"])  # no authorization_server_url
+    async with LifespanManager(app) as manager:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=manager.app),
+                                     base_url="https://mcp.example.com") as http:
+            metadata = await http.get("/.well-known/oauth-protected-resource")
+            # initialize with no Authorization still works - unchanged from before OAuth support.
+            init = await http.post(TOKEN_PATH, json=INIT, headers=HTTP_HEADERS)
+    assert metadata.status_code == 401  # not a recognized /<token>/... path, same as any other
+    assert init.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_oauth_protected_resource_metadata():
+    from asgi_lifespan import LifespanManager
+    _, mcp = make()
+    app = server.http_app(mcp, TOKEN, ["mcp.example.com"], AS_URL)
+    async with LifespanManager(app) as manager:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=manager.app),
+                                     base_url="https://mcp.example.com") as http:
+            direct = await http.get("/.well-known/oauth-protected-resource")
+            # RFC 9728 path-insertion discovery may prefix the resource's own path.
+            inserted = await http.get(f"/.well-known/oauth-protected-resource{TOKEN_PATH}")
+    for resp in (direct, inserted):
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["resource"] == "https://mcp.example.com"
+        assert body["authorization_servers"] == [AS_URL]
+        # The tunnel's secret path segment must never appear in a pre-auth response.
+        assert TOKEN not in resp.text
+
+
+@pytest.mark.anyio
+async def test_oauth_challenge_on_missing_authorization_header():
+    from asgi_lifespan import LifespanManager
+    _, mcp = make()
+    app = server.http_app(mcp, TOKEN, ["mcp.example.com"], AS_URL)
+    async with LifespanManager(app) as manager:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=manager.app),
+                                     base_url="https://mcp.example.com") as http:
+            missing = await http.post(TOKEN_PATH, json=INIT, headers=HTTP_HEADERS)
+            present = await http.post(TOKEN_PATH, json=INIT,
+                                      headers={**HTTP_HEADERS, "authorization": "Bearer rck_whatever"})
+    assert missing.status_code == 401
+    challenge = missing.headers["www-authenticate"]
+    assert challenge == 'Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"'
+    # A present-but-wrong token still isn't inspected here - initialize doesn't call the backend.
+    assert present.status_code == 200
+
+
 def test_short_token_refused():
     _, mcp = make()
     with pytest.raises(SystemExit):
