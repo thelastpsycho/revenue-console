@@ -366,3 +366,36 @@ def test_admin_can_list_pending_clients(app):
     clients = resp.get_json()["clients"]
     assert [c["clientName"] for c in clients] == ["Claude"]
     assert clients[0]["status"] == "pending"
+    assert clients[0]["connectedUsers"] == []
+
+
+def test_list_clients_shows_who_actually_connected(app):
+    admin, csrf = _admin_client(app)
+    alice = _create_user("alice", "correct-password-2", permissions=[])
+    client_id = _register_client(admin)
+    admin.post(f"/api/oauth-clients/{client_id}/approve", headers={"X-CSRF-Token": csrf})
+
+    verifier, challenge = _pkce_pair()
+    _complete_grant(app, client_id, verifier, challenge, username="alice", password="correct-password-2")
+
+    clients = admin.get("/api/oauth-clients").get_json()["clients"]
+    connected = next(c for c in clients if c["clientId"] == client_id)["connectedUsers"]
+    assert len(connected) == 1
+    assert connected[0]["username"] == "alice"
+    assert connected[0]["displayName"] == alice["displayName"]
+
+
+def test_revoked_or_expired_keys_do_not_count_as_connected(app):
+    admin, csrf = _admin_client(app)
+    _create_user("alice", "correct-password-2", permissions=[])
+    client_id = _register_client(admin)
+    admin.post(f"/api/oauth-clients/{client_id}/approve", headers={"X-CSRF-Token": csrf})
+
+    verifier, challenge = _pkce_pair()
+    access_token, op_client = _complete_grant(
+        app, client_id, verifier, challenge, username="alice", password="correct-password-2")
+    key_id = mcp_keys.list_all_keys()[0]["id"]
+
+    assert admin.get("/api/oauth-clients").get_json()["clients"][0]["connectedUsers"] != []
+    mcp_keys.revoke_key(key_id)
+    assert admin.get("/api/oauth-clients").get_json()["clients"][0]["connectedUsers"] == []

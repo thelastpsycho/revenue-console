@@ -299,7 +299,20 @@ def token():
 @bp.route("/api/oauth-clients", methods=["GET"])
 @require_permission("manage_users")
 def list_oauth_clients():
-    return jsonify({"status": "success", "clients": oauth_server.list_clients()})
+    clients = oauth_server.list_clients()
+    now = datetime.now(timezone.utc)
+    for client in clients:
+        client["connectedUsers"] = []
+        for key in mcp_keys.list_keys_by_oauth_client(client["clientId"]):
+            if key["revokedAt"] or (key["expiresAt"] and datetime.fromisoformat(key["expiresAt"]) <= now):
+                continue
+            owner = accounts_users.get_user(key["userId"])
+            client["connectedUsers"].append({
+                "username": owner["username"] if owner else None,
+                "displayName": owner["displayName"] if owner else None,
+                "lastUsedAt": key["lastUsedAt"],
+            })
+    return jsonify({"status": "success", "clients": clients})
 
 
 @bp.route("/api/oauth-clients/<client_id>/approve", methods=["POST"])

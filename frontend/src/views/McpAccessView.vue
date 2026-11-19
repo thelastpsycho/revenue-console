@@ -190,6 +190,7 @@
             <tr>
               <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Client</th>
               <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Redirects to</th>
+              <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Connected as</th>
               <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Registered</th>
               <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Status</th>
               <th class="px-4 py-2.5"><span class="sr-only">Actions</span></th>
@@ -199,6 +200,10 @@
             <tr v-for="c in oauthClients" :key="c.clientId">
               <td class="px-4 py-2 font-semibold text-slate-700">{{ c.clientName }}</td>
               <td class="px-4 py-2 text-slate-600">{{ redirectHost(c) }}</td>
+              <td class="px-4 py-2 text-slate-600">
+                <span v-if="c.connectedUsers.length">{{ connectedUserNames(c) }}</span>
+                <span v-else class="text-slate-400">—</span>
+              </td>
               <td class="whitespace-nowrap px-4 py-2 text-slate-600">{{ formatDate(c.createdAt) }}</td>
               <td class="px-4 py-2">
                 <span :class="['rounded-full px-2 py-0.5 font-semibold', c.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700']">
@@ -327,12 +332,19 @@ interface ExpiryPreset {
   label: string
 }
 
+interface ConnectedUser {
+  username: string | null
+  displayName: string | null
+  lastUsedAt: string | null
+}
+
 interface OAuthClient {
   clientId: string
   clientName: string
   redirectUris: string[]
   status: 'pending' | 'approved'
   createdAt: string
+  connectedUsers: ConnectedUser[]
 }
 
 // This console's MCP server has its own Cloudflare tunnel hostname (it's a
@@ -409,6 +421,10 @@ function redirectHost(c: OAuthClient) {
   } catch {
     return c.redirectUris[0] || '—'
   }
+}
+
+function connectedUserNames(c: OAuthClient) {
+  return c.connectedUsers.map((u) => u.displayName || u.username || 'unknown').join(', ')
 }
 
 async function approveOAuthClient(c: OAuthClient) {

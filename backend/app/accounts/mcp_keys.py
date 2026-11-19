@@ -139,6 +139,16 @@ def list_all_keys():
         return [_record(r) for r in rows]
 
 
+def list_keys_by_oauth_client(client_id):
+    """Every key ever minted for this OAuth client (one per user who's signed
+    in through it) - lets the MCP Access page show who's actually connected
+    through a given client, not just the client's own self-reported name."""
+    with _lock, _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM mcp_keys WHERE oauth_client_id = ? ORDER BY created_at DESC", (client_id,)).fetchall()
+        return [_record(r) for r in rows]
+
+
 def create_key(user_id, label, expiry_preset="never"):
     label = _clean_label(label)
     expires_at = _resolve_expiry(expiry_preset)
