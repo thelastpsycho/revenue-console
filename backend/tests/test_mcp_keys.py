@@ -67,6 +67,39 @@ def test_revoke_missing_key_returns_false():
     assert mcp_keys.revoke_key(999) is False
 
 
+# --- expiry presets ------------------------------------------------------------
+
+def test_default_expiry_is_never():
+    record, _ = mcp_keys.create_key(1, "key")
+    assert record["expiresAt"] is None
+
+
+def test_expiry_preset_computes_a_future_timestamp():
+    from datetime import datetime, timedelta, timezone
+    record, _ = mcp_keys.create_key(1, "key", "1w")
+    expires_at = datetime.fromisoformat(record["expiresAt"])
+    now = datetime.now(timezone.utc)
+    assert now + timedelta(days=6) < expires_at < now + timedelta(days=8)
+
+
+def test_unknown_expiry_preset_rejected():
+    with pytest.raises(mcp_keys.ValidationError):
+        mcp_keys.create_key(1, "key", "3 fortnights")
+
+
+def test_expired_key_no_longer_authenticates():
+    record, token = mcp_keys.create_key(1, "key", "1d")
+    assert mcp_keys.authenticate(token) == 1
+    with mcp_keys._db() as conn:
+        conn.execute("UPDATE mcp_keys SET expires_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (record["id"],))
+    assert mcp_keys.authenticate(token) is None
+
+
+def test_create_oauth_key_respects_expiry_preset():
+    record, _ = mcp_keys.create_oauth_key(1, "oac_x", "Claude", "1y")
+    assert record["expiresAt"] is not None
+
+
 # --- routes -------------------------------------------------------------------
 
 @pytest.fixture
@@ -110,6 +143,30 @@ def test_create_list_and_revoke_own_key(app):
     revoked = client.post(f"/api/mcp-keys/{key_id}/revoke", headers={"X-CSRF-Token": csrf})
     assert revoked.status_code == 200
     assert mcp_keys.authenticate(body["apiKey"]) is None
+
+
+def test_create_key_with_expiry_preset(app):
+    _create_user()
+    client = app.test_client()
+    csrf = sign_in(client)
+
+    created = client.post("/api/mcp-keys", json={"label": "laptop", "expiryPreset": "1d"},
+                          headers={"X-CSRF-Token": csrf})
+    assert created.status_code == 200
+    assert created.get_json()["key"]["expiresAt"] is not None
+
+    bad = client.post("/api/mcp-keys", json={"label": "laptop", "expiryPreset": "bogus"},
+                      headers={"X-CSRF-Token": csrf})
+    assert bad.status_code == 400
+
+
+def test_expiry_presets_endpoint_lists_all_options(app):
+    _create_user()
+    client = app.test_client()
+    sign_in(client)
+    resp = client.get("/api/mcp-keys/expiry-presets")
+    assert resp.status_code == 200
+    assert [p["value"] for p in resp.get_json()["presets"]] == ["1d", "1w", "1m", "1y", "never"]
 
 
 def test_non_admin_cannot_see_or_revoke_someone_elses_key(app):

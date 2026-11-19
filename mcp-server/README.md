@@ -32,7 +32,17 @@ stop-sale emails or pipeline runs.
 | `list_filters` | `/api/rms/room-types` | Ids for room types, markets, channels, companies |
 | `get_data_health` | admin overview, sync, pipeline | Data freshness |
 
-## Option A — claude.ai / mobile (remote, via the tunnel)
+## Option A — claude.ai, ChatGPT, Gemini (remote, via the tunnel)
+
+The OAuth Authorization Server (`backend/app/routes/oauth_routes.py`) isn't Claude-specific
+- it's a standard OAuth 2.1 authorization-code + PKCE flow with dynamic client registration
+(RFC 7591), so any MCP-capable client that speaks OAuth can connect the same way: ChatGPT's
+custom MCP connector and Gemini's custom-app connector both work here too, with no
+client-specific code on the server. Exact click-paths (and known per-client caveats, like
+Gemini's personal-Google-account-only requirement, or picking a long expiry since this
+server doesn't yet support silently refreshing a token) live on the console's **MCP
+Access** page, under each client's own tab - this section covers the one-time server setup
+that's shared by all of them.
 
 This is a one-time setup per *client* (one tunnel URL, shared by everyone), separate from
 your *personal key* (which you alone create and can rotate any time with no server access).
@@ -48,17 +58,18 @@ your *personal key* (which you alone create and can rotate any time with no serv
 3. Add a public hostname to the console's Cloudflare tunnel pointing at `http://mcp:8765`
    (in `cloudflared/config.yml` ingress, above the catch-all rule, or in the Zero Trust dashboard).
    Check `https://<host>/health` returns `ok`.
-4. In claude.ai: Settings → Connectors → Add custom connector, URL
-   `https://<host>/<MCP_ACCESS_TOKEN>/mcp`.
-   - **With `REVENUE_CONSOLE_PUBLIC_URL` set (recommended):** Authentication **OAuth** (or
-     "Sign in"). claude.ai redirects you to the console's own login + consent page; signing
-     in mints a personal key for you automatically - nothing to copy-paste. The very first
-     time any client connects this way, an admin needs to approve it once on the **MCP
-     Access** page (new clients start out pending - this is what stops a lookalike client
-     from tricking someone into granting access).
-   - **Without it, or for clients that don't support OAuth:** Authentication **No
-     sign-in**, and a `Authorization` request header set to `Bearer <your personal key>`
-     (minted from the console's **MCP Access** page).
+4. Add the server URL `https://<host>/<MCP_ACCESS_TOKEN>/mcp` as a custom connector in
+   claude.ai, ChatGPT, or Gemini (see the **MCP Access** page for exact steps per client).
+   - **With `REVENUE_CONSOLE_PUBLIC_URL` set (recommended):** choose **OAuth** (or "Sign
+     in") for authentication. The client redirects you to the console's own login +
+     consent page; signing in mints a personal key for you automatically - nothing to
+     copy-paste. The very first time any client connects this way, an admin needs to
+     approve it once on the **MCP Access** page (new clients start out pending - this is
+     what stops a lookalike client from tricking someone into granting access).
+   - **Without it, or for clients that don't support OAuth:** choose **No sign-in** (or
+     equivalent), and a `Authorization` request header set to `Bearer <your personal key>`
+     (minted from the console's **MCP Access** page). Claude is the only client this
+     fallback is documented for today.
 
 The URL's `<MCP_ACCESS_TOKEN>` segment gates the tunnel itself, so treat it like a
 password - to revoke it, change `MCP_ACCESS_TOKEN` and redeploy (this does affect every

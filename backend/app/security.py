@@ -67,7 +67,7 @@ def init_security(app):
             owner_id = mcp_keys.authenticate(bearer[len("Bearer "):].strip())
             user = accounts_users.get_user(owner_id) if owner_id is not None else None
             if not user or not user["isActive"]:
-                return jsonify({"status": "error", "message": "Invalid or revoked API key"}), 401
+                return jsonify({"status": "error", "message": "Invalid, expired, or revoked API key"}), 401
             g.current_user = user
             # A bearer token is never sent automatically by a browser (unlike
             # the session cookie), so it carries no CSRF risk - skip that check.

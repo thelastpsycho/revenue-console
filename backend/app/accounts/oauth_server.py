@@ -73,6 +73,12 @@ def _connect():
             used_at TEXT
         )
     """)
+    try:
+        # Carries the expiry preset the operator picked on the consent screen
+        # through to /oauth/token, where the actual mcp_keys row gets minted.
+        conn.execute("ALTER TABLE oauth_codes ADD COLUMN expiry_preset TEXT NOT NULL DEFAULT 'never'")
+    except sqlite3.OperationalError:
+        pass
     return conn
 
 
@@ -155,14 +161,15 @@ def reject_client(client_id):
         return cur.rowcount > 0
 
 
-def create_code(client_id, user_id, redirect_uri, code_challenge):
+def create_code(client_id, user_id, redirect_uri, code_challenge, expiry_preset="never"):
     code = secrets.token_urlsafe(32)
     now = _now()
     with _lock, _db() as conn:
         conn.execute(
             "INSERT INTO oauth_codes (code, client_id, user_id, redirect_uri, code_challenge, "
-            "created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (code, client_id, user_id, redirect_uri, code_challenge, _iso(now), _iso(now + CODE_TTL)))
+            "created_at, expires_at, expiry_preset) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (code, client_id, user_id, redirect_uri, code_challenge, _iso(now), _iso(now + CODE_TTL),
+             expiry_preset))
     return code
 
 
@@ -182,9 +189,9 @@ def _pkce_ok(code_verifier, stored_code_challenge):
 
 
 def consume_code(code, client_id, redirect_uri, code_verifier):
-    """Returns the owning user_id on success, else None. Single-use: marks the
-    code used in the same transaction it's validated in, so a replay (even a
-    concurrent one) can't succeed twice."""
+    """Returns (user_id, expiry_preset) on success, else None. Single-use:
+    marks the code used in the same transaction it's validated in, so a
+    replay (even a concurrent one) can't succeed twice."""
     with _lock, _db() as conn:
         row = conn.execute("SELECT * FROM oauth_codes WHERE code = ?", (code,)).fetchone()
         if not row or row["used_at"] is not None:
@@ -196,4 +203,4 @@ def consume_code(code, client_id, redirect_uri, code_verifier):
         if not _pkce_ok(code_verifier, row["code_challenge"]):
             return None
         conn.execute("UPDATE oauth_codes SET used_at = ? WHERE code = ?", (_iso(_now()), code))
-        return row["user_id"]
+        return row["user_id"], row["expiry_preset"]

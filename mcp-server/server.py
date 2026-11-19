@@ -133,7 +133,7 @@ class ConsoleClient:
         except httpx.HTTPError as exc:
             raise ConsoleError(f"Revenue Console is unreachable at {self.base_url}: {exc}") from exc
         if resp.status_code == 401:
-            raise ConsoleError("Revenue Console rejected the API key (missing, wrong, or revoked)")
+            raise ConsoleError("Revenue Console rejected the API key (missing, wrong, expired, or revoked)")
         if resp.status_code != 200:
             raise ConsoleError(f"{path} returned {resp.status_code}: {_message(resp)}")
         body = resp.json()

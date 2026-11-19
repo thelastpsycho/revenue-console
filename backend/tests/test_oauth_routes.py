@@ -72,9 +72,11 @@ def _flow_id(html_bytes):
     return re.search(rb'name="flow_id" value="([^"]+)"', html_bytes).group(1).decode()
 
 
-def _complete_grant(app, client_id, verifier, challenge, *, username, password, redirect_uri=REDIRECT_URI):
+def _complete_grant(app, client_id, verifier, challenge, *, username, password, redirect_uri=REDIRECT_URI,
+                    expiry_preset=None, return_response=False):
     """Drives authorize (login + consent) -> token for an approved client,
-    using a fresh browser-equivalent client. Returns (access_token, op_client)."""
+    using a fresh browser-equivalent client. Returns (access_token, op_client),
+    or (token_json, op_client) when return_response=True."""
     op_client = app.test_client()
     start = op_client.get(_authorize_url(client_id, challenge, redirect_uri))
     assert start.status_code == 200
@@ -85,8 +87,10 @@ def _complete_grant(app, client_id, verifier, challenge, *, username, password, 
     assert login_resp.status_code == 200
     assert b"Allow access" in login_resp.data
 
-    consent_resp = op_client.post("/oauth/authorize", data={
-        "action": "consent", "flow_id": flow_id, "decision": "allow"})
+    consent_data = {"action": "consent", "flow_id": flow_id, "decision": "allow"}
+    if expiry_preset is not None:
+        consent_data["expiry_preset"] = expiry_preset
+    consent_resp = op_client.post("/oauth/authorize", data=consent_data)
     assert consent_resp.status_code == 302
     qs = parse_qs(urlparse(consent_resp.headers["Location"]).query)
     assert qs["state"] == ["xyz"]
@@ -96,7 +100,8 @@ def _complete_grant(app, client_id, verifier, challenge, *, username, password, 
         "grant_type": "authorization_code", "client_id": client_id,
         "redirect_uri": redirect_uri, "code": code, "code_verifier": verifier})
     assert token_resp.status_code == 200
-    return token_resp.get_json()["access_token"], op_client
+    body = token_resp.get_json()
+    return (body if return_response else body["access_token"]), op_client
 
 
 # --- metadata -------------------------------------------------------------------
@@ -189,6 +194,37 @@ def test_full_authorize_consent_token_round_trip(app):
     body = api_resp.get_json()
     assert body["scope"] == "own"
     assert body["keys"][0]["label"] == "OAuth: Claude"
+
+
+def test_consent_expiry_preset_carries_through_to_the_minted_key(app):
+    admin, csrf = _admin_client(app)
+    alice = _create_user("alice", "correct-password-2", permissions=[])
+    client_id = _register_client(admin)
+    admin.post(f"/api/oauth-clients/{client_id}/approve", headers={"X-CSRF-Token": csrf})
+
+    verifier, challenge = _pkce_pair()
+    body, _op_client = _complete_grant(
+        app, client_id, verifier, challenge, username="alice", password="correct-password-2",
+        expiry_preset="1d", return_response=True)
+    assert body["expires_in"] > 0
+    assert mcp_keys.list_keys_for_user(alice["id"])[0]["expiresAt"] is not None
+
+
+def test_consent_rejects_invalid_expiry_preset(app):
+    admin, csrf = _admin_client(app)
+    _create_user("alice", "correct-password-2", permissions=[])
+    client_id = _register_client(admin)
+    admin.post(f"/api/oauth-clients/{client_id}/approve", headers={"X-CSRF-Token": csrf})
+
+    _verifier, challenge = _pkce_pair()
+    op_client = app.test_client()
+    start = op_client.get(_authorize_url(client_id, challenge))
+    flow_id = _flow_id(start.data)
+    op_client.post("/oauth/authorize", data={
+        "action": "login", "flow_id": flow_id, "username": "alice", "password": "correct-password-2"})
+    resp = op_client.post("/oauth/authorize", data={
+        "action": "consent", "flow_id": flow_id, "decision": "allow", "expiry_preset": "bogus"})
+    assert resp.status_code == 400
 
 
 def test_consent_deny_redirects_with_error(app):

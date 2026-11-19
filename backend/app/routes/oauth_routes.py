@@ -16,6 +16,7 @@ operator to approve it just by registering a shell with a plausible name."""
 import secrets
 import time
 from collections import defaultdict
+from datetime import datetime, timezone
 from urllib.parse import urlencode, urlparse
 
 from flask import Blueprint, current_app, jsonify, redirect, request, session
@@ -71,7 +72,7 @@ def _page(title, body):
 body {{ font-family: system-ui, sans-serif; max-width: 420px; margin: 10vh auto; padding: 0 16px; color: #1f2937; }}
 h1 {{ font-size: 1.1rem; }}
 label {{ display: block; margin: 12px 0 4px; font-size: 0.85rem; font-weight: 600; }}
-input[type=text], input[type=password] {{ width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; box-sizing: border-box; }}
+input[type=text], input[type=password], select {{ width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; box-sizing: border-box; }}
 button {{ margin-top: 16px; padding: 8px 16px; border-radius: 6px; border: none; font-weight: 600; cursor: pointer; }}
 .primary {{ background: #0f172a; color: white; }}
 .secondary {{ background: #e2e8f0; color: #0f172a; margin-left: 8px; }}
@@ -96,6 +97,12 @@ def _login_form(flow_id, error=None):
 """)
 
 
+def _expiry_options(selected="never"):
+    return "\n".join(
+        f'<option value="{escape(value)}"{" selected" if value == selected else ""}>{escape(label)}</option>'
+        for value, label in mcp_keys.EXPIRY_PRESET_LABELS)
+
+
 def _consent_form(flow_id, client_name, redirect_host, display_name):
     return _page("Allow access? - Revenue Console", f"""
 <h1>Allow access?</h1>
@@ -104,6 +111,10 @@ wants to read Revenue Console data as <strong>{escape(display_name)}</strong>.</
 <form method="post">
   <input type="hidden" name="action" value="consent">
   <input type="hidden" name="flow_id" value="{escape(flow_id)}">
+  <label for="expiry_preset">Access expires</label>
+  <select id="expiry_preset" name="expiry_preset">
+    {_expiry_options()}
+  </select>
   <button type="submit" name="decision" value="allow" class="primary">Allow</button>
   <button type="submit" name="decision" value="deny" class="secondary">Deny</button>
 </form>
@@ -241,7 +252,11 @@ def _authorize_consent():
     redirect_uri = pending["redirect_uri"]
     state = pending.get("state", "")
     if request.form.get("decision") == "allow":
-        code = oauth_server.create_code(pending["client_id"], user["id"], redirect_uri, pending["code_challenge"])
+        expiry_preset = request.form.get("expiry_preset", "never")
+        if expiry_preset not in mcp_keys.EXPIRY_PRESETS:
+            return _error_page("Invalid expiry preset")
+        code = oauth_server.create_code(
+            pending["client_id"], user["id"], redirect_uri, pending["code_challenge"], expiry_preset)
         target = f"{redirect_uri}?{urlencode({'code': code, 'state': state})}"
     else:
         target = f"{redirect_uri}?{urlencode({'error': 'access_denied', 'state': state})}"
@@ -261,13 +276,22 @@ def token():
     if not client or client["status"] != "approved":
         return _oauth_error("invalid_client")
 
-    user_id = oauth_server.consume_code(
+    result = oauth_server.consume_code(
         data.get("code", ""), client_id, data.get("redirect_uri", ""), data.get("code_verifier", ""))
-    if user_id is None:
+    if result is None:
         return _oauth_error("invalid_grant")
+    user_id, expiry_preset = result
 
-    _record, access_token = mcp_keys.create_oauth_key(user_id, client_id, client["clientName"])
-    return jsonify({"access_token": access_token, "token_type": "bearer"})
+    try:
+        record, access_token = mcp_keys.create_oauth_key(user_id, client_id, client["clientName"], expiry_preset)
+    except mcp_keys.ValidationError as exc:
+        return _oauth_error("invalid_request", str(exc))
+
+    response = {"access_token": access_token, "token_type": "bearer"}
+    if record["expiresAt"]:
+        expires_at = datetime.fromisoformat(record["expiresAt"])
+        response["expires_in"] = max(int((expires_at - datetime.now(timezone.utc)).total_seconds()), 0)
+    return jsonify(response)
 
 
 # ---- admin approval: the actual trust boundary ----------------------------------

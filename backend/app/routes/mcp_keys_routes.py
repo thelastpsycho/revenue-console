@@ -39,10 +39,17 @@ def list_keys():
 def create_key():
     data = request.get_json(silent=True) or {}
     try:
-        record, token = mcp_keys.create_key(g.current_user['id'], data.get('label', ''))
+        record, token = mcp_keys.create_key(
+            g.current_user['id'], data.get('label', ''), data.get('expiryPreset', 'never'))
     except mcp_keys.ValidationError as exc:
         return _error(str(exc), 400)
     return jsonify({"status": "success", "key": record, "apiKey": token})
+
+
+@bp.route('/api/mcp-keys/expiry-presets', methods=['GET'])
+def expiry_presets():
+    return jsonify({"status": "success",
+                    "presets": [{"value": value, "label": label} for value, label in mcp_keys.EXPIRY_PRESET_LABELS]})
 
 
 @bp.route('/api/mcp-keys/<int:key_id>/revoke', methods=['POST'])

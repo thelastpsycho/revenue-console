@@ -2,7 +2,7 @@
   <div class="mx-auto w-full max-w-5xl space-y-4 p-4 sm:p-6 lg:p-8">
     <PageHeader
       title="MCP Access"
-      subtitle="Connect this console's data to Claude Code, Claude Desktop, claude.ai, or any other MCP-capable client. A key below carries your own account's permissions. The server itself has no identity of its own - whichever key you send per request is what it uses, so creating, rotating or revoking a key here takes effect on your very next call. No server restart, ever."
+      subtitle="Connect this console's data to Claude Code, Claude Desktop, claude.ai, ChatGPT, Gemini, or any other MCP-capable client. A key below carries your own account's permissions. The server itself has no identity of its own - whichever key you send per request is what it uses, so creating, rotating or revoking a key here takes effect on your very next call. No server restart, ever."
     />
 
     <div class="neu-card space-y-3 p-4 text-xs">
@@ -73,6 +73,62 @@
           Needs <code>REVENUE_CONSOLE_PUBLIC_URL</code> set on both the backend and the
           mcp-server - see <code>mcp-server/README.md</code>. If it isn't set yet, use the
           "manual header" tab instead.
+        </p>
+      </div>
+
+      <div v-else-if="activeTab === 'chatgpt-oauth'" class="space-y-2">
+        <p class="text-slate-500">
+          Needs a ChatGPT plan with Developer mode (Pro, Team, Enterprise or Edu). On a
+          Business/Enterprise workspace, an admin may also need to enable it first under
+          <strong>Workspace Settings → Permissions & Roles → Connected Data → Create custom
+          MCP connectors</strong>.
+        </p>
+        <ol class="list-inside list-decimal space-y-1 text-slate-600">
+          <li>Go to <strong>Settings → Connectors</strong>, turning on <strong>Developer mode</strong> if prompted.</li>
+          <li>Add a custom MCP server, name it, and paste the server URL above (it already ends in <code>/mcp</code>).</li>
+          <li>For <strong>Authentication</strong>, choose <strong>OAuth</strong>, accept the risk warning, then create it.</li>
+          <li>
+            ChatGPT opens this console's sign-in page - log in and approve access. An admin
+            needs to approve the client once under "Pending OAuth connections" below the
+            first time anyone connects this way.
+          </li>
+          <li>
+            On the consent screen, pick <strong>Never</strong> or <strong>1 year</strong>
+            for "Access expires" - this server doesn't yet support silently refreshing a
+            token, so a short expiry just means ChatGPT will prompt you to sign in again
+            once it lapses.
+          </li>
+        </ol>
+      </div>
+
+      <div v-else-if="activeTab === 'gemini-oauth'" class="space-y-2">
+        <p class="text-slate-500">
+          Only works signed into <strong>gemini.google.com</strong> on the web with a
+          <strong>personal</strong> Google account - Google doesn't yet support custom MCP
+          connectors for work/school Google accounts, or from the mobile apps.
+        </p>
+        <ol class="list-inside list-decimal space-y-1 text-slate-600">
+          <li>Go to <strong>Settings → Connected apps</strong>, find <strong>Custom apps</strong>.</li>
+          <li>Paste the server URL above into "Add a custom app".</li>
+          <li>
+            This server supports Dynamic Client Registration, so Gemini should connect and
+            send you to this console's sign-in page automatically - log in and approve
+            access. (If it instead asks for a Client ID/Secret under "Advanced features",
+            something's misconfigured - check <code>mcp-server/README.md</code>.)
+          </li>
+          <li>
+            An admin needs to approve the client once under "Pending OAuth connections"
+            below the first time anyone connects this way.
+          </li>
+          <li>
+            On the consent screen, pick <strong>Never</strong> or <strong>1 year</strong>
+            for "Access expires" - same reason as ChatGPT above, no silent token refresh yet.
+          </li>
+        </ol>
+        <p class="text-slate-500">
+          On a Google Workspace account, use <strong>Gemini Enterprise</strong>'s own admin
+          flow instead (<strong>Connected apps → Add MCP Server</strong>) - a different
+          setup, not covered here.
         </p>
       </div>
 
@@ -177,6 +233,12 @@
           <span class="mb-1 block font-semibold text-slate-600">Label</span>
           <input v-model="newLabel" maxlength="120" placeholder="e.g. laptop, MCP server" class="neu-input w-64" />
         </label>
+        <label class="block">
+          <span class="mb-1 block font-semibold text-slate-600">Expires</span>
+          <select v-model="newExpiryPreset" class="neu-input w-64">
+            <option v-for="p in expiryPresets" :key="p.value" :value="p.value">{{ p.label }}</option>
+          </select>
+        </label>
         <p v-if="createError" class="font-semibold text-rose-700">{{ createError }}</p>
         <div class="flex gap-2">
           <button type="button" class="btn-primary py-1.5" :disabled="busy || !newLabel.trim()" @click="onCreate">Create key</button>
@@ -215,6 +277,7 @@
               <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Label</th>
               <th v-if="scope === 'all'" class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Owner</th>
               <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Created</th>
+              <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Expires</th>
               <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Last used</th>
               <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Status</th>
               <th class="px-4 py-2.5"><span class="sr-only">Actions</span></th>
@@ -225,11 +288,10 @@
               <td class="px-4 py-2 font-semibold text-slate-700">{{ k.label }}</td>
               <td v-if="scope === 'all'" class="px-4 py-2 text-slate-600">{{ k.ownerDisplayName || k.ownerUsername || '—' }}</td>
               <td class="whitespace-nowrap px-4 py-2 text-slate-600">{{ formatDate(k.createdAt) }}</td>
+              <td class="whitespace-nowrap px-4 py-2 text-slate-600">{{ k.expiresAt ? formatDate(k.expiresAt) : 'Never' }}</td>
               <td class="whitespace-nowrap px-4 py-2 text-slate-600">{{ k.lastUsedAt ? formatDate(k.lastUsedAt) : 'Never' }}</td>
               <td class="px-4 py-2">
-                <span :class="['rounded-full px-2 py-0.5 font-semibold', k.revokedAt ? 'bg-slate-100 text-slate-500' : 'bg-emerald-100 text-emerald-700']">
-                  {{ k.revokedAt ? 'Revoked' : 'Active' }}
-                </span>
+                <span :class="['rounded-full px-2 py-0.5 font-semibold', keyStatusClass(k)]">{{ keyStatus(k) }}</span>
               </td>
               <td class="whitespace-nowrap px-4 py-2 text-right">
                 <button v-if="!k.revokedAt" type="button" class="rounded px-2 py-1 font-semibold text-rose-700 hover:bg-rose-50"
@@ -255,8 +317,14 @@ interface McpKey {
   createdAt: string
   revokedAt: string | null
   lastUsedAt: string | null
+  expiresAt: string | null
   ownerUsername?: string
   ownerDisplayName?: string
+}
+
+interface ExpiryPreset {
+  value: string
+  label: string
 }
 
 interface OAuthClient {
@@ -288,9 +356,11 @@ const localCommand = computed(
   () => `claude mcp add revenue-console -e REVENUE_CONSOLE_URL=https://<console URL> -e REVENUE_CONSOLE_API_KEY=<your-key> -- python /path/to/mcp-server/server.py`,
 )
 
-type ClientTab = 'remote-oauth' | 'remote-cli' | 'remote-claude-app' | 'local'
+type ClientTab = 'remote-oauth' | 'chatgpt-oauth' | 'gemini-oauth' | 'remote-cli' | 'remote-claude-app' | 'local'
 const clientTabs: { key: ClientTab; label: string }[] = [
   { key: 'remote-oauth', label: 'Claude.ai / Desktop (sign in)' },
+  { key: 'chatgpt-oauth', label: 'ChatGPT (sign in)' },
+  { key: 'gemini-oauth', label: 'Gemini (sign in)' },
   { key: 'remote-cli', label: 'Claude Code / Cursor (remote)' },
   { key: 'remote-claude-app', label: 'Claude.ai / Desktop (manual header)' },
   { key: 'local', label: 'Run locally (no tunnel)' },
@@ -386,11 +456,23 @@ function copy(text: string, id: string) {
 
 const createOpen = ref(false)
 const newLabel = ref('')
+const newExpiryPreset = ref('never')
 const createError = ref('')
 const revealedKey = ref<string | null>(null)
+const expiryPresets = ref<ExpiryPreset[]>([{ value: 'never', label: 'Never' }])
+
+async function loadExpiryPresets() {
+  try {
+    const res = await axios.get('/api/mcp-keys/expiry-presets')
+    expiryPresets.value = res.data.presets
+  } catch {
+    // Falls back to the "never" default above - not worth a visible error for this.
+  }
+}
 
 function openCreate() {
   newLabel.value = ''
+  newExpiryPreset.value = 'never'
   createError.value = ''
   createOpen.value = true
 }
@@ -399,7 +481,7 @@ async function onCreate() {
   busy.value = true
   createError.value = ''
   try {
-    const res = await axios.post('/api/mcp-keys', { label: newLabel.value })
+    const res = await axios.post('/api/mcp-keys', { label: newLabel.value, expiryPreset: newExpiryPreset.value })
     revealedKey.value = res.data.apiKey
     createOpen.value = false
     await load()
@@ -408,6 +490,19 @@ async function onCreate() {
   } finally {
     busy.value = false
   }
+}
+
+function keyStatus(k: McpKey): 'Active' | 'Expired' | 'Revoked' {
+  if (k.revokedAt) return 'Revoked'
+  if (k.expiresAt && new Date(k.expiresAt) <= new Date()) return 'Expired'
+  return 'Active'
+}
+
+function keyStatusClass(k: McpKey) {
+  const status = keyStatus(k)
+  if (status === 'Active') return 'bg-emerald-100 text-emerald-700'
+  if (status === 'Expired') return 'bg-amber-100 text-amber-700'
+  return 'bg-slate-100 text-slate-500'
 }
 
 async function askRevoke(k: McpKey) {
@@ -429,5 +524,8 @@ async function askRevoke(k: McpKey) {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadExpiryPresets()
+})
 </script>

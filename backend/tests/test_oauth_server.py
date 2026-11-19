@@ -72,14 +72,21 @@ def test_consume_code_happy_path():
     oauth_server.approve_client(client_id)
     verifier, challenge = _pkce_pair()
     code = oauth_server.create_code(client_id, 7, "https://claude.ai/cb", challenge)
-    assert oauth_server.consume_code(code, client_id, "https://claude.ai/cb", verifier) == 7
+    assert oauth_server.consume_code(code, client_id, "https://claude.ai/cb", verifier) == (7, "never")
+
+
+def test_consume_code_carries_the_chosen_expiry_preset():
+    client_id = oauth_server.register_client("Claude", ["https://claude.ai/cb"])
+    verifier, challenge = _pkce_pair()
+    code = oauth_server.create_code(client_id, 7, "https://claude.ai/cb", challenge, "1w")
+    assert oauth_server.consume_code(code, client_id, "https://claude.ai/cb", verifier) == (7, "1w")
 
 
 def test_consume_code_is_single_use():
     client_id = oauth_server.register_client("Claude", ["https://claude.ai/cb"])
     verifier, challenge = _pkce_pair()
     code = oauth_server.create_code(client_id, 7, "https://claude.ai/cb", challenge)
-    assert oauth_server.consume_code(code, client_id, "https://claude.ai/cb", verifier) == 7
+    assert oauth_server.consume_code(code, client_id, "https://claude.ai/cb", verifier) == (7, "never")
     assert oauth_server.consume_code(code, client_id, "https://claude.ai/cb", verifier) is None
 
 
