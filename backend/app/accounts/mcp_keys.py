@@ -79,6 +79,10 @@ def _connect():
         conn.execute("ALTER TABLE mcp_keys ADD COLUMN expires_at TEXT")
     except sqlite3.OperationalError:
         pass
+    try:
+        conn.execute("ALTER TABLE mcp_keys ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     return conn
 
 
@@ -102,6 +106,7 @@ def _record(row):
         "lastUsedAt": row["last_used_at"],
         "oauthClientId": row["oauth_client_id"],
         "expiresAt": row["expires_at"],
+        "useCount": row["use_count"],
     }
 
 
@@ -196,7 +201,8 @@ def revoke_key(key_id, *, user_id=None):
 
 
 def authenticate(token):
-    """Returns the owning user_id on success (and records last_used_at), else None."""
+    """Returns the owning user_id on success (and records last_used_at plus a
+    running use_count), else None."""
     if not isinstance(token, str) or not token:
         return None
     with _lock, _db() as conn:
@@ -205,5 +211,6 @@ def authenticate(token):
             return None
         if row["expires_at"] and datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
             return None
-        conn.execute("UPDATE mcp_keys SET last_used_at = ? WHERE id = ?", (_now(), row["id"]))
+        conn.execute(
+            "UPDATE mcp_keys SET last_used_at = ?, use_count = use_count + 1 WHERE id = ?", (_now(), row["id"]))
         return row["user_id"]

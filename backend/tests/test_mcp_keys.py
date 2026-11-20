@@ -44,6 +44,15 @@ def test_authenticate_round_trips_and_records_last_used():
     assert mcp_keys.list_keys_for_user(3)[0]["lastUsedAt"] is not None
 
 
+def test_authenticate_increments_use_count():
+    record, token = mcp_keys.create_key(3, "key")
+    assert record["useCount"] == 0
+    mcp_keys.authenticate(token)
+    mcp_keys.authenticate(token)
+    mcp_keys.authenticate(token)
+    assert mcp_keys.list_keys_for_user(3)[0]["useCount"] == 3
+
+
 def test_authenticate_rejects_wrong_or_missing_token():
     mcp_keys.create_key(1, "key")
     assert mcp_keys.authenticate("not-a-real-token") is None

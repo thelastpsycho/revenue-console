@@ -284,6 +284,7 @@
               <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Created</th>
               <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Expires</th>
               <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Last used</th>
+              <th class="px-4 py-2.5 text-right text-[11px] font-bold uppercase tracking-wider text-slate-500">Uses</th>
               <th class="px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Status</th>
               <th class="px-4 py-2.5"><span class="sr-only">Actions</span></th>
             </tr>
@@ -295,6 +296,7 @@
               <td class="whitespace-nowrap px-4 py-2 text-slate-600">{{ formatDate(k.createdAt) }}</td>
               <td class="whitespace-nowrap px-4 py-2 text-slate-600">{{ k.expiresAt ? formatDate(k.expiresAt) : 'Never' }}</td>
               <td class="whitespace-nowrap px-4 py-2 text-slate-600">{{ k.lastUsedAt ? formatDate(k.lastUsedAt) : 'Never' }}</td>
+              <td class="whitespace-nowrap px-4 py-2 text-right text-slate-600">{{ k.useCount }}</td>
               <td class="px-4 py-2">
                 <span :class="['rounded-full px-2 py-0.5 font-semibold', keyStatusClass(k)]">{{ keyStatus(k) }}</span>
               </td>
@@ -323,6 +325,7 @@ interface McpKey {
   revokedAt: string | null
   lastUsedAt: string | null
   expiresAt: string | null
+  useCount: number
   ownerUsername?: string
   ownerDisplayName?: string
 }
