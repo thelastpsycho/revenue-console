@@ -55,8 +55,9 @@ MAX_BACKFILL_DAYS = 6 * 365
 DAILY_DAYS = 7
 WEEKLY_BACK_DAYS = 90
 WEEKLY_FORWARD_DAYS = 365
-# Scheduled syncs start at/after this local hour, so the PMS night audit has run.
-SCHEDULED_HOUR = 4
+# Scheduled syncs start at/after this local time, so the PMS night audit has run.
+SCHEDULED_HOUR = 5
+SCHEDULED_MINUTE = 30
 
 _db_lock = threading.Lock()
 _sync_lock = threading.Lock()
@@ -457,7 +458,7 @@ def due_scheduled_kind(now=None):
     """'weekly', 'daily' or None - what the scheduler tick should start.
     Nothing runs before a backfill exists (the operator starts that)."""
     now = now or datetime.now(ZoneInfo("Asia/Makassar"))
-    if now.hour < SCHEDULED_HOUR:
+    if (now.hour, now.minute) < (SCHEDULED_HOUR, SCHEDULED_MINUTE):
         return None
     with _db_lock, _db() as conn:
         if not _get_meta(conn, "backfillFrom"):

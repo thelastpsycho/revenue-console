@@ -291,11 +291,11 @@ def test_sync_plans_cover_their_windows_in_30_day_chunks():
 
 
 def test_scheduled_sync_waits_for_backfill_then_runs_weekly_and_daily():
-    at = datetime(2026, 10, 11, 5, 0)
+    at = datetime(2026, 10, 11, 6, 0)
     assert be.due_scheduled_kind(at) is None  # no backfill yet
     with be._db() as conn:
         be._set_meta(conn, "backfillFrom", "2023-10-11")
-    assert be.due_scheduled_kind(datetime(2026, 10, 11, 3, 0)) is None  # before 04:00
+    assert be.due_scheduled_kind(datetime(2026, 10, 11, 5, 0)) is None  # before 05:30
     assert be.due_scheduled_kind(at) == "weekly"
     with be._db() as conn:
         be._set_meta(conn, "lastWeekly", "2026-10-09")
