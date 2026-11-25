@@ -12,4 +12,5 @@ Flask-Cors
 tabulate
 gunicorn
 pyotp
-qrcode
+qrcode[pil]
+cryptography
