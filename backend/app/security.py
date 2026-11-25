@@ -22,7 +22,16 @@ DEV_USER = {
     "displayName": "Local Dev",
     "permissions": sorted(PERMISSION_KEYS),
     "isActive": True,
+    "twoFactorEnabled": False,
+    "twoFactorRequired": False,
 }
+
+# Reachable even when an account's admin-required 2FA isn't set up yet, so
+# there's always a way to finish enrollment (or sign out / change password)
+# rather than being completely locked out by the gate below.
+_TOTP_ENROLLMENT_ALLOWED_PATHS = (
+    "/api/auth/logout", "/api/auth/change-password", "/api/auth/2fa/setup", "/api/auth/2fa/confirm",
+)
 
 
 def init_security(app):
@@ -53,7 +62,7 @@ def init_security(app):
     def secure_api():
         if not request.path.startswith("/api/"):
             return None
-        if request.path in ("/api/health", "/api/auth/status", "/api/auth/login"):
+        if request.path in ("/api/health", "/api/auth/status", "/api/auth/login", "/api/auth/login-totp"):
             return None
         auth = app.extensions["operator_auth"]
         if auth["dev_mode"]:
@@ -76,9 +85,18 @@ def init_security(app):
         user_id = session.get("user_id")
         user = accounts_users.get_user(user_id) if user_id is not None else None
         if not user or not user["isActive"]:
-            session.clear()
+            # Only scrub the session when it held a stale/invalid user_id (e.g.
+            # a deactivated account) - clearing it unconditionally would also
+            # wipe a 2FA login's pending_2fa_user_id, since that's set in the
+            # same session before user_id ever gets written.
+            if user_id is not None:
+                session.clear()
             return jsonify({"status": "error", "message": "Authentication required"}), 401
         g.current_user = user
+        if (user["twoFactorRequired"] and not user["twoFactorEnabled"]
+                and request.path not in _TOTP_ENROLLMENT_ALLOWED_PATHS):
+            return jsonify({"status": "error", "message": "Set up two-factor authentication to continue",
+                             "twoFactorSetupRequired": True}), 403
         if request.method in ("POST", "PUT", "PATCH", "DELETE"):
             actual = request.headers.get("X-CSRF-Token", "")
             expected = session.get("csrf_token", "")

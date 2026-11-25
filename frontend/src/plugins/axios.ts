@@ -23,8 +23,11 @@ instance.interceptors.request.use(config => {
   return config
 })
 
+const PRE_AUTH_401_PATHS = ['/api/auth/login', '/api/auth/login-totp']
+
 instance.interceptors.response.use(undefined, error => {
-  if (error.response?.status === 401 && !error.config?.url?.endsWith('/api/auth/login')) {
+  const url = error.config?.url || ''
+  if (error.response?.status === 401 && !PRE_AUTH_401_PATHS.some(path => url.endsWith(path))) {
     setCsrfToken(null)
     window.dispatchEvent(new Event('operator-session-expired'))
   }

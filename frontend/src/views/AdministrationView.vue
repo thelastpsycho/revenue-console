@@ -146,6 +146,24 @@
             {{ pwBusy ? "Saving…" : "Change password" }}
           </button>
         </form>
+
+        <div class="max-w-sm space-y-2 border-t border-slate-200 pt-3 text-xs">
+          <template v-if="auth.user?.twoFactorEnabled">
+            <h3 class="text-sm font-semibold">Two-factor authentication</h3>
+            <p class="font-semibold text-emerald-700">Enabled</p>
+            <form class="space-y-2" @submit.prevent="disableTotp">
+              <label class="block">
+                <span class="mb-1 block font-semibold text-slate-600">Current password</span>
+                <input v-model="twofa.disablePassword" type="password" autocomplete="current-password" required class="neu-input w-full" />
+              </label>
+              <p v-if="twofa.error" class="font-semibold text-rose-700">{{ twofa.error }}</p>
+              <button type="submit" class="btn-flat py-1.5" :disabled="twofa.busy">
+                {{ twofa.busy ? "Disabling…" : "Disable" }}
+              </button>
+            </form>
+          </template>
+          <TwoFactorSetup v-else />
+        </div>
       </section>
       <section v-if="section === 'backups'" class="neu-card space-y-3 p-4">
         <h2 class="font-semibold">Backups</h2>
@@ -206,6 +224,7 @@ import { useRoute } from "vue-router";
 import axios from "../plugins/axios";
 import { useAuthStore } from "../stores/auth";
 import { timestamp } from "../utils/rms";
+import TwoFactorSetup from "../components/TwoFactorSetup.vue";
 const route = useRoute(),
   auth = useAuthStore(),
   data = ref<any>(null),
@@ -284,6 +303,24 @@ async function changePassword() {
     pwError.value = err?.response?.data?.message || "Could not change password.";
   } finally {
     pwBusy.value = false;
+  }
+}
+
+const twofa = reactive({
+  busy: false, error: "", disablePassword: "",
+});
+
+async function disableTotp() {
+  twofa.busy = true;
+  twofa.error = "";
+  try {
+    await axios.post("/api/auth/2fa/disable", { currentPassword: twofa.disablePassword });
+    twofa.disablePassword = "";
+    await auth.refresh();
+  } catch (err: any) {
+    twofa.error = err?.response?.data?.message || "Could not disable.";
+  } finally {
+    twofa.busy = false;
   }
 }
 

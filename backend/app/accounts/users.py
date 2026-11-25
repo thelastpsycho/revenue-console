@@ -7,16 +7,19 @@ accounts from the Users page; the very first account is created by
 scripts/bootstrap_admin.py since nobody exists yet to use that page.
 """
 
+import hashlib
 import json
 import re
+import secrets
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from ..infrastructure.paths import get_data_path
+from . import two_factor
 from .permissions import PERMISSION_KEYS
 
 DB_FILE = "users.db"
@@ -96,6 +99,26 @@ def _connect():
             applied_at TEXT NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS trusted_devices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            token_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            last_used_at TEXT
+        )
+    """)
+    for ddl in (
+        "ALTER TABLE users ADD COLUMN totp_secret TEXT",
+        "ALTER TABLE users ADD COLUMN totp_pending_secret TEXT",
+        "ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN totp_required INTEGER NOT NULL DEFAULT 0",
+    ):
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError:
+            pass
     with conn:
         _backfill_split_permissions(conn)
     return conn
@@ -118,6 +141,8 @@ def _user(row, *, include_hash=False):
         "displayName": row["display_name"],
         "permissions": sorted(json.loads(row["permissions"])),
         "isActive": bool(row["is_active"]),
+        "twoFactorEnabled": bool(row["totp_enabled"]),
+        "twoFactorRequired": bool(row["totp_required"]),
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
         "lastLoginAt": row["last_login_at"],
@@ -191,6 +216,7 @@ def create_user(data):
     display_name = _clean_display_name(data.get("displayName"), username)
     password = _clean_password(data.get("password"))
     permissions = _clean_permissions(data.get("permissions"))
+    two_factor_required = bool(data.get("twoFactorRequired"))
 
     now = _now()
     with _lock, _db() as conn:
@@ -200,10 +226,10 @@ def create_user(data):
             raise ValidationError(f'Username "{username}" is already taken')
         cur = conn.execute(
             """INSERT INTO users (username, password_hash, display_name, permissions,
-                                   is_active, created_at, updated_at)
-               VALUES (?, ?, ?, ?, 1, ?, ?)""",
+                                   is_active, totp_required, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 1, ?, ?, ?)""",
             (username, generate_password_hash(password), display_name,
-             json.dumps(permissions), now, now))
+             json.dumps(permissions), int(two_factor_required), now, now))
         return _user(conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone())
 
 
@@ -239,6 +265,10 @@ def update_user(user_id, data, *, current_user_id=None):
             if user_id == current_user_id and not is_active:
                 raise ValidationError("You can't deactivate your own account")
 
+        two_factor_required = current["twoFactorRequired"]
+        if "twoFactorRequired" in data:
+            two_factor_required = bool(data.get("twoFactorRequired"))
+
         password_hash = None
         if data.get("password"):
             password_hash = generate_password_hash(_clean_password(data.get("password")))
@@ -246,14 +276,15 @@ def update_user(user_id, data, *, current_user_id=None):
         if password_hash is not None:
             conn.execute(
                 """UPDATE users SET display_name = ?, permissions = ?, is_active = ?,
-                                     password_hash = ?, updated_at = ? WHERE id = ?""",
-                (display_name, json.dumps(permissions), int(is_active), password_hash,
-                 _now(), user_id))
+                                     totp_required = ?, password_hash = ?, updated_at = ? WHERE id = ?""",
+                (display_name, json.dumps(permissions), int(is_active), int(two_factor_required),
+                 password_hash, _now(), user_id))
         else:
             conn.execute(
                 """UPDATE users SET display_name = ?, permissions = ?, is_active = ?,
-                                     updated_at = ? WHERE id = ?""",
-                (display_name, json.dumps(permissions), int(is_active), _now(), user_id))
+                                     totp_required = ?, updated_at = ? WHERE id = ?""",
+                (display_name, json.dumps(permissions), int(is_active), int(two_factor_required),
+                 _now(), user_id))
         return _user(conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone())
 
 
@@ -292,3 +323,109 @@ def change_own_password(user_id, current_password, new_password):
 def any_users_exist():
     with _lock, _db() as conn:
         return conn.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
+
+
+def begin_totp_setup(user_id):
+    """Generates a fresh TOTP secret and stashes it (encrypted) as pending -
+    doesn't touch an existing enabled secret until confirm_totp_setup()
+    verifies a real code, so an abandoned setup can't disturb working 2FA
+    or silently enable it. Returns (secret, qr_data_uri)."""
+    secret = two_factor.generate_secret()
+    with _lock, _db() as conn:
+        row = conn.execute("SELECT username FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            raise ValidationError("User not found")
+        conn.execute("UPDATE users SET totp_pending_secret = ?, updated_at = ? WHERE id = ?",
+                     (two_factor.encrypt(secret), _now(), user_id))
+        qr_data_uri = two_factor.provisioning_qr_data_uri(secret, row["username"])
+    return secret, qr_data_uri
+
+
+def confirm_totp_setup(user_id, code):
+    """Verifies `code` against the pending secret from begin_totp_setup() and,
+    on success, makes it the account's active TOTP secret."""
+    with _lock, _db() as conn:
+        row = conn.execute("SELECT totp_pending_secret FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row or not row["totp_pending_secret"]:
+            raise ValidationError("No two-factor setup in progress")
+        secret = two_factor.decrypt(row["totp_pending_secret"])
+        if not secret or not two_factor.verify_code(secret, code):
+            raise ValidationError("Invalid code")
+        conn.execute(
+            """UPDATE users SET totp_secret = ?, totp_pending_secret = NULL,
+                                 totp_enabled = 1, updated_at = ? WHERE id = ?""",
+            (two_factor.encrypt(secret), _now(), user_id))
+
+
+def disable_totp(user_id, current_password):
+    """Self-service disable: requires the current password, same spirit as
+    change_own_password - a security feature shouldn't turn off with no
+    re-auth at all."""
+    with _lock, _db() as conn:
+        row = conn.execute("SELECT password_hash FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row or not check_password_hash(row["password_hash"], current_password or ""):
+            raise ValidationError("Current password is incorrect")
+        conn.execute(
+            """UPDATE users SET totp_secret = NULL, totp_pending_secret = NULL,
+                                 totp_enabled = 0, updated_at = ? WHERE id = ?""",
+            (_now(), user_id))
+        conn.execute("DELETE FROM trusted_devices WHERE user_id = ?", (user_id,))
+
+
+def admin_reset_totp(user_id):
+    """Unconditional recovery path for a lost authenticator - gated by the
+    manage_users permission at the route layer, not by the account's own
+    password or a code."""
+    with _lock, _db() as conn:
+        updated = conn.execute(
+            """UPDATE users SET totp_secret = NULL, totp_pending_secret = NULL,
+                                 totp_enabled = 0, updated_at = ? WHERE id = ?""",
+            (_now(), user_id)).rowcount
+        conn.execute("DELETE FROM trusted_devices WHERE user_id = ?", (user_id,))
+        return updated > 0
+
+
+def verify_totp(user_id, code):
+    with _lock, _db() as conn:
+        row = conn.execute(
+            "SELECT totp_secret, totp_enabled FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row or not row["totp_enabled"] or not row["totp_secret"]:
+            return False
+        secret = two_factor.decrypt(row["totp_secret"])
+        return bool(secret) and two_factor.verify_code(secret, code)
+
+
+def create_trusted_device(user_id, days=7):
+    """Issues a 'remember this device' token so a future login can skip the
+    TOTP step - the password is still always required, this only ever
+    substitutes for the second factor. Returns the raw token (only time
+    it's available in plaintext; the DB only ever stores its hash)."""
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    now = datetime.now(timezone.utc)
+    expires_at = (now + timedelta(days=days)).isoformat(timespec="seconds")
+    with _lock, _db() as conn:
+        conn.execute(
+            """INSERT INTO trusted_devices (user_id, token_hash, created_at, expires_at)
+               VALUES (?, ?, ?, ?)""",
+            (user_id, token_hash, now.isoformat(timespec="seconds"), expires_at))
+    return token
+
+
+def verify_trusted_device(user_id, token):
+    if not isinstance(token, str) or not token:
+        return False
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    with _lock, _db() as conn:
+        row = conn.execute(
+            """SELECT id, expires_at FROM trusted_devices WHERE user_id = ? AND token_hash = ?""",
+            (user_id, token_hash)).fetchone()
+        if not row or row["expires_at"] <= _now():
+            return False
+        conn.execute("UPDATE trusted_devices SET last_used_at = ? WHERE id = ?", (_now(), row["id"]))
+    return True
+
+
+def revoke_trusted_devices(user_id):
+    with _lock, _db() as conn:
+        conn.execute("DELETE FROM trusted_devices WHERE user_id = ?", (user_id,))

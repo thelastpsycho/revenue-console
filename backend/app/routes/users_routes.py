@@ -58,3 +58,11 @@ def delete_user(user_id):
     if not removed:
         return _error("User not found", 404)
     return jsonify({"status": "success"})
+
+
+@bp.route('/api/users/<int:user_id>/reset-2fa', methods=['POST'])
+@require_permission('manage_users')
+def reset_two_factor(user_id):
+    if not accounts_users.admin_reset_totp(user_id):
+        return _error("User not found", 404)
+    return jsonify({"status": "success"})

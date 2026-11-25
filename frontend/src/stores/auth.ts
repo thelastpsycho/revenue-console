@@ -6,6 +6,8 @@ export interface AuthUser {
   username: string
   displayName: string
   permissions: string[]
+  twoFactorEnabled: boolean
+  twoFactorSetupRequired: boolean
 }
 
 export const useAuthStore = defineStore('auth', {
@@ -39,8 +41,20 @@ export const useAuthStore = defineStore('auth', {
         this.loading = false
       }
     },
-    async login(username: string, password: string) {
+    async login(username: string, password: string): Promise<'success' | 'totp_required'> {
       const { data } = await axios.post('/api/auth/login', { username, password })
+      if (data.status === 'totp_required') {
+        this.error = ''
+        return 'totp_required'
+      }
+      setCsrfToken(data.csrf_token)
+      this.authenticated = true
+      this.user = data.user
+      this.error = ''
+      return 'success'
+    },
+    async loginTotp(code: string, rememberDevice = false) {
+      const { data } = await axios.post('/api/auth/login-totp', { code, rememberDevice })
       setCsrfToken(data.csrf_token)
       this.authenticated = true
       this.user = data.user

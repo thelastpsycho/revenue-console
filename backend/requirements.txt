@@ -11,3 +11,5 @@ python-dotenv
 Flask-Cors
 tabulate
 gunicorn
+pyotp
+qrcode
