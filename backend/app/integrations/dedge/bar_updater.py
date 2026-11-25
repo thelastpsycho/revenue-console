@@ -156,6 +156,16 @@ def setup_driver(user_data_dir=DEFAULT_PROFILE_DIR, headless=None):
     headless = resolve_headless(headless)
     if headless:
         chrome_options.add_argument("--headless=new")
+    # Default "normal" strategy blocks every subsequent WebDriver command
+    # until the page's *every* sub-resource finishes loading (images, fonts,
+    # analytics/ad beacons) - D-EDGE's extranet apparently never quite
+    # reaches that, which surfaced as random ~120s hangs (whichever command
+    # ran next just sat there) on find_elements, a WebDriverWait, and a plain
+    # .click() across different runs, all with that same "stuck until the
+    # client's own read timeout" shape. "eager" only waits for DOM-ready, not
+    # every sub-resource - we already explicitly wait for the specific
+    # elements we need via WebDriverWait, so this isn't trading away safety.
+    chrome_options.page_load_strategy = "eager"
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
