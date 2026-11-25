@@ -389,6 +389,7 @@ def ensure_logged_in(driver, username, password, timeout=30):
         (By.CSS_SELECTOR, "input[type='text']:not([type='hidden'])"),
     ])
     if not user_field:
+        _dump_login_diagnostics(driver, "no_username_field")
         raise RuntimeError("Could not find the D-EDGE username field")
     user_field.clear()
     user_field.send_keys(username)
@@ -397,9 +398,13 @@ def ensure_logged_in(driver, username, password, timeout=30):
     pwd_field = _find_first(driver, [(By.CSS_SELECTOR, "input[type='password']")])
     if not pwd_field:
         _click_login_button(driver)
-        WebDriverWait(driver, timeout).until(
-            lambda d: _find_first(d, [(By.CSS_SELECTOR, "input[type='password']")]) is not None
-        )
+        try:
+            WebDriverWait(driver, timeout).until(
+                lambda d: _find_first(d, [(By.CSS_SELECTOR, "input[type='password']")]) is not None
+            )
+        except Exception:
+            _dump_login_diagnostics(driver, "no_password_field")
+            raise
         pwd_field = _find_first(driver, [(By.CSS_SELECTOR, "input[type='password']")])
 
     pwd_field.clear()
@@ -506,6 +511,24 @@ def _dump_add_button_diagnostics(driver):
         log(driver, f"Add-button diagnostics saved: {screenshot_path}, {html_path}")
     except Exception as diag_err:
         log(driver, f"Failed to save Add-button diagnostics: {diag_err}")
+
+
+def _dump_login_diagnostics(driver, label):
+    """On a genuine (non-transient) login-flow failure, save a screenshot and
+    page HTML so the failure can be diagnosed from the artifacts instead of
+    needing to reproduce it live - same idea as _dump_add_button_diagnostics,
+    just for ensure_logged_in()'s own waits."""
+    try:
+        data_dir = get_data_dir()
+        screenshot_path = os.path.join(data_dir, f'dedge_login_error_{label}.png')
+        html_path = os.path.join(data_dir, f'dedge_login_error_{label}.html')
+        driver.save_screenshot(screenshot_path)
+        with open(html_path, 'w', encoding='utf-8') as f:
+            f.write(f"URL at failure: {driver.current_url}\n\n")
+            f.write(driver.page_source)
+        log(driver, f"Login diagnostics saved: {screenshot_path}, {html_path}")
+    except Exception as diag_err:
+        log(driver, f"Failed to save login diagnostics: {diag_err}")
 
 
 def _wait_add_button_enabled(driver, timeout=20):

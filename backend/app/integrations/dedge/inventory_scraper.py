@@ -36,6 +36,7 @@ from .bar_updater import (
     DEFAULT_PROFILE_DIR,
     HOTEL_ID,
     _dismiss_unexpected_alert,
+    _dump_login_diagnostics,
     _wait_for_device_authorization,
     ensure_logged_in,
     log,
@@ -135,9 +136,13 @@ def _ensure_all_rooms_selected(driver, timeout=15):
     Click "All" in that filter before every export so a filter left narrowed
     by someone browsing the extranet by hand doesn't silently resurface.
     """
-    text_el = WebDriverWait(driver, timeout).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, ROOMS_FILTER_TEXT_SELECTOR))
-    )
+    try:
+        text_el = WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, ROOMS_FILTER_TEXT_SELECTOR))
+        )
+    except Exception:
+        _dump_login_diagnostics(driver, "no_rooms_filter")
+        raise
     if text_el.text.strip().lower() == "all rooms":
         return
 
