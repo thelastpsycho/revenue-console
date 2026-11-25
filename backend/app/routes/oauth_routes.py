@@ -297,7 +297,7 @@ def token():
 # ---- admin approval: the actual trust boundary ----------------------------------
 
 @bp.route("/api/oauth-clients", methods=["GET"])
-@require_permission("manage_users")
+@require_permission("manage_oauth_clients")
 def list_oauth_clients():
     clients = oauth_server.list_clients()
     now = datetime.now(timezone.utc)
@@ -316,7 +316,7 @@ def list_oauth_clients():
 
 
 @bp.route("/api/oauth-clients/<client_id>/approve", methods=["POST"])
-@require_permission("manage_users")
+@require_permission("manage_oauth_clients")
 def approve_oauth_client(client_id):
     if not oauth_server.approve_client(client_id):
         return jsonify({"status": "error", "message": "Client not found"}), 404
@@ -324,7 +324,7 @@ def approve_oauth_client(client_id):
 
 
 @bp.route("/api/oauth-clients/<client_id>/reject", methods=["POST"])
-@require_permission("manage_users")
+@require_permission("manage_oauth_clients")
 def reject_oauth_client(client_id):
     if not oauth_server.reject_client(client_id):
         return jsonify({"status": "error", "message": "Client not found"}), 404

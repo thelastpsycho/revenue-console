@@ -28,6 +28,7 @@ const AdministrationView = () => import("./views/AdministrationView.vue");
 const DocumentationView = () => import("./views/DocumentationView.vue");
 const UsersManagementView = () => import("./views/UsersManagementView.vue");
 const McpAccessView = () => import("./views/McpAccessView.vue");
+const NoAccessView = () => import("./views/NoAccessView.vue");
 
 declare module "vue-router" {
   interface RouteMeta {
@@ -42,6 +43,15 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
+      path: "/no-access",
+      name: "no-access",
+      component: NoAccessView,
+      meta: {
+        title: "No access",
+        description: "You don't have access to any pages yet.",
+      },
+    },
+    {
       path: "/documentation",
       name: "documentation",
       component: DocumentationView,
@@ -49,6 +59,7 @@ const router = createRouter({
         title: "Documentation",
         description:
           "What Revenue Console does, how data flows through the pipeline, and where every setting lives.",
+        permission: "view_documentation",
       },
     },
     {
@@ -58,6 +69,7 @@ const router = createRouter({
       meta: {
         title: "Administration",
         description: "Data health, mappings, settings and access.",
+        permission: "view_administration",
       },
     },
     {
@@ -68,6 +80,7 @@ const router = createRouter({
         title: "Dashboard",
         description:
           "Live status for the automated pipeline, booking data and stop sale.",
+        permission: "view_dashboard",
       },
     },
     {
@@ -98,6 +111,7 @@ const router = createRouter({
       meta: {
         title: "Data Overview",
         description: "Browse and export the combined PMS/channel-manager inventory tables.",
+        permission: "view_data",
       },
     },
     {
@@ -139,6 +153,7 @@ const router = createRouter({
         title: "PMS API Test",
         description:
           "Try the Selenium-free PMS client side by side with the existing scraper.",
+        permission: "run_pms_scrape",
       },
     },
     {
@@ -159,6 +174,7 @@ const router = createRouter({
       meta: {
         title: "Fast Pipeline History",
         description: "Every Fast API Pipeline run, persisted so past logs survive.",
+        permission: "run_pipeline",
       },
     },
     {
@@ -211,6 +227,7 @@ const router = createRouter({
       meta: {
         title: "MCP Access",
         description: "Create and revoke personal API keys to connect Claude and other MCP clients to this console's data.",
+        permission: "view_mcp_access",
       },
     },
     {
@@ -220,6 +237,7 @@ const router = createRouter({
       meta: {
         title: "Revenue Management",
         description: "Daily revenue decisions: forecast, pace and budget tracking.",
+        permission: "view_rms",
       },
     },
     {
@@ -230,6 +248,7 @@ const router = createRouter({
         title: "Online Segment",
         description:
           "Source mix, pace, booking behaviour and direct vs OTA demand for the Online market segment.",
+        permission: "view_rms",
       },
     },
     {
@@ -240,6 +259,7 @@ const router = createRouter({
         title: "Pickup by Stay Month",
         description:
           "Whole-hotel net pickup over a selected window, rolled up by stay month, with current occupancy.",
+        permission: "view_rms",
       },
     },
     {
@@ -250,6 +270,7 @@ const router = createRouter({
         title: "Company Analytics",
         description:
           "Length of stay, nationality, booking behaviour, pace & pickups and production by company.",
+        permission: "view_rms",
       },
     },
     {
@@ -260,10 +281,25 @@ const router = createRouter({
         title: "Nationality Analytics",
         description:
           "Length of stay, company, booking behaviour, pace & pickups and production by guest nationality.",
+        permission: "view_rms",
       },
     },
   ],
 });
+
+// Dashboard ("home") is no longer a safe universal fallback now that it also
+// carries a permission - redirecting there for a user who lacks it would
+// just fail the guard again and loop. Send denied navigations to the first
+// route the user actually has permission for, or /no-access if there's none.
+function firstAccessibleRoute(auth: ReturnType<typeof useAuthStore>) {
+  for (const candidate of router.getRoutes()) {
+    if (candidate.name === "no-access") continue;
+    if (!candidate.meta.permission || auth.hasPermission(candidate.meta.permission)) {
+      return { name: candidate.name as string };
+    }
+  }
+  return { name: "no-access" };
+}
 
 router.beforeEach((to) => {
   if (!to.meta.permission) return true;
@@ -271,7 +307,7 @@ router.beforeEach((to) => {
   // AuthGate blocks unauthenticated access app-wide; this only narrows which
   // pages a logged-in user without the page's permission can reach.
   if (!auth.authenticated || auth.hasPermission(to.meta.permission)) return true;
-  return { name: "home" };
+  return firstAccessibleRoute(auth);
 });
 
 const DEFAULT_DESCRIPTION =

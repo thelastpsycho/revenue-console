@@ -50,7 +50,7 @@ def _pkce_pair(verifier="a" * 64):
 
 
 def _admin_client(app):
-    _create_user("admin", "correct-password-1", permissions=["manage_users"])
+    _create_user("admin", "correct-password-1", permissions=["manage_users", "manage_oauth_clients"])
     client = app.test_client()
     login = client.post("/api/auth/login", json={"username": "admin", "password": "correct-password-1"})
     return client, login.get_json()["csrf_token"]

@@ -36,6 +36,44 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# Permissions split off an existing key after that key already controlled
+# everyone's access to the capability - holders of the "parent" key are
+# backfilled with the new one once, so nobody's access shrinks on upgrade.
+_SPLIT_PERMISSION_BACKFILL = {
+    "manage_users": ["manage_oauth_clients", "manage_mcp_keys"],
+    "run_pipeline": ["manage_pipeline_schedule"],
+    "manage_rms_settings": ["manage_rms_notes"],
+    "run_pms_scrape": ["view_pms_scrape_logs"],
+    "run_dedge_scrape": ["view_dedge_scrape_logs"],
+}
+# Page-visibility permissions didn't exist before - every page was visible to
+# any authenticated user, so every existing account is backfilled with all of
+# them. Only users created after this migration can be scoped to fewer pages.
+_NEW_PAGE_VIEW_PERMISSIONS = [
+    "view_dashboard", "view_data", "view_rms", "view_mcp_access",
+    "view_documentation", "view_administration",
+]
+_PERMISSION_MIGRATION = "view_and_split_2026_11"
+
+
+def _backfill_split_permissions(conn):
+    applied = conn.execute(
+        "SELECT 1 FROM permission_migrations WHERE name = ?", (_PERMISSION_MIGRATION,)).fetchone()
+    if applied:
+        return
+    for row in conn.execute("SELECT id, permissions FROM users").fetchall():
+        current = set(json.loads(row["permissions"]))
+        updated = set(current) | set(_NEW_PAGE_VIEW_PERMISSIONS)
+        for parent, children in _SPLIT_PERMISSION_BACKFILL.items():
+            if parent in current:
+                updated.update(children)
+        if updated != current:
+            conn.execute("UPDATE users SET permissions = ? WHERE id = ?",
+                         (json.dumps(sorted(updated)), row["id"]))
+    conn.execute("INSERT INTO permission_migrations (name, applied_at) VALUES (?, ?)",
+                 (_PERMISSION_MIGRATION, _now()))
+
+
 def _connect():
     conn = sqlite3.connect(get_data_path(DB_FILE))
     conn.row_factory = sqlite3.Row
@@ -52,6 +90,14 @@ def _connect():
             last_login_at TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS permission_migrations (
+            name TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        )
+    """)
+    with conn:
+        _backfill_split_permissions(conn)
     return conn
 
 

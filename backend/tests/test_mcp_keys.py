@@ -195,7 +195,7 @@ def test_non_admin_cannot_see_or_revoke_someone_elses_key(app):
 
 
 def test_admin_can_list_and_revoke_any_key(app):
-    admin = _create_user("admin", "correct-password-1", permissions=["manage_users"])
+    admin = _create_user("admin", "correct-password-1", permissions=["manage_mcp_keys"])
     other = _create_user("bob", "correct-password-2", permissions=[])
     other_record, _ = mcp_keys.create_key(other["id"], "bob's key")
 

@@ -17,7 +17,7 @@ def _error(message, status):
 
 
 def _is_admin(user):
-    return 'manage_users' in user.get('permissions', ())
+    return 'manage_mcp_keys' in user.get('permissions', ())
 
 
 def _with_owner(record):

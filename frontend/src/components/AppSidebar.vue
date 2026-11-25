@@ -210,20 +210,20 @@ const navigationAreas: NavArea[] = [
   {
     name: "Revenue Insights",
     items: [
-      { name: "Overview", href: "/", icon: HomeIcon },
-      { name: "RMS", href: "/rms", icon: PresentationChartLineIcon },
-      { name: "Online segment", href: "/rms/online", icon: ChartBarIcon },
-      { name: "Pickup by month", href: "/rms/pick-up", icon: ArrowTrendingUpIcon },
-      { name: "Company analytics", href: "/rms/company-analytics", icon: BuildingOffice2Icon },
-      { name: "Nationality analytics", href: "/rms/nationality-analytics", icon: GlobeAltIcon },
+      { name: "Overview", href: "/", icon: HomeIcon, permission: "view_dashboard" },
+      { name: "RMS", href: "/rms", icon: PresentationChartLineIcon, permission: "view_rms" },
+      { name: "Online segment", href: "/rms/online", icon: ChartBarIcon, permission: "view_rms" },
+      { name: "Pickup by month", href: "/rms/pick-up", icon: ArrowTrendingUpIcon, permission: "view_rms" },
+      { name: "Company analytics", href: "/rms/company-analytics", icon: BuildingOffice2Icon, permission: "view_rms" },
+      { name: "Nationality analytics", href: "/rms/nationality-analytics", icon: GlobeAltIcon, permission: "view_rms" },
     ],
   },
   {
     name: "Distribution Operations",
     items: [
-      { name: "Inventory tables", href: "/data?tab=combined", icon: TableCellsIcon, shortcut: "g i" },
+      { name: "Inventory tables", href: "/data?tab=combined", icon: TableCellsIcon, shortcut: "g i", permission: "view_data" },
       { name: "Automation", href: "/fast-api-pipeline", icon: BoltIcon, permission: "run_pipeline" },
-      { name: "Run history", href: "/fast-pipeline-history", icon: ClockIcon },
+      { name: "Run history", href: "/fast-pipeline-history", icon: ClockIcon, permission: "run_pipeline" },
       { name: "Stop sale", href: "/stop-sale", icon: EnvelopeIcon, permission: "manage_stop_sale" },
       { name: "BAR", href: "/bar-calculator", icon: ReceiptPercentIcon, permission: "push_dedge_bar" },
     ],
@@ -235,26 +235,31 @@ const navigationAreas: NavArea[] = [
         name: "Data health",
         href: "/administration?section=health",
         icon: CircleStackIcon,
+        permission: "view_administration",
       },
       {
         name: "Mappings",
         href: "/administration?section=mappings",
         icon: ChartBarSquareIcon,
+        permission: "view_administration",
       },
       {
         name: "Settings",
         href: "/administration?section=settings",
         icon: ReceiptPercentIcon,
+        permission: "view_administration",
       },
       {
         name: "Access",
         href: "/administration?section=access",
         icon: HomeIcon,
+        permission: "view_administration",
       },
       {
         name: "Backups",
         href: "/administration?section=backups",
         icon: CircleStackIcon,
+        permission: "view_administration",
       },
       {
         name: "Season calendar",
@@ -278,15 +283,16 @@ const navigationAreas: NavArea[] = [
         name: "MCP Access",
         href: "/mcp-access",
         icon: KeyIcon,
+        permission: "view_mcp_access",
       },
       {
         name: "Advanced",
         href: "/administration?section=advanced",
         icon: BeakerIcon,
         children: [
-          { name: "Inventory tables", href: "/data" },
+          { name: "Inventory tables", href: "/data", permission: "view_data" },
           { name: "Manual yielder", href: "/yielder", permission: "run_yield" },
-          { name: "PMS API test", href: "/pms-api-test" },
+          { name: "PMS API test", href: "/pms-api-test", permission: "run_pms_scrape" },
           { name: "Manual inventory collection", href: "/scraping", permission: "run_pms_scrape" },
           { name: "Manual allotment", href: "/allotment", permission: "push_pms_allotment" },
           { name: "Legacy pipeline", href: "/pipeline", permission: "run_pipeline" },
@@ -297,7 +303,7 @@ const navigationAreas: NavArea[] = [
   {
     name: "Help",
     items: [
-      { name: "Documentation", href: "/documentation", icon: BookOpenIcon },
+      { name: "Documentation", href: "/documentation", icon: BookOpenIcon, permission: "view_documentation" },
     ],
   },
 ];

@@ -118,6 +118,7 @@ def trigger_scrape():
     return jsonify({"status": "success", "message": "Scraping started"})
 
 @bp.route('/api/scrape/stream')
+@require_permission('view_pms_scrape_logs')
 def scrape_stream():
     def generate():
         global scraping_error
@@ -291,6 +292,7 @@ def trigger_process_cm():
         }), 500
 
 @bp.route('/api/scrape-cm/stream')
+@require_permission('view_dedge_scrape_logs')
 def stream_scrape_cm_logs():
     """Stream CM scrape logs using Server-Sent Events (shares log_queue with the
     D-EDGE allotment/BAR flows)."""

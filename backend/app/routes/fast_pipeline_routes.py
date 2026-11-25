@@ -90,7 +90,7 @@ def get_fast_pipeline_schedule():
 
 
 @bp.route('/api/fast-pipeline/schedule', methods=['PUT'])
-@require_permission('run_pipeline')
+@require_permission('manage_pipeline_schedule')
 def update_fast_pipeline_schedule():
     data = request.get_json(silent=True) or {}
     try:

@@ -231,7 +231,7 @@ def settings():
 
 
 @bp.route('/api/rms/notes/<day>', methods=['PUT'])
-@require_permission('manage_rms_settings')
+@require_permission('manage_rms_notes')
 def note(day):
     try:
         body = request.get_json(silent=True)
