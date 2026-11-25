@@ -141,18 +141,27 @@
         <span
           class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600"
         >
-          RC
+          {{ initials }}
         </span>
         <div
-          class="min-w-0 whitespace-nowrap leading-tight lg:hidden lg:group-hover/sidebar:block lg:group-focus-within/sidebar:block"
+          class="min-w-0 flex-1 whitespace-nowrap leading-tight lg:hidden lg:group-hover/sidebar:block lg:group-focus-within/sidebar:block"
         >
           <p class="truncate text-xs font-medium text-slate-900">
-            Local session
+            {{ auth.user?.displayName || "Signed in" }}
           </p>
           <p class="truncate text-[11px] text-slate-400">
-            fo.hospitality.mykg.id
+            {{ auth.user?.username }}
           </p>
         </div>
+        <button
+          type="button"
+          title="Sign out"
+          aria-label="Sign out"
+          class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-50 hover:text-slate-900 lg:hidden lg:group-hover/sidebar:flex lg:group-focus-within/sidebar:flex"
+          @click="signOut"
+        >
+          <ArrowRightOnRectangleIcon class="h-4 w-4" />
+        </button>
       </div>
     </div>
   </aside>
@@ -184,6 +193,7 @@ import {
   GlobeAltIcon,
   UsersIcon,
   KeyIcon,
+  ArrowRightOnRectangleIcon,
 } from "@heroicons/vue/24/outline";
 
 defineProps<{ open: boolean }>();
@@ -191,6 +201,21 @@ defineEmits<{ (e: "close"): void }>();
 
 const route = useRoute();
 const auth = useAuthStore();
+
+const initials = computed(() => {
+  const name = auth.user?.displayName || auth.user?.username || "";
+  const letters = name.trim().split(/\s+/).map((w) => w[0]).filter(Boolean);
+  return (letters.slice(0, 2).join("") || "?").toUpperCase();
+});
+
+async function signOut() {
+  try {
+    await auth.logout();
+  } catch {
+    // auth.logout() already clears local session state in its own finally
+    // block even if the request itself fails - nothing more to do here.
+  }
+}
 
 interface NavItem {
   name: string;
