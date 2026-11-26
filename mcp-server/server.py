@@ -208,9 +208,10 @@ def build_server(client: ConsoleClient) -> MCPServer:
     @mcp.tool(annotations=READ_ONLY)
     async def get_revenue_briefing(ctx: Context) -> dict[str, Any]:
         """Whole-hotel briefing for the next 7 and 30 days: rooms on the books, occupancy,
-        gross revenue, ADR, 7-day pickup, budget gap vs same time last year, plus the dates
-        that need attention (high occupancy, behind last year with weak pickup, negative
-        pickup) and any data-freshness warnings. Best first call for "how are we doing"."""
+        gross revenue, net ADR (net of breakfast/tax-service rules), 7-day pickup, budget
+        gap vs same time last year, plus the dates that need attention (high occupancy,
+        behind last year with weak pickup, negative pickup) and any data-freshness
+        warnings. Best first call for "how are we doing"."""
         return await client.get("/api/rms/briefing", auth=_forwarded_auth(ctx))
 
     @mcp.tool(annotations=READ_ONLY)

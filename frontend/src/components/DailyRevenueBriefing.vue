@@ -189,7 +189,7 @@ function metrics(p: Period) {
       value: pct(p.occupancy),
       link: reportLink(p, "rooms"),
     },
-    { label: "IDR ADR", value: money(p.adr), link: reportLink(p, "pace") },
+    { label: "Net IDR ADR", value: money(p.adr), link: reportLink(p, "pace") },
     {
       label: "IDR room revenue",
       value: money(p.revenue),

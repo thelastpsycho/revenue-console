@@ -12,13 +12,14 @@ def summarise(rows, capacity, start, days):
     known = len(selected) == days and all(r['currentQuality'] != 'unavailable' for r in selected)
     rooms = sum(r['rooms'] for r in selected) if known else None
     revenue = sum(r['revenue'] for r in selected) if known else None
+    net_revenue = sum(r['netRevenue'] for r in selected) if known else None
     idr_rooms = sum(r['idrRooms'] for r in selected) if known else None
     total_capacity = sum(capacity[r['date']] for r in selected) if selected and all(capacity.get(r['date']) is not None for r in selected) else None
     budget = _sum_known(selected, 'budgetRevenue')
     end = (start + timedelta(days=days - 1)).isoformat()
     return {'days': days, 'start': start.isoformat(), 'end': end, 'rooms': rooms,
             'occupancy': rooms / total_capacity * 100 if rooms is not None and total_capacity else None,
-            'capacity': total_capacity, 'revenue': revenue, 'adr': revenue / idr_rooms if revenue is not None and idr_rooms else None,
+            'capacity': total_capacity, 'revenue': revenue, 'adr': net_revenue / idr_rooms if net_revenue is not None and idr_rooms else None,
             'idrCoveragePct': idr_rooms / rooms * 100 if idr_rooms is not None and rooms else None,
             'pickupRooms': _sum_known(selected, 'pickupRooms') if known else None,
             'budgetRevenue': budget, 'budgetGap': revenue - budget if revenue is not None and budget is not None else None,
@@ -51,7 +52,7 @@ def briefing():
             attention.append({'date': r['date'], 'rooms': r['rooms'], 'occupancy': occ,
                               'pickupRooms': r['pickupRooms'], 'reasons': reasons,
                               'comparisonQuality': r['comparisonQuality']})
-    return {'today': today.isoformat(), 'basis': 'Gross room-rate revenue; USD bookings converted to IDR at the configured mid rate',
+    return {'today': today.isoformat(), 'basis': 'Gross room-rate revenue; USD bookings converted to IDR at the configured mid rate. ADR is net of breakfast/tax-service rules, not gross.',
             'pickupDays': 7, 'periods': [summarise(rows, capacity, today, n) for n in (7,30)],
             'attention': attention, 'bookingSync': sync['lastSuccessfulSync'], 'bookingStale': sync['stale'],
             'bookingCoverage': sync['coverageFrom'], 'capacityState': hotel_state,

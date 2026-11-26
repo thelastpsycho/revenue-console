@@ -33,7 +33,9 @@ def test_briefing_uses_matching_windows_currency_and_budget(client):
     assert a['rooms']==14 and b['rooms']==60
     # Row 2's USD rate (120) converts at the default usdIdrRate (16000) and counts toward revenue/ADR.
     usd_revenue = 120*16000*7
-    assert a['occupancy']==20 and a['revenue']==14000000+usd_revenue and a['adr']==pytest.approx((14000000+usd_revenue)/14)
+    # ADR is net of the default revenue rule (breakfast 350000, taxService 0.21), not gross.
+    net_revenue = 7*(max(2000000-350000,0)/1.21 + max(120*16000-350000,0)/1.21)
+    assert a['occupancy']==20 and a['revenue']==14000000+usd_revenue and a['adr']==pytest.approx(net_revenue/14)
     assert a['idrCoveragePct']==100 and a['budgetGap']==pytest.approx(14000000+usd_revenue-7*3000000)
     assert response.headers['Server-Timing'].startswith('report;dur=')
 
