@@ -67,6 +67,47 @@ def test_verify_login_rejects_inactive_user():
     assert users.verify_login("alice", "correct-password-1") is None
 
 
+def test_repeated_wrong_passwords_lock_the_account(monkeypatch):
+    _create(password="correct-password-1")
+    for _ in range(users.MAX_LOGIN_ATTEMPTS):
+        assert users.verify_login("alice", "wrong-password") is None
+    # Locked out now, even with the right password - same generic failure.
+    assert users.verify_login("alice", "correct-password-1") is None
+
+
+def test_lockout_expires_after_the_window(monkeypatch):
+    _create(password="correct-password-1")
+    for _ in range(users.MAX_LOGIN_ATTEMPTS):
+        users.verify_login("alice", "wrong-password")
+    assert users.verify_login("alice", "correct-password-1") is None
+
+    from datetime import datetime, timedelta, timezone
+    future = datetime.now(timezone.utc) + timedelta(minutes=users.LOGIN_LOCKOUT_MINUTES + 1)
+    monkeypatch.setattr(users, "_now", lambda: future.isoformat(timespec="seconds"))
+    assert users.verify_login("alice", "correct-password-1") is not None
+
+
+def test_successful_login_resets_failed_attempt_counter():
+    user = _create(password="correct-password-1")
+    for _ in range(users.MAX_LOGIN_ATTEMPTS - 1):
+        users.verify_login("alice", "wrong-password")
+    assert users.verify_login("alice", "correct-password-1") is not None
+    # Counter reset by the success above, so this shouldn't already be locked.
+    for _ in range(users.MAX_LOGIN_ATTEMPTS - 1):
+        assert users.verify_login("alice", "wrong-password") is None
+    assert users.verify_login("alice", "correct-password-1") is not None
+
+
+def test_admin_password_reset_clears_lockout():
+    user = _create(password="correct-password-1")
+    for _ in range(users.MAX_LOGIN_ATTEMPTS):
+        users.verify_login("alice", "wrong-password")
+    assert users.verify_login("alice", "correct-password-1") is None
+
+    users.update_user(user["id"], {"password": "a-new-password-2"})
+    assert users.verify_login("alice", "a-new-password-2") is not None
+
+
 def test_update_user_fields():
     user = _create(permissions=["run_pms_scrape"])
     updated = users.update_user(user["id"], {"displayName": "Alice A", "permissions": ["manage_users"]})

@@ -4,6 +4,7 @@ import os
 import logging
 from datetime import datetime, timezone
 from ..infrastructure.paths import get_data_path
+from ..accounts.permissions import require_any_permission
 
 bp = Blueprint('database', __name__)
 
@@ -37,6 +38,7 @@ def get_db_connection(db_name):
         raise
 
 @bp.route('/api/db/combined-inventory', methods=['GET', 'OPTIONS'])
+@require_any_permission('view_data')
 def get_combined_inventory():
     try:
         conn = get_db_connection('combined_inventory.db')
@@ -57,6 +59,7 @@ def get_combined_inventory():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @bp.route('/api/db/inventory-allocation', methods=['GET', 'OPTIONS'])
+@require_any_permission('view_data', 'run_yield')
 def get_inventory_allocation():
     try:
         conn = get_db_connection('inventory_allocation.db')
@@ -77,6 +80,7 @@ def get_inventory_allocation():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @bp.route('/api/db/pms-inventory-processed', methods=['GET', 'OPTIONS'])
+@require_any_permission('view_data')
 def get_pms_inventory_processed():
     try:
         conn = get_db_connection('pms_inventory_processed.db')
@@ -97,6 +101,7 @@ def get_pms_inventory_processed():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @bp.route('/api/db/bar-rates', methods=['GET', 'OPTIONS'])
+@require_any_permission('push_dedge_bar')
 def get_bar_rates():
     try:
         conn = get_db_connection('bar_rates.db')
@@ -117,6 +122,7 @@ def get_bar_rates():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @bp.route('/api/db/pms-inventory-raw', methods=['GET', 'OPTIONS'])
+@require_any_permission('view_data')
 def get_pms_inventory_raw():
     try:
         conn = get_db_connection('pms_inventory_raw.db')
@@ -137,6 +143,7 @@ def get_pms_inventory_raw():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @bp.route('/api/db/cm-inventory-raw', methods=['GET', 'OPTIONS'])
+@require_any_permission('view_data')
 def get_cm_inventory_raw():
     try:
         conn = get_db_connection('cm_inventory_raw.db')

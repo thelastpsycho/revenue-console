@@ -77,3 +77,22 @@ def require_permission(key):
             return fn(*args, **kwargs)
         return wrapper
     return decorator
+
+
+def require_any_permission(*keys):
+    """Route decorator: 403 unless the current session's user has at least
+    one of `keys` - for data an endpoint serves to more than one page/role
+    (e.g. inventory-allocation, read by both the yield and data-overview pages)."""
+    unknown = [key for key in keys if key not in PERMISSION_KEYS]
+    if unknown:
+        raise ValueError(f"Unknown permission key(s): {', '.join(unknown)}")
+
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            user = getattr(g, "current_user", None)
+            if not user or not (set(keys) & set(user.get("permissions", ()))):
+                return jsonify({"status": "error", "message": "Forbidden"}), 403
+            return fn(*args, **kwargs)
+        return wrapper
+    return decorator

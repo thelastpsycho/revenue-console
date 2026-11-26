@@ -28,6 +28,14 @@ USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.\-]{3,60}$")
 MIN_PASSWORD_LENGTH = 8
 MAX_DISPLAY_NAME_LENGTH = 120
 
+# Mirrors the TOTP step's own attempt cap (MAX_TOTP_ATTEMPTS in auth_routes.py)
+# so password guessing isn't the one unthrottled step in an otherwise-limited
+# login flow. Locked accounts get the same generic "invalid" response as a
+# wrong password - never a distinct message - so a lockout can't be used to
+# fingerprint which usernames exist.
+MAX_LOGIN_ATTEMPTS = 8
+LOGIN_LOCKOUT_MINUTES = 15
+
 _lock = threading.Lock()
 
 
@@ -114,6 +122,8 @@ def _connect():
         "ALTER TABLE users ADD COLUMN totp_pending_secret TEXT",
         "ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE users ADD COLUMN totp_required INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN locked_until TEXT",
     ):
         try:
             conn.execute(ddl)
@@ -274,9 +284,12 @@ def update_user(user_id, data, *, current_user_id=None):
             password_hash = generate_password_hash(_clean_password(data.get("password")))
 
         if password_hash is not None:
+            # An admin-issued password reset is itself a form of re-auth, so
+            # it also clears any lockout left over from the old password.
             conn.execute(
                 """UPDATE users SET display_name = ?, permissions = ?, is_active = ?,
-                                     totp_required = ?, password_hash = ?, updated_at = ? WHERE id = ?""",
+                                     totp_required = ?, password_hash = ?, failed_login_attempts = 0,
+                                     locked_until = NULL, updated_at = ? WHERE id = ?""",
                 (display_name, json.dumps(permissions), int(is_active), int(two_factor_required),
                  password_hash, _now(), user_id))
         else:
@@ -296,15 +309,36 @@ def delete_user(user_id, *, current_user_id=None):
 
 
 def verify_login(username, password):
-    """Returns the user dict on success (and records last_login_at), else None."""
+    """Returns the user dict on success (and records last_login_at), else None.
+
+    A run of MAX_LOGIN_ATTEMPTS wrong passwords locks the account for
+    LOGIN_LOCKOUT_MINUTES; a locked account fails the same way as a wrong
+    password (no distinct error), so the lockout itself can't be probed to
+    enumerate valid usernames.
+    """
     if not isinstance(username, str) or not isinstance(password, str):
         return None
     with _lock, _db() as conn:
         row = conn.execute(
             "SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,)).fetchone()
-        if not row or not row["is_active"] or not check_password_hash(row["password_hash"], password):
+        if not row or not row["is_active"]:
             return None
-        conn.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (_now(), row["id"]))
+        if row["locked_until"] and row["locked_until"] > _now():
+            return None
+        if not check_password_hash(row["password_hash"], password):
+            attempts = row["failed_login_attempts"] + 1
+            locked_until = None
+            if attempts >= MAX_LOGIN_ATTEMPTS:
+                locked_until = (datetime.now(timezone.utc)
+                                 + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)).isoformat(timespec="seconds")
+                attempts = 0
+            conn.execute(
+                "UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?",
+                (attempts, locked_until, row["id"]))
+            return None
+        conn.execute(
+            "UPDATE users SET last_login_at = ?, failed_login_attempts = 0, locked_until = NULL WHERE id = ?",
+            (_now(), row["id"]))
         return _user(conn.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone())
 
 

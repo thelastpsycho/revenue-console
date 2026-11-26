@@ -468,6 +468,7 @@ def log_stream():
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
 @bp.route('/api/update-allotment/stream')
+@require_permission('push_pms_allotment')
 def stream_allotment_logs():
     """Stream allotment update logs using Server-Sent Events"""
     return Response(
@@ -631,6 +632,7 @@ def trigger_update_rest_allotment():
         }), 500
 
 @bp.route('/api/update-bar/stream')
+@require_permission('push_dedge_bar')
 def stream_bar_logs():
     """Stream BAR price-level update logs using Server-Sent Events"""
     return Response(
